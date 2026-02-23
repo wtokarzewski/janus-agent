@@ -178,8 +178,8 @@ dist
 
 # Janus runtime data
 janus.json
-sessions/
-memory/
+/sessions/
+/memory/
 *.db
 *.db-wal
 *.db-shm
