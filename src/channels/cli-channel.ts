@@ -77,6 +77,23 @@ export class CLIChannel {
         return;
       }
 
+      // /help command — show available commands
+      if (content.toLowerCase() === '/help' || content.toLowerCase() === 'help') {
+        console.log('');
+        console.log(chalk.bold('Commands:'));
+        console.log(`  ${chalk.green('/help')}     Show this help`);
+        console.log(`  ${chalk.green('/config')}   Reconfigure LLM provider`);
+        console.log(`  ${chalk.green('exit')}      Quit (also: quit, /exit, /quit, :q, Ctrl+C)`);
+        console.log('');
+        console.log(chalk.bold('Tools:'));
+        console.log('  exec, read-file, write-file, edit-file, list-dir, message, spawn_agent, cron');
+        console.log('');
+        console.log(chalk.gray('Type any message to chat with Janus.'));
+        console.log('');
+        this.rl?.prompt();
+        return;
+      }
+
       // /config command — reconfigure LLM provider
       if (content.toLowerCase() === '/config') {
         const { runSetup } = await import('../commands/setup.js');
