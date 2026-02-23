@@ -18,19 +18,17 @@ COPY skills/ skills/
 # Stage 2: Runtime (slim image, no build tools)
 FROM node:20-bookworm-slim
 
-WORKDIR /home/janus/app
+WORKDIR /home/node/app
 
-RUN groupadd -g 1000 janus && useradd -u 1000 -g janus -m janus
+COPY --from=builder --chown=node:node /app/node_modules node_modules/
+COPY --from=builder --chown=node:node /app/src src/
+COPY --from=builder --chown=node:node /app/tsconfig.json .
+COPY --from=builder --chown=node:node /app/package.json .
+COPY --from=builder --chown=node:node /app/skills skills/
 
-COPY --from=builder --chown=janus:janus /app/node_modules node_modules/
-COPY --from=builder --chown=janus:janus /app/src src/
-COPY --from=builder --chown=janus:janus /app/tsconfig.json .
-COPY --from=builder --chown=janus:janus /app/package.json .
-COPY --from=builder --chown=janus:janus /app/skills skills/
+RUN chown node:node /home/node/app && mkdir -p .janus memory sessions && chown -R node:node .janus memory sessions
 
-RUN mkdir -p .janus memory sessions && chown -R janus:janus .janus memory sessions
-
-USER janus
+USER node
 
 # Initialize workspace (creates EGO.md, AGENTS.md, etc.)
 RUN npx tsx src/index.ts onboard .
