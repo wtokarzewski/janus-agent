@@ -1,0 +1,30 @@
+services:
+  janus-gateway:
+    build: .
+    command: gateway
+    env_file: .env
+    volumes:
+      - ./janus.json:/home/janus/app/janus.json:ro
+      - janus-data:/home/janus/app/.janus
+      - janus-memory:/home/janus/app/memory
+      - janus-sessions:/home/janus/app/sessions
+    restart: unless-stopped
+
+  janus-cli:
+    build: .
+    command: ""
+    env_file: .env
+    volumes:
+      - ./janus.json:/home/janus/app/janus.json:ro
+      - janus-data:/home/janus/app/.janus
+      - janus-memory:/home/janus/app/memory
+      - janus-sessions:/home/janus/app/sessions
+    stdin_open: true
+    tty: true
+    profiles:
+      - cli
+
+volumes:
+  janus-data:
+  janus-memory:
+  janus-sessions:
