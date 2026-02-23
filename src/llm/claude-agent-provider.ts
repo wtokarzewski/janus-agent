@@ -2,7 +2,8 @@
  * Claude Agent SDK provider — uses Claude Code Max subscription via `claude login`.
  *
  * Uses structured output (JSON schema) to enforce tool call format.
- * Single-turn only (maxTurns: 1), no Claude Code built-in tools.
+ * Collects assistant text from streaming events; handles both success and
+ * error_max_turns results.
  */
 
 import type { LLMProvider, ChatRequest, ChatResponse } from './types.js';
@@ -39,7 +40,7 @@ export class ClaudeAgentProvider implements LLMProvider {
 
     const options: Record<string, unknown> = {
       model,
-      maxTurns: 1,
+      maxTurns: 3,
       allowedTools: [],
       permissionMode: 'bypassPermissions',
     };
@@ -59,18 +60,53 @@ export class ClaudeAgentProvider implements LLMProvider {
 
     let resultText = '';
     let sdkUsage = { input_tokens: 0, output_tokens: 0 };
+    let lastAssistantText = '';
 
     for await (const msg of q) {
-      if (msg.type === 'result' && msg.subtype === 'success') {
-        const success = msg as { structured_output?: unknown; result: string; usage: { input_tokens: number; output_tokens: number } };
-        resultText = success.structured_output
-          ? JSON.stringify(success.structured_output)
-          : success.result;
-        sdkUsage = success.usage;
+      log.debug(`LLM [claude-agent] event: type=${msg.type} subtype=${'subtype' in msg ? msg.subtype : '-'}`);
+
+      // Capture assistant message text as fallback
+      if (msg.type === 'assistant') {
+        const aMsg = msg as { message?: { content?: Array<{ type: string; text?: string }> | string } };
+        if (aMsg.message?.content) {
+          if (typeof aMsg.message.content === 'string') {
+            lastAssistantText = aMsg.message.content;
+          } else if (Array.isArray(aMsg.message.content)) {
+            const textParts = aMsg.message.content
+              .filter((b: { type: string }) => b.type === 'text')
+              .map((b: { text?: string }) => b.text ?? '');
+            if (textParts.length) {
+              lastAssistantText = textParts.join('');
+            }
+          }
+        }
+      }
+
+      if (msg.type === 'result') {
+        const result = msg as {
+          subtype: string;
+          structured_output?: unknown;
+          result?: string;
+          usage?: { input_tokens: number; output_tokens: number };
+        };
+
+        if (result.usage) {
+          sdkUsage = result.usage;
+        }
+
+        if (result.subtype === 'success') {
+          resultText = result.structured_output
+            ? JSON.stringify(result.structured_output)
+            : result.result ?? '';
+        } else {
+          // error_max_turns or other error — use whatever text we collected
+          log.warn(`LLM [claude-agent]: result subtype=${result.subtype}, using last assistant text (len=${lastAssistantText.length})`);
+          resultText = result.result ?? lastAssistantText;
+        }
       }
     }
 
-    log.debug(`LLM [claude-agent]: tokens=${sdkUsage.input_tokens + sdkUsage.output_tokens}`);
+    log.debug(`LLM [claude-agent]: tokens=${sdkUsage.input_tokens + sdkUsage.output_tokens}, resultLen=${resultText.length}`);
 
     if (hasTools) {
       return parseStructuredResponse(resultText, sdkUsage);
