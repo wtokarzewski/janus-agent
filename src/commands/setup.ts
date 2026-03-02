@@ -124,7 +124,7 @@ async function setupClaudeAgent(rl: ReadlineIO): Promise<void> {
   console.log('  3. haiku\n');
 
   const modelChoice = await askChoice(rl, '  Select [1-3]: ', ['1', '2', '3']);
-  const modelMap: Record<string, string> = { '1': 'sonnet', '2': 'opus', '3': 'haiku' };
+  const modelMap: Record<string, string> = { '1': 'claude-sonnet-4-6', '2': 'claude-opus-4-6', '3': 'claude-haiku-4-5-20251001' };
   const model = modelMap[modelChoice];
 
   await saveConfig({ llm: { provider: 'claude-agent', model } });
