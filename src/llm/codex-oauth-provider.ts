@@ -94,21 +94,25 @@ export class CodexOAuthProvider implements LLMProvider {
     let finishReason: 'stop' | 'tool_calls' | 'length' = 'stop';
     let inputTokens = 0;
     let outputTokens = 0;
-    const itemCallIds = new Map<string, string>();
+    const itemMeta = new Map<string, { callId: string; name: string }>();
 
     for await (const event of stream) {
       if (event.type === 'response.output_text.delta') {
         content += event.delta;
         onChunk(event.delta);
       } else if (event.type === 'response.output_item.added' && event.item.type === 'function_call') {
-        const fc = event.item as { id?: string; call_id: string };
-        if (fc.id) itemCallIds.set(fc.id, fc.call_id);
+        const fc = event.item as unknown as Record<string, unknown>;
+        log.debug(`LLM [codex-oauth] output_item.added: ${JSON.stringify(fc)}`);
+        if (fc.id) itemMeta.set(fc.id as string, { callId: (fc.call_id as string) ?? '', name: (fc.name as string) ?? '' });
       } else if (event.type === 'response.function_call_arguments.done') {
-        const callId = itemCallIds.get(event.item_id) ?? event.item_id;
+        log.debug(`LLM [codex-oauth] fn_args.done: item_id=${event.item_id}, name=${event.name}`);
+        const meta = itemMeta.get(event.item_id);
+        const callId = meta?.callId ?? event.item_id;
+        const name = event.name || meta?.name || '';
         toolCalls.push({
           id: callId,
           type: 'function',
-          function: { name: event.name, arguments: event.arguments },
+          function: { name, arguments: event.arguments },
         });
       } else if (event.type === 'response.completed') {
         const resp = event.response;
@@ -156,16 +160,14 @@ function convertInput(messages: LLMMessage[]): { input: ResponseInput; instructi
       }
       if (msg.tool_calls) {
         for (const tc of msg.tool_calls) {
+          if (!tc.function?.name) continue;
           input.push({
             type: 'function_call',
             call_id: tc.id,
             name: tc.function.name,
-            arguments: tc.function.arguments,
+            arguments: tc.function.arguments || '{}',
           });
         }
-      }
-      if (!msg.content && !msg.tool_calls?.length) {
-        input.push({ role: 'assistant', content: '' });
       }
     } else if (msg.role === 'tool') {
       input.push({
@@ -176,8 +178,22 @@ function convertInput(messages: LLMMessage[]): { input: ResponseInput; instructi
     }
   }
 
+  // Strip orphan function_call_outputs — every output must have a matching function_call
+  const callIds = new Set<string>();
+  for (const item of input) {
+    if ('type' in item && item.type === 'function_call') {
+      callIds.add((item as { call_id: string }).call_id);
+    }
+  }
+  const cleaned = input.filter(item => {
+    if ('type' in item && item.type === 'function_call_output') {
+      return callIds.has((item as { call_id: string }).call_id);
+    }
+    return true;
+  }) as ResponseInput;
+
   const instructions = systemParts.join('\n\n') || 'You are a coding assistant.';
-  return { input, instructions };
+  return { input: cleaned, instructions };
 }
 
 function logApiError(method: string, err: unknown): void {
