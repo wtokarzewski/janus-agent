@@ -55,6 +55,7 @@ interface IterateResult {
  */
 export class AgentLoop {
   private deps: AgentDeps;
+  private messageCounters = new Map<string, { count: number; userId?: string; scope?: InboundMessage['scope'] }>();
 
   constructor(deps: AgentDeps) {
     this.deps = deps;
@@ -214,6 +215,21 @@ export class AgentLoop {
 
     const content = iterResult.content;
 
+    // 6c. Track message count for periodic memory flush
+    const flushInterval = this.deps.config.agent.memoryFlushInterval;
+    const counter = this.messageCounters.get(sessionKey) ?? { count: 0, userId: msg.user?.userId, scope: msg.scope };
+    counter.count++;
+    counter.userId = msg.user?.userId;
+    counter.scope = msg.scope;
+    this.messageCounters.set(sessionKey, counter);
+
+    if (this.deps.memory && counter.count >= flushInterval) {
+      counter.count = 0;
+      this.flushMemory(sessionKey, counter.userId, counter.scope).catch(err => {
+        log.warn(`Periodic memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+
     // 7. Maybe summarize (async, non-blocking)
     const fullSession = await this.deps.sessions.getOrCreate(sessionKey);
     const sessionTokenEstimate = estimateMessagesTokens(fullSession.messages);
@@ -322,7 +338,12 @@ export class AgentLoop {
           await sleep(1000);
           continue;
         }
-        return { content: lastContent || `LLM error: ${errorText}`, iterations: i + 1, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
+        const errorContent = lastContent || `LLM error: ${errorText}`;
+        if (streamCtx) {
+          this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'chunk', errorContent);
+          this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
+        }
+        return { content: errorContent, iterations: i + 1, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
       }
 
       lastContent = response.content;
@@ -382,13 +403,68 @@ export class AgentLoop {
     }
 
     log.warn(`Max iterations (${maxIterations}) reached`);
+    const maxIterContent = lastContent || 'I reached the maximum number of iterations. Please continue with a follow-up message.';
+    if (streamCtx) {
+      this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'chunk', maxIterContent);
+      this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
+    }
     return {
-      content: lastContent || 'I reached the maximum number of iterations. Please continue with a follow-up message.',
+      content: maxIterContent,
       iterations: maxIterations,
       toolCalls: totalToolCalls,
       totalTokens,
       outcome: 'max_iterations',
     };
+  }
+
+  /** Extract key facts from recent messages and append to daily notes. */
+  private async flushMemory(sessionKey: string, userId?: string, scope?: InboundMessage['scope']): Promise<void> {
+    if (!this.deps.memory) return;
+
+    const session = await this.deps.sessions.getOrCreate(sessionKey);
+    const flushInterval = this.deps.config.agent.memoryFlushInterval;
+    const recentMessages = session.messages.slice(-flushInterval);
+    if (recentMessages.length === 0) return;
+
+    const flushResponse = await this.deps.llm.chat({
+      model: this.deps.config.llm.model,
+      messages: [
+        { role: 'system', content: 'Extract important facts, decisions, and learnings from this conversation that should be remembered long-term. Output as bullet points. If nothing is worth remembering, respond with "NONE".' },
+        { role: 'user', content: recentMessages.map(m => `${m.role}: ${'content' in m ? m.content : ''}`).join('\n') },
+      ],
+      temperature: 0.3,
+      maxTokens: 512,
+    }, 'flush');
+
+    if (flushResponse.content.trim() !== 'NONE') {
+      await this.deps.memory.appendDaily(`## Session notes\n${flushResponse.content}`, userId, scope);
+      log.info('Memory flush: saved session notes');
+    }
+  }
+
+  /** Flush memory for all sessions with unflushed messages. Call on shutdown. */
+  async flushAllSessions(): Promise<void> {
+    if (!this.deps.memory) return;
+
+    const unflushed = [...this.messageCounters.entries()].filter(([, c]) => c.count > 0);
+    if (unflushed.length === 0) return;
+
+    log.info(`Flushing memory for ${unflushed.length} session(s)...`);
+
+    const timeout = AbortSignal.timeout(10_000);
+    const promises = unflushed.map(([sessionKey, counter]) =>
+      this.flushMemory(sessionKey, counter.userId, counter.scope)
+        .then(() => { counter.count = 0; }),
+    );
+
+    try {
+      await Promise.race([
+        Promise.allSettled(promises),
+        new Promise((_, reject) => timeout.addEventListener('abort', () => reject(new Error('Flush timeout')))),
+      ]);
+    } catch {
+      log.warn('Session-end flush timed out (10s)');
+    }
   }
 
   private async triggerSummarization(
@@ -401,25 +477,10 @@ export class AgentLoop {
     const toSummarize = messages.slice(0, halfIdx);
 
     // Memory flush — extract key facts before discarding old messages
-    if (this.deps.memory) {
-      try {
-        const flushResponse = await this.deps.llm.chat({
-          model: this.deps.config.llm.model,
-          messages: [
-            { role: 'system', content: 'Extract important facts, decisions, and learnings from this conversation that should be remembered long-term. Output as bullet points. If nothing is worth remembering, respond with "NONE".' },
-            { role: 'user', content: toSummarize.map(m => `${m.role}: ${'content' in m ? m.content : ''}`).join('\n') },
-          ],
-          temperature: 0.3,
-          maxTokens: 512,
-        }, 'flush');
-
-        if (flushResponse.content.trim() !== 'NONE') {
-          await this.deps.memory.appendDaily(`## Session notes\n${flushResponse.content}`, userId, scope);
-          log.info('Memory flush: saved notes before summarization');
-        }
-      } catch (err) {
-        log.warn(`Memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+    try {
+      await this.flushMemory(sessionKey, userId, scope);
+    } catch (err) {
+      log.warn(`Memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     const summaryResponse = await this.deps.llm.chat({

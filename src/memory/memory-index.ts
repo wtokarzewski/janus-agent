@@ -263,7 +263,7 @@ export function splitMarkdownChunks(source: string, content: string): MemoryChun
 function sanitizeFtsQuery(query: string): string {
   const words = query
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
     .filter(w => w.length > 2);
 

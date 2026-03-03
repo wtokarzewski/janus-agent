@@ -124,7 +124,7 @@ async function setupClaudeAgent(rl: ReadlineIO): Promise<void> {
   console.log('  3. haiku\n');
 
   const modelChoice = await askChoice(rl, '  Select [1-3]: ', ['1', '2', '3']);
-  const modelMap: Record<string, string> = { '1': 'sonnet', '2': 'opus', '3': 'haiku' };
+  const modelMap: Record<string, string> = { '1': 'claude-sonnet-4-6', '2': 'claude-opus-4-6', '3': 'claude-haiku-4-5-20251001' };
   const model = modelMap[modelChoice];
 
   await saveConfig({ llm: { provider: 'claude-agent', model } });
@@ -150,12 +150,12 @@ async function setupCodex(rl: ReadlineIO): Promise<void> {
   console.log(chalk.green('  ✓ Authenticated'));
 
   console.log('\n  Model?');
-  console.log('  1. o3 (recommended)');
-  console.log('  2. o4-mini');
-  console.log('  3. gpt-4o\n');
+  console.log('  1. gpt-5.3-codex (recommended)');
+  console.log('  2. gpt-5.2-codex');
+  console.log('  3. gpt-5-codex-mini\n');
 
   const modelChoice = await askChoice(rl, '  Select [1-3]: ', ['1', '2', '3']);
-  const modelMap: Record<string, string> = { '1': 'o3', '2': 'o4-mini', '3': 'gpt-4o' };
+  const modelMap: Record<string, string> = { '1': 'gpt-5.3-codex', '2': 'gpt-5.2-codex', '3': 'gpt-5-codex-mini' };
   const model = modelMap[modelChoice];
 
   await saveConfig({ llm: { provider: 'codex', model } });

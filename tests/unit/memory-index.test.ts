@@ -246,6 +246,22 @@ describe('MemoryIndex', () => {
     expect(userRow?.scope_id).toBe('wt');
   });
 
+  it('should find results when searching with Polish Unicode characters', () => {
+    index.indexFile('notes.md', '## Zakupy\n\nTrzeba kupić mleko, jajka i chleb w sklepie na rogu.\n\n## Szkoła\n\nZuzia ma jutro sprawdzian z matematyki, trzeba poćwiczyć ułamki.');
+
+    const results = index.search('sprawdzian matematyki');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].heading).toBe('Szkoła');
+
+    const results2 = index.search('kupić mleko');
+    expect(results2.length).toBeGreaterThan(0);
+    expect(results2[0].heading).toBe('Zakupy');
+
+    // Words with Polish diacritics should not be stripped
+    const results3 = index.search('ćwiczyć ułamki');
+    expect(results3.length).toBeGreaterThan(0);
+  });
+
   it('should replace chunks for same source+owner+scope on re-index', () => {
     index.indexFile('notes.md', '## Old\n\nOld content about dogs', 'wt', 'user', 'wt');
     let results = index.search('dogs', 5, 'wt', { kind: 'user', id: 'wt' });

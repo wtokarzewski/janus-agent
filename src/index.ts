@@ -59,6 +59,7 @@ program
     if (opts.message) {
       const result = await app.agent.processDirect(opts.message);
       console.log(result);
+      await app.agent.flushAllSessions();
       return;
     }
 
@@ -78,6 +79,7 @@ program
     const cli = new CLIChannel();
     await cli.start(app.bus, signal);
 
+    await app.agent.flushAllSessions();
     ac.abort();
     await Promise.allSettled([agentPromise, dispatcherPromise]);
   });

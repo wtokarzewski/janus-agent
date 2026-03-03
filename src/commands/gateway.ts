@@ -109,6 +109,7 @@ export async function runGateway(): Promise<void> {
     log.error('Gateway: all channels failed, shutting down');
   }
 
+  await app.agent.flushAllSessions();
   ac.abort();
   await Promise.allSettled([agentPromise, dispatcherPromise]);
 }

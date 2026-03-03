@@ -17,6 +17,17 @@ export async function loadConfig(overrides?: Partial<JanusConfig>): Promise<Janu
   const envConfig = loadEnvVars();
 
   // 4. Merge: defaults < user < workspace < env < overrides
+  // If workspace or user config explicitly sets a subscription provider,
+  // don't let env-var-detected API key providers override it
+  const explicitProvider = (workspaceConfig?.llm as Record<string, unknown>)?.provider
+    ?? (userConfig?.llm as Record<string, unknown>)?.provider;
+  const isExplicitSubscription = explicitProvider === 'claude-agent' || explicitProvider === 'codex';
+  const envLlm = envConfig.llm as Record<string, unknown> | undefined;
+  if (isExplicitSubscription && envLlm?.provider) {
+    delete envLlm.provider;
+    delete envLlm.apiKey;
+  }
+
   const merged = deepMerge(userConfig, workspaceConfig, envConfig, overrides ?? {});
 
   return JanusConfigSchema.parse(merged);

@@ -67,29 +67,6 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 
 ---
 
-## Future Candidates
-
-### High priority (low effort, high value)
-- **MCP client** — Connect to external MCP servers.
-- **Web search + web fetch tools** — Brave API / DuckDuckGo.
-- **Voice transcription** — Groq Whisper (free) for Telegram voice messages.
-
-### Medium priority
-- **More channels** — Discord, WhatsApp, Slack. ~300-600 lines each with good abstraction.
-- **New skills** — Researcher (web search + synthesis), writer (docs, reports).
-- **Q&A Loop** — Structured requirements-gathering dialog before execution.
-- **More gate coverage** — Gate on file writes to sensitive paths, gate on spawn_agent.
-- **Web UI** — Browser-based chat interface.
-
-### Low priority
-- **Skill self-creation** — Agent creates new SKILL.md files from repeated tasks.
-- **Browser automation** — Headless Chrome for web tasks.
-- **Plugin / hook system** — Extensibility points for third-party code.
-- **Docker packaging** — Containerized deployment.
-- **Native apps** — macOS, iOS, Android.
-
----
-
 ## Dropped Features (and why)
 
 | Feature | Why |
@@ -101,14 +78,13 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 | 14-phase programmer workflow | Too rigid. Simplified to SKILL.md. |
 | Hook system (16 events) | Not needed at current scale. |
 
-
 ---
 
 ## Differentiators
 
 Features that set Janus apart from other AI agents:
 
-- **Local embeddings** — all-MiniLM-L6-v2 via ONNX. Zero API cost, zero latency. Most agents use cloud APIs or skip vector search entirely.
+- **Local embeddings** — all-MiniLM-L6-v2 via ONNX. Zero API cost, zero latency.
 - **Hybrid search (FTS5 + vector + RRF)** — keyword AND semantic search combined with temporal decay.
 - **Learner** — Records execution metrics and provides keyword-based recommendations.
 - **Memory flush before compaction** — Preserves knowledge during session summarization.

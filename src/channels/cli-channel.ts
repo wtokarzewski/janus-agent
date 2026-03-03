@@ -97,7 +97,12 @@ export class CLIChannel {
       // /config command — reconfigure LLM provider
       if (content.toLowerCase() === '/config') {
         const { runSetup } = await import('../commands/setup.js');
-        await runSetup({ reconfigure: true });
+        // Reuse existing readline to avoid multiple instances fighting over stdin
+        const io = {
+          question: (prompt: string) => new Promise<string>(resolve => this.rl!.question(prompt, resolve)),
+          close: () => {},  // Don't close the CLI readline
+        };
+        await runSetup({ reconfigure: true }, io);
         console.log(chalk.yellow('  Restart Janus to apply changes.\n'));
         this.rl?.prompt();
         return;

@@ -15,11 +15,21 @@ import {
 } from './sdk-utils.js';
 import * as log from '../utils/logger.js';
 
+const MODEL_ALIASES: Record<string, string> = {
+  opus: 'claude-opus-4-6',
+  sonnet: 'claude-sonnet-4-6',
+  haiku: 'claude-haiku-4-5-20251001',
+};
+
+function resolveModel(name: string): string {
+  return MODEL_ALIASES[name] ?? name;
+}
+
 export class ClaudeAgentProvider implements LLMProvider {
   private defaultModel: string;
 
   constructor(config: { model: string }) {
-    this.defaultModel = config.model;
+    this.defaultModel = resolveModel(config.model);
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
