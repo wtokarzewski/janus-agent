@@ -81,7 +81,7 @@ export class ToolRegistry {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error(`Tool "${name}" failed: ${msg}`);
-      return `Error: ${msg}`;
+      return `Error: ${msg}\n\n[Analyze the error above. Try a different approach if the same command failed before.]`;
     }
   }
 

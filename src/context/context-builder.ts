@@ -159,6 +159,12 @@ Workspace: ${workspace}
 
 Available tools:
 ${toolList}
+
+Tool usage rules:
+- Read files before modifying them. Verify existence before assuming.
+- Never predict tool outcomes. Run the tool and check the result.
+- If a tool fails, analyze the error. Try a different approach, not the same command.
+- State your intent briefly, then act. Do not narrate every step.
 </identity>`;
   }
 

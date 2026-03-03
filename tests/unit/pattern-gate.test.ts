@@ -87,4 +87,55 @@ describe('PatternGate', () => {
     expect(gate.formatAction('exec', { command: 'rm -rf build/' })).toBe('exec: rm -rf build/');
     expect(gate.formatAction('other', { key: 'val' })).toBe('other: {"key":"val"}');
   });
+
+  describe('obfuscation detection', () => {
+    // Use empty patterns to test only obfuscation detection
+    const gate = new PatternGate([]);
+
+    it('should gate base64 decode piped to shell', () => {
+      expect(gate.shouldGate('exec', { command: 'echo cm0gLXJm | base64 -d | sh' })).toBe(true);
+      expect(gate.shouldGate('exec', { command: 'echo cm0gLXJm | base64 --decode | bash' })).toBe(true);
+    });
+
+    it('should gate xxd hex decode piped to shell', () => {
+      expect(gate.shouldGate('exec', { command: 'echo 726d202d7266 | xxd -r | sh' })).toBe(true);
+    });
+
+    it('should gate printf hex sequences', () => {
+      expect(gate.shouldGate('exec', { command: "printf '\\x72\\x6d'" })).toBe(true);
+      expect(gate.shouldGate('exec', { command: 'printf "\\x72\\x6d"' })).toBe(true);
+    });
+
+    it('should gate eval $(...)', () => {
+      expect(gate.shouldGate('exec', { command: 'eval $(echo "rm -rf /")' })).toBe(true);
+    });
+
+    it('should gate python exec/eval', () => {
+      expect(gate.shouldGate('exec', { command: 'python3 -c "import os; os.system(\'rm -rf /\')"' })).toBe(true);
+      expect(gate.shouldGate('exec', { command: 'python -c "exec(\'rm\')"' })).toBe(true);
+    });
+
+    it('should gate perl system', () => {
+      expect(gate.shouldGate('exec', { command: 'perl -e "system(\'rm -rf /\')"' })).toBe(true);
+    });
+
+    it('should gate variable expansion with rm', () => {
+      expect(gate.shouldGate('exec', { command: '${CMD} rm -rf /' })).toBe(true);
+    });
+
+    it('should not gate whitelisted tools', () => {
+      expect(gate.shouldGate('exec', { command: 'eval "$(brew shellenv)"' })).toBe(false);
+      expect(gate.shouldGate('exec', { command: 'eval "$(nvm init)"' })).toBe(false);
+      expect(gate.shouldGate('exec', { command: 'eval "$(conda shell.bash hook)"' })).toBe(false);
+      expect(gate.shouldGate('exec', { command: 'docker build . | bash' })).toBe(false);
+    });
+
+    it('should not gate normal commands', () => {
+      expect(gate.shouldGate('exec', { command: 'echo hello' })).toBe(false);
+      expect(gate.shouldGate('exec', { command: 'cat file.txt' })).toBe(false);
+      expect(gate.shouldGate('exec', { command: 'npm install' })).toBe(false);
+      expect(gate.shouldGate('exec', { command: 'python3 -c "print(1+1)"' })).toBe(false);
+      expect(gate.shouldGate('exec', { command: 'base64 file.txt' })).toBe(false);
+    });
+  });
 });

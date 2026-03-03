@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { resolve, relative } from 'node:path';
 import type { ContextualTool, ToolContext } from '../types.js';
 
@@ -71,16 +71,38 @@ export class ExecTool implements ContextualTool {
     }
 
     return new Promise<string>((resolveP) => {
-      execFile('sh', ['-c', command], {
+      const child = spawn('sh', ['-c', command], {
         cwd: workingDir,
-        timeout: this.timeoutMs,
-        maxBuffer: 1024 * 1024,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env, HOME: process.env.HOME },
-      }, (error, stdout, stderr) => {
+      });
+
+      let stdout = '';
+      let stderr = '';
+      let killed = false;
+
+      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+      const timer = setTimeout(() => {
+        killed = true;
+        try {
+          process.kill(-child.pid!, 'SIGTERM');
+        } catch { /* already dead */ }
+        // Fallback SIGKILL after 2s
+        setTimeout(() => {
+          try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already dead */ }
+        }, 2000);
+      }, this.timeoutMs);
+
+      child.on('close', () => {
+        clearTimeout(timer);
+
         let output = '';
         if (stdout) output += stdout;
         if (stderr) output += (output ? '\n' : '') + stderr;
-        if (error && !output) output = error.message;
+        if (killed && !output) output = `Command timed out after ${this.timeoutMs}ms`;
 
         // Truncate
         if (output.length > this.maxOutput) {
@@ -88,6 +110,11 @@ export class ExecTool implements ContextualTool {
         }
 
         resolveP(output || '(no output)');
+      });
+
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        resolveP(`Error: ${err.message}`);
       });
     });
   }

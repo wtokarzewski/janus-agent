@@ -1,6 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { join } from 'node:path';
 import type { ContextualTool, ToolContext } from '../types.js';
+import { validatePath } from '../validate-path.js';
 
 export class ListDirTool implements ContextualTool {
   name = 'list_dir';
@@ -21,7 +22,12 @@ export class ListDirTool implements ContextualTool {
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const dirPath = String(args.path ?? '.');
-    const fullPath = resolve(this.workspaceDir, dirPath);
+    let fullPath: string;
+    try {
+      fullPath = validatePath(this.workspaceDir, dirPath);
+    } catch (err) {
+      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+    }
 
     try {
       const entries = await readdir(fullPath);
