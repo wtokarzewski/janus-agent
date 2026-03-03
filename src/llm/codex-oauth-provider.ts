@@ -19,12 +19,15 @@ export class CodexOAuthProvider implements LLMProvider {
 
   private async createClient(): Promise<{ client: OpenAI; accountId?: string }> {
     const { token, accountId } = await getCodexToken(this.tokenStore);
-    const headers: Record<string, string> = { 'OpenAI-Beta': 'responses=experimental' };
+    const headers: Record<string, string> = {
+      'OpenAI-Beta': 'responses=experimental',
+      'originator': 'codex_cli_rs',
+    };
     if (accountId) headers['Chatgpt-Account-Id'] = accountId;
 
     const client = new OpenAI({
       apiKey: token,
-      baseURL: 'https://chatgpt.com/backend-api',
+      baseURL: 'https://chatgpt.com/backend-api/codex',
       defaultHeaders: headers,
     });
     return { client, accountId };
@@ -35,12 +38,15 @@ export class CodexOAuthProvider implements LLMProvider {
     log.debug(`LLM [codex-oauth]: model=${model}, messages=${request.messages.length}, tools=${request.tools?.length ?? 0}`);
 
     const { client } = await this.createClient();
+    const { input, instructions } = convertInput(request.messages);
 
     const params: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
       model,
-      input: convertInput(request.messages),
+      input,
+      instructions,
       temperature: request.temperature ?? 0.7,
       max_output_tokens: request.maxTokens ?? 4096,
+      store: false,
     };
 
     if (request.tools && request.tools.length > 0) {
@@ -62,12 +68,15 @@ export class CodexOAuthProvider implements LLMProvider {
     log.debug(`LLM [codex-oauth] stream: model=${model}, messages=${request.messages.length}, tools=${request.tools?.length ?? 0}`);
 
     const { client } = await this.createClient();
+    const { input, instructions } = convertInput(request.messages);
 
     const params: OpenAI.Responses.ResponseCreateParamsStreaming = {
       model,
-      input: convertInput(request.messages),
+      input,
+      instructions,
       temperature: request.temperature ?? 0.7,
       max_output_tokens: request.maxTokens ?? 4096,
+      store: false,
       stream: true,
     };
 
@@ -138,12 +147,13 @@ export class CodexOAuthProvider implements LLMProvider {
 
 type ResponseInput = OpenAI.Responses.ResponseInput;
 
-function convertInput(messages: LLMMessage[]): ResponseInput {
+function convertInput(messages: LLMMessage[]): { input: ResponseInput; instructions: string } {
   const input: ResponseInput = [];
+  const systemParts: string[] = [];
 
   for (const msg of messages) {
     if (msg.role === 'system') {
-      input.push({ role: 'developer', content: msg.content });
+      systemParts.push(msg.content);
     } else if (msg.role === 'user') {
       input.push({ role: 'user', content: msg.content });
     } else if (msg.role === 'assistant') {
@@ -172,7 +182,8 @@ function convertInput(messages: LLMMessage[]): ResponseInput {
     }
   }
 
-  return input;
+  const instructions = systemParts.join('\n\n') || 'You are a coding assistant.';
+  return { input, instructions };
 }
 
 function parseResponse(response: OpenAI.Responses.Response): ChatResponse {
