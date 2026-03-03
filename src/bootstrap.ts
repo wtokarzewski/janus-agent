@@ -5,6 +5,7 @@
 
 import { resolve } from 'node:path';
 import type { JanusConfig } from './config/schema.js';
+import { FileTokenStore } from './auth/token-store.js';
 import { MessageBus } from './bus/message-bus.js';
 import { createProvider } from './llm/openai-compatible-provider.js';
 import { ProviderRegistry } from './llm/provider-registry.js';
@@ -67,10 +68,17 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   } else {
     const apiKey = config.llm.apiKey ?? '';
     const isSubscription = ['claude-agent', 'codex'].includes(config.llm.provider);
-    if (apiKey || isSubscription) {
+    const auth = config.llm.auth ?? (isSubscription ? 'cli' : 'api_key');
+    const isOAuth = auth === 'oauth';
+    const tokenStore = isOAuth ? new FileTokenStore() : undefined;
+
+    if (apiKey || isSubscription || isOAuth) {
       llm.register({
         name: 'default',
-        provider: await createProvider({ provider: config.llm.provider, apiKey, model: config.llm.model, apiBase: config.llm.apiBase }),
+        provider: await createProvider({
+          provider: config.llm.provider, apiKey, model: config.llm.model,
+          apiBase: config.llm.apiBase, auth, tokenStore,
+        }),
         model: config.llm.model,
         purpose: [],
         priority: 0,

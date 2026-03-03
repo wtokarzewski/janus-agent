@@ -92,10 +92,24 @@ async function setupSubscription(rl: ReadlineIO): Promise<void> {
 
   const subChoice = await askChoice(rl, '  Select [1-2]: ', ['1', '2']);
 
-  if (subChoice === '1') {
-    await setupClaudeAgent(rl);
+  console.log('\n  Auth method?');
+  console.log('  1. OAuth (login in browser — recommended)');
+  console.log('  2. CLI (requires claude/codex CLI installed)\n');
+
+  const authChoice = await askChoice(rl, '  Select [1-2]: ', ['1', '2']);
+
+  if (authChoice === '1') {
+    if (subChoice === '1') {
+      await setupAnthropicOAuth(rl);
+    } else {
+      await setupCodexOAuth(rl);
+    }
   } else {
-    await setupCodex(rl);
+    if (subChoice === '1') {
+      await setupClaudeAgent(rl);
+    } else {
+      await setupCodex(rl);
+    }
   }
 }
 
@@ -159,6 +173,48 @@ async function setupCodex(rl: ReadlineIO): Promise<void> {
   const model = modelMap[modelChoice];
 
   await saveConfig({ llm: { provider: 'codex', model } });
+}
+
+async function setupAnthropicOAuth(rl: ReadlineIO): Promise<void> {
+  const { FileTokenStore } = await import('../auth/token-store.js');
+  const { anthropicLogin } = await import('../auth/anthropic-oauth.js');
+
+  const store = new FileTokenStore();
+  await anthropicLogin(store, rl);
+
+  console.log(chalk.green('  ✓ Authenticated via OAuth'));
+
+  console.log('\n  Model?');
+  console.log('  1. sonnet (recommended)');
+  console.log('  2. opus');
+  console.log('  3. haiku\n');
+
+  const modelChoice = await askChoice(rl, '  Select [1-3]: ', ['1', '2', '3']);
+  const modelMap: Record<string, string> = { '1': 'claude-sonnet-4-6', '2': 'claude-opus-4-6', '3': 'claude-haiku-4-5-20251001' };
+  const model = modelMap[modelChoice];
+
+  await saveConfig({ llm: { provider: 'anthropic', auth: 'oauth', model } });
+}
+
+async function setupCodexOAuth(rl: ReadlineIO): Promise<void> {
+  const { FileTokenStore } = await import('../auth/token-store.js');
+  const { codexLogin } = await import('../auth/codex-oauth.js');
+
+  const store = new FileTokenStore();
+  await codexLogin(store);
+
+  console.log(chalk.green('  ✓ Authenticated via OAuth'));
+
+  console.log('\n  Model?');
+  console.log('  1. gpt-5.3-codex (recommended)');
+  console.log('  2. gpt-5.2-codex');
+  console.log('  3. gpt-5-codex-mini\n');
+
+  const modelChoice = await askChoice(rl, '  Select [1-3]: ', ['1', '2', '3']);
+  const modelMap: Record<string, string> = { '1': 'gpt-5.3-codex', '2': 'gpt-5.2-codex', '3': 'gpt-5-codex-mini' };
+  const model = modelMap[modelChoice];
+
+  await saveConfig({ llm: { provider: 'codex', auth: 'oauth', model } });
 }
 
 async function checkClaudeAuth(): Promise<boolean> {

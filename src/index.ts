@@ -38,7 +38,8 @@ program
     // Launch setup wizard if no provider configured
     const hasProvider = config.llm.apiKey
       || (config.llm.providers && config.llm.providers.length > 0)
-      || ['claude-agent', 'codex'].includes(config.llm.provider);
+      || ['claude-agent', 'codex'].includes(config.llm.provider)
+      || config.llm.auth === 'oauth';
 
     if (!hasProvider) {
       console.log('\n  No LLM provider configured. Starting setup...\n');
