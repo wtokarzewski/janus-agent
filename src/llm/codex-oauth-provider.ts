@@ -20,47 +20,38 @@ export class CodexOAuthProvider implements LLMProvider {
   private async createClient(): Promise<{ client: OpenAI; accountId?: string }> {
     const { token, accountId } = await getCodexToken(this.tokenStore);
     const headers: Record<string, string> = {
-      'OpenAI-Beta': 'responses=experimental',
+      'openai-beta': 'responses=experimental',
       'originator': 'codex_cli_rs',
     };
-    if (accountId) headers['Chatgpt-Account-Id'] = accountId;
+    if (accountId) headers['chatgpt-account-id'] = accountId;
+
+    const debugFetch: typeof globalThis.fetch = async (url, init) => {
+      log.debug(`LLM [codex-oauth] HTTP ${init?.method ?? 'GET'} ${url}`);
+      if (init?.body) {
+        const bodyStr = typeof init.body === 'string' ? init.body : String(init.body);
+        log.debug(`LLM [codex-oauth] body (first 500): ${bodyStr.slice(0, 500)}`);
+      }
+      const res = await globalThis.fetch(url, init);
+      if (!res.ok) {
+        const cloned = res.clone();
+        const text = await cloned.text().catch(() => '');
+        log.error(`LLM [codex-oauth] response ${res.status}: body=${text.slice(0, 500) || '(empty)'}`);
+      }
+      return res;
+    };
 
     const client = new OpenAI({
       apiKey: token,
       baseURL: 'https://chatgpt.com/backend-api/codex',
       defaultHeaders: headers,
+      fetch: debugFetch,
     });
     return { client, accountId };
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const model = request.model || this.defaultModel;
-    log.debug(`LLM [codex-oauth]: model=${model}, messages=${request.messages.length}, tools=${request.tools?.length ?? 0}`);
-
-    const { client } = await this.createClient();
-    const { input, instructions } = convertInput(request.messages);
-
-    const params: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
-      model,
-      input,
-      instructions,
-      temperature: request.temperature ?? 0.7,
-      max_output_tokens: request.maxTokens ?? 4096,
-      store: false,
-    };
-
-    if (request.tools && request.tools.length > 0) {
-      params.tools = request.tools.map(t => ({
-        type: 'function' as const,
-        name: t.function.name,
-        description: t.function.description ?? '',
-        parameters: t.function.parameters ?? null,
-        strict: false,
-      }));
-    }
-
-    const response = await client.responses.create(params);
-    return parseResponse(response);
+    // Codex backend requires stream=true, so we stream and collect the result
+    return this.chatStream(request, () => {});
   }
 
   async chatStream(request: ChatRequest, onChunk: StreamCallback): Promise<ChatResponse> {
@@ -74,8 +65,6 @@ export class CodexOAuthProvider implements LLMProvider {
       model,
       input,
       instructions,
-      temperature: request.temperature ?? 0.7,
-      max_output_tokens: request.maxTokens ?? 4096,
       store: false,
       stream: true,
     };
@@ -88,16 +77,23 @@ export class CodexOAuthProvider implements LLMProvider {
         parameters: t.function.parameters ?? null,
         strict: false,
       }));
+      params.tool_choice = 'auto';
+      params.parallel_tool_calls = true;
     }
 
-    const stream = await client.responses.create(params);
+    let stream;
+    try {
+      stream = await client.responses.create(params);
+    } catch (err: unknown) {
+      logApiError('stream', err);
+      throw err;
+    }
 
     let content = '';
     const toolCalls: ToolCall[] = [];
     let finishReason: 'stop' | 'tool_calls' | 'length' = 'stop';
     let inputTokens = 0;
     let outputTokens = 0;
-    // Track call_ids from output_item.added events for function calls
     const itemCallIds = new Map<string, string>();
 
     for await (const event of stream) {
@@ -120,14 +116,12 @@ export class CodexOAuthProvider implements LLMProvider {
           inputTokens = resp.usage.input_tokens;
           outputTokens = resp.usage.output_tokens;
         }
-        // Determine finish reason from output items
         const hasFunctionCalls = resp.output.some(
           (item: { type: string }) => item.type === 'function_call',
         );
         if (hasFunctionCalls) finishReason = 'tool_calls';
         else if (resp.status === 'incomplete') finishReason = 'length';
 
-        // Collect any text we may have missed
         if (!content) {
           content = resp.output_text ?? '';
         }
@@ -186,38 +180,10 @@ function convertInput(messages: LLMMessage[]): { input: ResponseInput; instructi
   return { input, instructions };
 }
 
-function parseResponse(response: OpenAI.Responses.Response): ChatResponse {
-  let content = response.output_text ?? '';
-  const toolCalls: ToolCall[] = [];
-
-  for (const item of response.output) {
-    if (item.type === 'function_call') {
-      toolCalls.push({
-        id: item.call_id,
-        type: 'function',
-        function: { name: item.name, arguments: item.arguments },
-      });
-    } else if (item.type === 'message' && !content) {
-      for (const part of item.content) {
-        if (part.type === 'output_text') content += part.text;
-      }
-    }
-  }
-
-  const finishReason = toolCalls.length > 0 ? 'tool_calls' as const
-    : response.status === 'incomplete' ? 'length' as const
-    : 'stop' as const;
-
-  log.debug(`LLM [codex-oauth]: finish=${finishReason}, tool_calls=${toolCalls.length}`);
-
-  return {
-    content,
-    toolCalls,
-    usage: {
-      promptTokens: response.usage?.input_tokens ?? 0,
-      completionTokens: response.usage?.output_tokens ?? 0,
-      totalTokens: (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0),
-    },
-    finishReason,
-  };
+function logApiError(method: string, err: unknown): void {
+  const e = err as Record<string, unknown>;
+  log.error(`LLM [codex-oauth] ${method} error: status=${e.status}, message=${e.message}`);
+  if (e.error) log.error(`  error body: ${JSON.stringify(e.error)}`);
+  if (e.code) log.error(`  code=${e.code}, param=${e.param}, type=${e.type}`);
 }
+
