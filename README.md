@@ -109,6 +109,27 @@ docker compose down
 
 Data (SQLite database, memory files, sessions) is persisted in named Docker volumes and survives container restarts.
 
+### OAuth in Docker
+
+Subscription providers (`anthropic` with OAuth, `codex`) require a one-time browser login. Since Docker containers run headless, authenticate on your host machine first and mount the token store into the container.
+
+**1. Login locally (once):**
+
+```bash
+npm start -- setup    # select OAuth → authorize in browser
+```
+
+Tokens are saved to `~/.janus/auth.json`.
+
+**2. Bind mount tokens in `docker-compose.yml`:**
+
+```yaml
+volumes:
+  - ~/.janus:/home/node/app/.janus    # mount token store from host
+```
+
+**3. That's it.** The container reads the tokens and refreshes them automatically (no browser needed). Re-login is only required if the refresh token is revoked or expires after prolonged downtime.
+
 ## Documentation
 
 | Document | Description |

@@ -14,6 +14,7 @@ export type ProviderSpec = z.infer<typeof ProviderSpecSchema>;
 
 const LLMSchema = z.object({
   provider: z.enum(['openrouter', 'anthropic', 'openai', 'deepseek', 'groq', 'claude-agent', 'codex']).default('openrouter'),
+  auth: z.enum(['api_key', 'oauth', 'cli']).optional(),
   apiKey: z.string().optional(),
   apiBase: z.string().optional(),
   model: z.string().default('anthropic/claude-sonnet-4-5-20250929'),

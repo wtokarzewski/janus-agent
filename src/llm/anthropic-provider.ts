@@ -1,25 +1,66 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { LLMProvider, ChatRequest, ChatResponse, LLMMessage, ToolCall, StreamCallback } from './types.js';
+import type { TokenStore } from '../auth/types.js';
+import { getAnthropicToken } from '../auth/anthropic-oauth.js';
 import * as log from '../utils/logger.js';
 
 /**
  * Anthropic Messages API provider using official SDK.
  * Built-in retry, proper TypeScript types, streaming-ready.
+ * Supports both API key and OAuth token authentication.
  */
 export class AnthropicProvider implements LLMProvider {
   private client: Anthropic;
   private defaultModel: string;
+  private tokenStore?: TokenStore;
+  private useOAuth: boolean;
 
-  constructor(config: { apiKey: string; defaultModel: string; apiBase?: string }) {
+  constructor(config: {
+    apiKey?: string;
+    authToken?: string;
+    defaultModel: string;
+    apiBase?: string;
+    defaultHeaders?: Record<string, string>;
+    tokenStore?: TokenStore;
+  }) {
+    if (config.authToken) {
+      this.client = new Anthropic({
+        apiKey: null as unknown as string,
+        authToken: config.authToken,
+        baseURL: config.apiBase,
+        defaultHeaders: config.defaultHeaders,
+        maxRetries: 3,
+      });
+      this.useOAuth = true;
+    } else {
+      this.client = new Anthropic({
+        apiKey: config.apiKey,
+        baseURL: config.apiBase,
+        maxRetries: 3,
+      });
+      this.useOAuth = false;
+    }
+    this.defaultModel = config.defaultModel;
+    this.tokenStore = config.tokenStore;
+  }
+
+  private async ensureFreshToken(): Promise<void> {
+    if (!this.useOAuth || !this.tokenStore) return;
+    const token = await getAnthropicToken(this.tokenStore);
     this.client = new Anthropic({
-      apiKey: config.apiKey,
-      baseURL: config.apiBase,
+      apiKey: null as unknown as string,
+      authToken: token,
+      defaultHeaders: {
+        'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
+        'user-agent': 'claude-cli/2.1.62',
+        'x-app': 'cli',
+      },
       maxRetries: 3,
     });
-    this.defaultModel = config.defaultModel;
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
+    await this.ensureFreshToken();
     const model = (request.model || this.defaultModel).replace(/^anthropic\//, '');
 
     log.debug(`LLM [anthropic]: model=${model}, messages=${request.messages.length}, tools=${request.tools?.length ?? 0}`);
@@ -85,6 +126,7 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async chatStream(request: ChatRequest, onChunk: StreamCallback): Promise<ChatResponse> {
+    await this.ensureFreshToken();
     const model = (request.model || this.defaultModel).replace(/^anthropic\//, '');
 
     log.debug(`LLM [anthropic] stream: model=${model}, messages=${request.messages.length}, tools=${request.tools?.length ?? 0}`);

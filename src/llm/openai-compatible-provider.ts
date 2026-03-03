@@ -192,8 +192,37 @@ export async function createProvider(opts: {
   apiKey: string;
   model: string;
   apiBase?: string;
+  auth?: 'api_key' | 'oauth' | 'cli';
+  tokenStore?: import('../auth/types.js').TokenStore;
 }): Promise<LLMProvider> {
   const providerName = opts.provider;
+
+  // Anthropic + OAuth — use authToken with special headers
+  if (providerName === 'anthropic' && opts.auth === 'oauth') {
+    const { getAnthropicToken } = await import('../auth/anthropic-oauth.js');
+    const token = await getAnthropicToken(opts.tokenStore!);
+    const model = opts.model.replace(/^anthropic\//, '');
+    return new AnthropicProvider({
+      authToken: token,
+      defaultModel: model,
+      apiBase: opts.apiBase,
+      defaultHeaders: {
+        'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
+        'user-agent': 'claude-cli/2.1.62',
+        'x-app': 'cli',
+      },
+      tokenStore: opts.tokenStore,
+    });
+  }
+
+  // Codex + OAuth — use Responses API via ChatGPT backend
+  if (providerName === 'codex' && opts.auth === 'oauth') {
+    const { CodexOAuthProvider } = await import('./codex-oauth-provider.js');
+    return new CodexOAuthProvider({
+      defaultModel: opts.model,
+      tokenStore: opts.tokenStore!,
+    });
+  }
 
   if (providerName === 'claude-agent') {
     const { ClaudeAgentProvider } = await import('./claude-agent-provider.js');

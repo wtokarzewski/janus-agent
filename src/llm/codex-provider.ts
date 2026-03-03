@@ -14,6 +14,16 @@ import {
 } from './sdk-utils.js';
 import * as log from '../utils/logger.js';
 
+// Cache SDK import — avoid `await import()` on every call
+let CodexClass: typeof import('@openai/codex-sdk')['Codex'] | undefined;
+async function getCodex() {
+  if (!CodexClass) {
+    const sdk = await import('@openai/codex-sdk');
+    CodexClass = sdk.Codex;
+  }
+  return CodexClass;
+}
+
 export class CodexProvider implements LLMProvider {
   private defaultModel: string;
 
@@ -22,7 +32,7 @@ export class CodexProvider implements LLMProvider {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const { Codex } = await import('@openai/codex-sdk');
+    const Codex = await getCodex();
     const hasTools = !!request.tools?.length;
     const model = request.model || this.defaultModel;
 

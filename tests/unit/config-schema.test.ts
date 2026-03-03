@@ -64,6 +64,31 @@ describe('JanusConfigSchema', () => {
     expect(config.llm.providers![0].purpose).toEqual(['chat']);
   });
 
+  it('should accept auth field with valid values', () => {
+    const config = JanusConfigSchema.parse({
+      llm: { auth: 'oauth', provider: 'anthropic', model: 'claude-sonnet-4-6' },
+    });
+    expect(config.llm.auth).toBe('oauth');
+  });
+
+  it('should accept auth=cli for subscription providers', () => {
+    const config = JanusConfigSchema.parse({
+      llm: { auth: 'cli', provider: 'claude-agent', model: 'claude-sonnet-4-6' },
+    });
+    expect(config.llm.auth).toBe('cli');
+  });
+
+  it('should default auth to undefined', () => {
+    const config = JanusConfigSchema.parse({});
+    expect(config.llm.auth).toBeUndefined();
+  });
+
+  it('should reject invalid auth values', () => {
+    expect(() => JanusConfigSchema.parse({
+      llm: { auth: 'invalid' },
+    })).toThrow();
+  });
+
   it('should reject invalid types', () => {
     expect(() => JanusConfigSchema.parse({
       agent: { maxIterations: 'not a number' },
