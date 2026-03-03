@@ -25,26 +25,10 @@ export class CodexOAuthProvider implements LLMProvider {
     };
     if (accountId) headers['chatgpt-account-id'] = accountId;
 
-    const debugFetch: typeof globalThis.fetch = async (url, init) => {
-      log.debug(`LLM [codex-oauth] HTTP ${init?.method ?? 'GET'} ${url}`);
-      if (init?.body) {
-        const bodyStr = typeof init.body === 'string' ? init.body : String(init.body);
-        log.debug(`LLM [codex-oauth] body (first 500): ${bodyStr.slice(0, 500)}`);
-      }
-      const res = await globalThis.fetch(url, init);
-      if (!res.ok) {
-        const cloned = res.clone();
-        const text = await cloned.text().catch(() => '');
-        log.error(`LLM [codex-oauth] response ${res.status}: body=${text.slice(0, 500) || '(empty)'}`);
-      }
-      return res;
-    };
-
     const client = new OpenAI({
       apiKey: token,
       baseURL: 'https://chatgpt.com/backend-api/codex',
       defaultHeaders: headers,
-      fetch: debugFetch,
     });
     return { client, accountId };
   }
@@ -102,10 +86,8 @@ export class CodexOAuthProvider implements LLMProvider {
         onChunk(event.delta);
       } else if (event.type === 'response.output_item.added' && event.item.type === 'function_call') {
         const fc = event.item as unknown as Record<string, unknown>;
-        log.debug(`LLM [codex-oauth] output_item.added: ${JSON.stringify(fc)}`);
         if (fc.id) itemMeta.set(fc.id as string, { callId: (fc.call_id as string) ?? '', name: (fc.name as string) ?? '' });
       } else if (event.type === 'response.function_call_arguments.done') {
-        log.debug(`LLM [codex-oauth] fn_args.done: item_id=${event.item_id}, name=${event.name}`);
         const meta = itemMeta.get(event.item_id);
         const callId = meta?.callId ?? event.item_id;
         const name = event.name || meta?.name || '';
