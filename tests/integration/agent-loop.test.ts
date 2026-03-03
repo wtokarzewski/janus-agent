@@ -344,6 +344,86 @@ describe('AgentLoop integration', () => {
     expect(result).toBe('Blocked.');
   });
 
+  it('should flush memory after memoryFlushInterval messages', async () => {
+    // Set flush interval to 3 for fast testing
+    const config = createTestConfig({
+      agent: { maxIterations: 5, summarizationThreshold: 100, memoryFlushInterval: 3 },
+      streaming: { enabled: false },
+    });
+    const bus = new MessageBus();
+
+    // Mock provider: returns a flush response for the LLM flush call
+    const responses: import('../helpers/mock-llm.js').MockResponse[] = [];
+    // 3 chat responses + 1 flush response (flush happens after 3rd message)
+    for (let i = 0; i < 4; i++) responses.push({ content: `Response ${i + 1}` });
+    const mock = new MockProvider(responses);
+
+    const registry = new ProviderRegistry();
+    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
+
+    const tools = new ToolRegistry();
+    tools.setContext({ workspaceDir: config.workspace.dir, execDenyPatterns: [], execTimeout: 5000, maxFileSize: 1_000_000 });
+    const memory = new MemoryStore(config);
+    const sessions = new SessionManager(config);
+    const skills = new SkillLoader(config);
+    const context = new ContextBuilder({ skills, memory, config });
+    const learner = new SkillLearner(new InMemoryLearnerStorage());
+
+    const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner, memory });
+
+    // Send 3 messages (flush interval = 3)
+    await agent.processDirect('message 1', { chatId: 'flush-test' });
+    await agent.processDirect('message 2', { chatId: 'flush-test' });
+    await agent.processDirect('message 3', { chatId: 'flush-test' });
+
+    // Wait for fire-and-forget flush
+    await new Promise(r => setTimeout(r, 100));
+
+    // The 4th LLM call should be the flush call (with 'flush' purpose)
+    expect(mock.calls.length).toBe(4);
+    const flushCall = mock.calls[3];
+    expect(flushCall.messages[0].content).toContain('Extract important facts');
+  });
+
+  it('should flush all sessions on flushAllSessions()', async () => {
+    const config = createTestConfig({
+      agent: { maxIterations: 5, summarizationThreshold: 100, memoryFlushInterval: 100 },
+      streaming: { enabled: false },
+    });
+    const bus = new MessageBus();
+
+    // 2 chat responses + 1 flush response
+    const mock = new MockProvider([
+      { content: 'Hello' },
+      { content: 'World' },
+      { content: 'Flushed facts' },
+    ]);
+    const registry = new ProviderRegistry();
+    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
+
+    const tools = new ToolRegistry();
+    tools.setContext({ workspaceDir: config.workspace.dir, execDenyPatterns: [], execTimeout: 5000, maxFileSize: 1_000_000 });
+    const memory = new MemoryStore(config);
+    const sessions = new SessionManager(config);
+    const skills = new SkillLoader(config);
+    const context = new ContextBuilder({ skills, memory, config });
+    const learner = new SkillLearner(new InMemoryLearnerStorage());
+
+    const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner, memory });
+
+    // Send messages (below flush interval, so no automatic flush)
+    await agent.processDirect('hello', { chatId: 'session-a' });
+    await agent.processDirect('world', { chatId: 'session-b' });
+
+    expect(mock.calls.length).toBe(2); // Only chat calls, no flush yet
+
+    // Trigger session-end flush
+    await agent.flushAllSessions();
+
+    // Should have made flush LLM call(s)
+    expect(mock.calls.length).toBeGreaterThan(2);
+  });
+
   it('should deny tool execution when gate denies', async () => {
     const mock = new MockProvider([
       {

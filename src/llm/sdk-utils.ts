@@ -62,8 +62,8 @@ export function buildToolCallSchema(tools: ToolDefinition[]): Record<string, unk
               description: 'Tool name to call',
             },
             arguments: {
-              type: 'object',
-              description: 'Tool arguments as a JSON object',
+              type: 'string',
+              description: 'Tool arguments as a JSON-encoded string, e.g. {"command":"ls"}',
             },
           },
           required: ['name', 'arguments'],
@@ -71,7 +71,7 @@ export function buildToolCallSchema(tools: ToolDefinition[]): Record<string, unk
         },
       },
     },
-    required: ['content'],
+    required: ['content', 'tool_calls'],
     additionalProperties: false,
   };
 }
@@ -115,7 +115,7 @@ export function parseStructuredResponse(
           type: 'function' as const,
           function: {
             name: tc.name,
-            arguments: JSON.stringify(tc.arguments),
+            arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments),
           },
         }),
       );
