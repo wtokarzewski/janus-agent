@@ -169,7 +169,22 @@ export function parseHeartbeatMd(content: string): HeartbeatTask[] {
       continue;
     }
 
-    // Parse 'every Xm/h/d' or cron expression
+    // Parse 'every Xm/h/d', 'at HH:MM', or cron expression
+    const atMatch = scheduleRaw.match(/^at\s+(\d{1,2}):(\d{2})$/i);
+    if (atMatch) {
+      const hour = parseInt(atMatch[1], 10);
+      const minute = parseInt(atMatch[2], 10);
+      tasks.push({
+        name,
+        description,
+        intervalMs: 0,
+        lastRun: 0,
+        scheduleKind: 'cron',
+        scheduleValue: `${minute} ${hour} * * *`,
+      });
+      continue;
+    }
+
     const everyMatch = scheduleRaw.match(/^every\s+(\d+)([mhd])$/i);
     if (everyMatch) {
       const amount = parseInt(everyMatch[1], 10);

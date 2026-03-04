@@ -1,10 +1,11 @@
-import type { Tool } from '../types.js';
+import type { ContextualTool, ToolContext } from '../types.js';
 import type { CronService, ScheduleKind } from '../../services/cron-service.js';
 
 /**
  * cron tool — allows the agent to manage scheduled tasks.
+ * Blocks add/update when called from within a cron job (cronDepth > 0).
  */
-export class CronTool implements Tool {
+export class CronTool implements ContextualTool {
   name = 'cron';
   description = 'Manage scheduled tasks. Actions: list, add, update, remove, status, runs.';
   parameters = {
@@ -53,13 +54,23 @@ export class CronTool implements Tool {
   };
 
   private cronService: CronService;
+  private cronDepth = 0;
 
   constructor(cronService: CronService) {
     this.cronService = cronService;
   }
 
+  setContext(ctx: ToolContext): void {
+    this.cronDepth = ctx.cronDepth ?? 0;
+  }
+
   async execute(args: Record<string, unknown>): Promise<string> {
     const action = String(args.action ?? '');
+
+    // Recursion guard: block scheduling from within cron jobs
+    if (this.cronDepth > 0 && (action === 'add' || action === 'update')) {
+      return 'Error: Cannot schedule or modify cron jobs from within a cron job (recursion guard).';
+    }
 
     switch (action) {
       case 'list': {

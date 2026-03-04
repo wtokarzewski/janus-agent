@@ -11,6 +11,10 @@ import type { MemoryStore } from '../memory/memory-store.js';
 import { findUserProfile } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 
+const THINKING_LEVEL_BUDGETS: Record<string, number> = {
+  off: 0, minimal: 2000, low: 5000, medium: 10000, high: 20000,
+};
+
 export interface AgentDeps {
   bus: MessageBus;
   llm: ProviderRegistry;
@@ -71,8 +75,9 @@ export class AgentLoop {
     contextMode?: 'full' | 'minimal';
     user?: InboundMessage['user'];
     scope?: InboundMessage['scope'];
+    signal?: AbortSignal;
   }): Promise<string> {
-    const msg: InboundMessage = {
+    const msg = {
       id: `direct-${Date.now()}`,
       channel: opts?.channel ?? 'cli',
       chatId: opts?.chatId ?? 'direct',
@@ -82,7 +87,8 @@ export class AgentLoop {
       contextMode: opts?.contextMode,
       user: opts?.user,
       scope: opts?.scope,
-    };
+      signal: opts?.signal,
+    } as InboundMessage & { signal?: AbortSignal };
 
     try {
       const response = await this.processMessage(msg);
@@ -108,7 +114,13 @@ export class AgentLoop {
           continue;
         }
 
-        const response = await this.processMessage(msg);
+        this.deps.bus.markProcessing(msg.chatId);
+        let response;
+        try {
+          response = await this.processMessage(msg);
+        } finally {
+          this.deps.bus.clearProcessing(msg.chatId);
+        }
         if (!response.streamed) {
           await this.deps.bus.publishOutbound(response, signal);
         }
@@ -144,7 +156,7 @@ export class AgentLoop {
     // 2. Update tool contexts
     this.deps.tools.setContext({
       workspaceDir: this.deps.config.workspace.dir,
-      execDenyPatterns: this.deps.config.tools.execDenyPatterns,
+      execDenyPatterns: [...this.deps.config.tools.execDenyPatterns, ...(this.deps.config.tools.execDenyPatternsExtra ?? [])],
       execTimeout: this.deps.config.tools.execTimeout,
       maxFileSize: this.deps.config.tools.maxFileSize,
       chatId: msg.chatId,
@@ -152,6 +164,7 @@ export class AgentLoop {
       userToolAllow: userProfile?.tools?.allow,
       userToolDeny: userProfile?.tools?.deny,
       toolPolicy: userProfile?.tools?.policy,
+      cronDepth: msg.cronDepth,
     });
 
     // 3. Get session + build system prompt
@@ -191,7 +204,7 @@ export class AgentLoop {
     const streamCtx = (this.deps.config.streaming?.enabled ?? true)
       ? { channel: msg.channel, chatId: msg.chatId }
       : undefined;
-    const iterResult = await this.iterate(messages, toolDefs, maxIterations, sessionKey, streamCtx);
+    const iterResult = await this.iterate(messages, toolDefs, maxIterations, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId);
 
     // 6. Save final assistant message
     await this.deps.sessions.append(sessionKey, [
@@ -290,20 +303,46 @@ export class AgentLoop {
     maxIterations: number,
     sessionKey: string,
     streamCtx?: { channel: string; chatId: string },
+    signal?: AbortSignal,
+    chatId?: string,
   ): Promise<IterateResult> {
     let lastContent = '';
     let totalToolCalls = 0;
     let totalTokens = 0;
     let contextRetries = 0;
+    const seenToolCalls = new Set<string>();
 
     for (let i = 0; i < maxIterations; i++) {
+      if (signal?.aborted) {
+        return { content: lastContent || 'Cancelled', iterations: i, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
+      }
+
+      // Inject steering messages from user (sent while agent was processing)
+      if (chatId) {
+        const steering = this.deps.bus.drainSteering(chatId);
+        for (const s of steering) {
+          const steerMsg: LLMMessage = { role: 'user', content: s.content };
+          messages.push(steerMsg);
+          await this.deps.sessions.append(sessionKey, [steerMsg]);
+          log.info(`Steering injected: "${s.content.slice(0, 80)}"`);
+        }
+      }
+
       let response;
+      const thinkingConfig = this.deps.config.llm.thinking;
+      const thinkingLevel = thinkingConfig?.level;
+      const thinkingEnabled = thinkingLevel ? thinkingLevel !== 'off' : thinkingConfig?.enabled;
+      const thinkingBudget = thinkingLevel ? (THINKING_LEVEL_BUDGETS[thinkingLevel] ?? 10000) : (thinkingConfig?.budgetTokens ?? 10000);
       const chatRequest = {
         model: this.deps.config.llm.model,
         messages,
         tools: tools.length > 0 ? tools : undefined,
-        temperature: this.deps.config.llm.temperature,
+        temperature: i > 0 && this.deps.config.llm.toolTemperature != null
+          ? this.deps.config.llm.toolTemperature
+          : this.deps.config.llm.temperature,
         maxTokens: this.deps.config.llm.maxTokens,
+        ...(thinkingEnabled ? { thinking: { type: 'enabled' as const, budgetTokens: thinkingBudget } } : {}),
+        ...(this.deps.config.llm.reasoningEffort ? { reasoningEffort: this.deps.config.llm.reasoningEffort as 'low' | 'medium' | 'high' } : {}),
       };
 
       try {
@@ -349,6 +388,13 @@ export class AgentLoop {
       lastContent = response.content;
       totalTokens += response.usage.totalTokens;
 
+      // Normalize tool call IDs (Anthropic max 64 chars, OpenAI can generate 400+)
+      for (const tc of response.toolCalls) {
+        if (tc.id.length > 64) {
+          tc.id = tc.id.slice(0, 64);
+        }
+      }
+
       // No tool calls — done
       if (response.toolCalls.length === 0) {
         if (streamCtx && (this.deps.config.streaming?.enabled ?? true)) {
@@ -377,6 +423,16 @@ export class AgentLoop {
           args = {};
         }
 
+        // Duplicate tool call prevention — skip if same name+args already executed
+        const callSig = `${tc.function.name}:${tc.function.arguments}`;
+        if (seenToolCalls.has(callSig)) {
+          const skipMsg: LLMMessage = { role: 'tool', tool_call_id: tc.id, content: 'Skipped: identical tool call already executed. Try a different approach.' };
+          messages.push(skipMsg);
+          await this.deps.sessions.append(sessionKey, [skipMsg]);
+          continue;
+        }
+        seenToolCalls.add(callSig);
+
         log.info(`Tool: ${tc.function.name}(${summarizeArgs(args)})`);
         totalToolCalls++;
         const maxRetries = this.deps.config.agent.toolRetries;
@@ -399,6 +455,24 @@ export class AgentLoop {
 
         // Save tool result to session immediately
         await this.deps.sessions.append(sessionKey, [toolMsg]);
+      }
+
+      // Append significant tool calls to HISTORY.md (fire and forget)
+      if (this.deps.memory && response.toolCalls.length > 0) {
+        const historySummary = response.toolCalls.map(tc => {
+          try { return `${tc.function.name}(${summarizeArgs(JSON.parse(tc.function.arguments))})`; }
+          catch { return tc.function.name; }
+        }).join(', ');
+        this.deps.memory.appendHistory(historySummary).catch(() => {});
+      }
+
+      // Reflection nudge — reduce tool thrashing by prompting analysis
+      if (response.toolCalls.length >= 2) {
+        const reflectMsg: LLMMessage = {
+          role: 'user',
+          content: '[Reflect on the tool results above before proceeding. Are you on track?]',
+        };
+        messages.push(reflectMsg);
       }
     }
 

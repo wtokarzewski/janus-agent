@@ -99,8 +99,9 @@ export class ContextBuilder {
       }
     }
 
-    // 8. Session info
-    const sessionParts = [`Channel: ${opts.channel}`, `Chat: ${opts.chatId}`];
+    // 8. Session info (dynamic — not cached by Anthropic prompt caching)
+    const now = new Date().toISOString();
+    const sessionParts = [`Current time: ${now}`, `Channel: ${opts.channel}`, `Chat: ${opts.chatId}`];
     if (opts.user) sessionParts.push(`User: ${opts.user.userId}`);
     if (opts.scope) sessionParts.push(`Scope: ${opts.scope.kind}:${opts.scope.id}`);
     parts.push(`<session>\n${sessionParts.join('\n')}\n</session>`);
@@ -141,7 +142,6 @@ export class ContextBuilder {
   }
 
   private buildIdentity(tools: Array<{ name: string; description: string }>): string {
-    const now = new Date().toISOString();
     const workspace = resolve(this.deps.config.workspace.dir);
     const toolList = tools.map(t => `- ${t.name}: ${t.description}`).join('\n');
 
@@ -154,7 +154,6 @@ export class ContextBuilder {
     return `<identity>
 ${oauthPrefix}You are Janus, a universal AI agent.
 
-Current time: ${now}
 Workspace: ${workspace}
 
 Available tools:
@@ -165,6 +164,7 @@ Tool usage rules:
 - Never predict tool outcomes. Run the tool and check the result.
 - If a tool fails, analyze the error. Try a different approach, not the same command.
 - State your intent briefly, then act. Do not narrate every step.
+- For heartbeat/cron system messages, always call the heartbeat tool first to indicate skip or run.
 </identity>`;
   }
 
@@ -314,10 +314,17 @@ Never read more than one skill at a time.
         }
       }
 
-      // Always include today's daily note in full
-      const todayNote = await this.deps.memory.readDaily();
-      if (todayNote.trim()) {
-        parts.push(`<memory_chunk source="today" section="daily_note">\n${todayNote.trim()}\n</memory_chunk>`);
+      // Always include recent daily notes in full
+      const recentDays = this.deps.config.memory?.recentDays ?? 3;
+      for (let d = 0; d < recentDays; d++) {
+        const date = new Date();
+        date.setDate(date.getDate() - d);
+        const dateStr = date.toISOString().slice(0, 10);
+        const dayNote = await this.deps.memory.readDaily(dateStr);
+        if (dayNote.trim()) {
+          const label = d === 0 ? 'today' : dateStr;
+          parts.push(`<memory_chunk source="${label}" section="daily_note">\n${dayNote.trim()}\n</memory_chunk>`);
+        }
       }
 
       if (parts.length > 0) {

@@ -85,7 +85,7 @@ export class MemoryIndex {
   }
 
   /** Hybrid search: combines FTS5 (BM25) + vector similarity via Reciprocal Rank Fusion. */
-  async hybridSearch(query: string, limit = 5, userId?: string, scope?: { kind: string; id: string }): Promise<MemoryChunk[]> {
+  async hybridSearch(query: string, limit = 5, userId?: string, scope?: { kind: string; id: string }, textWeight = 1.0, vectorWeight = 1.0): Promise<MemoryChunk[]> {
     // 1. FTS5 results (already scope-filtered)
     const ftsResults = this.search(query, limit * 2, userId, scope);
 
@@ -123,13 +123,13 @@ export class MemoryIndex {
 
     ftsResults.forEach((c, i) => {
       const key = `${c.source}:${c.heading}`;
-      scores.set(key, (scores.get(key) ?? 0) + 1 / (k + i + 1));
+      scores.set(key, (scores.get(key) ?? 0) + textWeight / (k + i + 1));
       chunkMap.set(key, c);
     });
 
     vectorResults.forEach((c, i) => {
       const key = `${c.source}:${c.heading}`;
-      scores.set(key, (scores.get(key) ?? 0) + 1 / (k + i + 1));
+      scores.set(key, (scores.get(key) ?? 0) + vectorWeight / (k + i + 1));
       if (!chunkMap.has(key)) chunkMap.set(key, { source: c.source, heading: c.heading, content: c.content });
     });
 

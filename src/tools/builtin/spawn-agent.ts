@@ -1,5 +1,6 @@
 import type { Tool } from '../types.js';
 import type { AgentDeps } from '../../agent/agent-loop.js';
+import type { SubagentRegistry } from '../../agent/subagent-registry.js';
 import { spawnSubagent } from '../../agent/subagent.js';
 
 /**
@@ -8,7 +9,7 @@ import { spawnSubagent } from '../../agent/subagent.js';
  */
 export class SpawnAgentTool implements Tool {
   name = 'spawn_agent';
-  description = 'Spawn an isolated child agent to handle a subtask. The child agent has its own session and limited iterations. Use for independent subtasks that can be delegated (research, file analysis, etc.).';
+  description = 'Spawn an isolated child agent to handle a subtask. The child agent has its own session and limited iterations. Use for independent subtasks that can be delegated (research, file analysis, etc.). Returns subagent ID + result.';
   parameters = {
     type: 'object',
     properties: {
@@ -25,9 +26,11 @@ export class SpawnAgentTool implements Tool {
   };
 
   private deps: AgentDeps;
+  private registry?: SubagentRegistry;
 
-  constructor(deps: AgentDeps) {
+  constructor(deps: AgentDeps, registry?: SubagentRegistry) {
     this.deps = deps;
+    this.registry = registry;
   }
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -37,8 +40,8 @@ export class SpawnAgentTool implements Tool {
     const maxIterations = typeof args.max_iterations === 'number' ? args.max_iterations : undefined;
 
     try {
-      const result = await spawnSubagent(this.deps, { task, maxIterations });
-      return result;
+      const { id, result } = await spawnSubagent(this.deps, { task, maxIterations }, this.registry);
+      return `[subagent:${id}]\n${result}`;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return `Error: Subagent failed: ${msg}`;

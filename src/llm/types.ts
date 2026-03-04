@@ -25,6 +25,8 @@ export interface ChatRequest {
   tools?: ToolDefinition[];
   temperature?: number;
   maxTokens?: number;
+  thinking?: { type: 'enabled'; budgetTokens: number };
+  reasoningEffort?: 'low' | 'medium' | 'high';
 }
 
 export interface ChatResponse {
@@ -32,12 +34,15 @@ export interface ChatResponse {
   toolCalls: ToolCall[];
   usage: TokenUsage;
   finishReason: 'stop' | 'tool_calls' | 'length';
+  thinkingContent?: string;
 }
 
 export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 export type StreamCallback = (chunk: string) => void;

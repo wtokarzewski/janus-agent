@@ -16,6 +16,10 @@ export interface ToolContext {
   execDenyPatterns?: string[];
   execTimeout?: number;
   maxFileSize?: number;
+  // Web tools
+  webFetchTimeoutMs?: number;
+  webFetchMaxBytes?: number;
+  cronDepth?: number;
   // Multi-user fields
   chatId?: string;
   userId?: string;

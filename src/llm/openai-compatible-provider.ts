@@ -65,6 +65,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
       params.tools = request.tools as OpenAI.ChatCompletionTool[];
     }
 
+    if (request.reasoningEffort) {
+      (params as unknown as Record<string, unknown>).reasoning_effort = request.reasoningEffort;
+    }
+
     const response = await this.client.chat.completions.create(params);
     const choice = response.choices[0];
 
@@ -116,6 +120,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     if (request.tools && request.tools.length > 0) {
       params.tools = request.tools as OpenAI.ChatCompletionTool[];
+    }
+
+    if (request.reasoningEffort) {
+      (params as unknown as Record<string, unknown>).reasoning_effort = request.reasoningEffort;
     }
 
     const stream = await this.client.chat.completions.create(params);

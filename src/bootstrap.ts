@@ -13,6 +13,7 @@ import { ToolRegistry } from './tools/tool-registry.js';
 import { ExecTool } from './tools/builtin/exec.js';
 import { ReadFileTool } from './tools/builtin/read-file.js';
 import { WriteFileTool } from './tools/builtin/write-file.js';
+import { AppendFileTool } from './tools/builtin/append-file.js';
 import { EditFileTool } from './tools/builtin/edit-file.js';
 import { ListDirTool } from './tools/builtin/list-dir.js';
 import { MessageTool } from './tools/builtin/message.js';
@@ -28,8 +29,15 @@ import { SessionManager } from './session/session-manager.js';
 import { SkillLoader } from './skills/skill-loader.js';
 import { ContextBuilder } from './context/context-builder.js';
 import { AgentLoop } from './agent/agent-loop.js';
+import { SubagentRegistry } from './agent/subagent-registry.js';
 import { CronService } from './services/cron-service.js';
 import { CronTool } from './tools/builtin/cron.js';
+import { HeartbeatTool } from './tools/builtin/heartbeat.js';
+import { WebFetchTool } from './tools/builtin/web-fetch.js';
+import { WebSearchTool } from './tools/builtin/web-search.js';
+import { WebSearchDDGTool } from './tools/builtin/web-search-ddg.js';
+import { MCPClient, createMCPProxyTool } from './mcp/client.js';
+import * as log from './utils/logger.js';
 
 export interface AppDeps {
   config: JanusConfig;
@@ -43,6 +51,8 @@ export interface AppDeps {
   learner: SkillLearner;
   agent: AgentLoop;
   cronService: CronService | null;
+  subagentRegistry: SubagentRegistry;
+  mcpClients: MCPClient[];
 }
 
 export async function createApp(config: JanusConfig): Promise<AppDeps> {
@@ -91,14 +101,27 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   tools.register(new ExecTool());
   tools.register(new ReadFileTool());
   tools.register(new WriteFileTool());
+  tools.register(new AppendFileTool());
   tools.register(new EditFileTool());
   tools.register(new ListDirTool());
   tools.register(new MessageTool(bus));
+  tools.register(new HeartbeatTool());
+  // Web tools
+  tools.register(new WebFetchTool());
+  const webSearchApiKey = config.tools.webSearchApiKey ?? process.env.BRAVE_API_KEY;
+  if (webSearchApiKey) {
+    tools.register(new WebSearchTool(webSearchApiKey));
+  } else {
+    tools.register(new WebSearchDDGTool());
+  }
+
   tools.setContext({
     workspaceDir: config.workspace.dir,
-    execDenyPatterns: config.tools.execDenyPatterns,
+    execDenyPatterns: [...config.tools.execDenyPatterns, ...(config.tools.execDenyPatternsExtra ?? [])],
     execTimeout: config.tools.execTimeout,
     maxFileSize: config.tools.maxFileSize,
+    webFetchTimeoutMs: config.tools.webFetchTimeoutMs,
+    webFetchMaxBytes: config.tools.webFetchMaxBytes,
   });
 
   // 4. Memory
@@ -133,10 +156,28 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
     tools.register(new CronTool(cronService));
   }
 
-  // 8. Agent loop (with spawn_agent tool)
+  // 8. MCP clients (external tool servers)
+  const mcpClients: MCPClient[] = [];
+  for (const spec of config.mcp.servers) {
+    try {
+      const client = new MCPClient(spec);
+      await client.connect();
+      const mcpTools = await client.listTools();
+      for (const mcpTool of mcpTools) {
+        tools.register(createMCPProxyTool(client, spec.name, mcpTool));
+      }
+      mcpClients.push(client);
+      log.info(`MCP server "${spec.name}": ${mcpTools.length} tool(s) registered`);
+    } catch (err) {
+      log.warn(`MCP server "${spec.name}" failed to connect: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // 9. Agent loop (with spawn_agent tool + subagent registry)
+  const subagentRegistry = new SubagentRegistry();
   const agentDeps = { bus, llm, tools, sessions, context, skills, config, learner, memory };
-  tools.register(new SpawnAgentTool(agentDeps));
+  tools.register(new SpawnAgentTool(agentDeps, subagentRegistry));
   const agent = new AgentLoop(agentDeps);
 
-  return { config, db, bus, llm, tools, sessions, context, skills, learner, agent, cronService };
+  return { config, db, bus, llm, tools, sessions, context, skills, learner, agent, cronService, subagentRegistry, mcpClients };
 }

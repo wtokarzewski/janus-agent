@@ -19,9 +19,24 @@ const OBFUSCATION_WHITELIST: RegExp[] = [
   /\bdocker\b/i,
 ];
 
+// Sensitive paths that should require confirmation before writing
+const SENSITIVE_PATH_PATTERNS: RegExp[] = [
+  /^\/etc\//,
+  /[/\\]\.ssh[/\\]/,
+  /[/\\]\.env$/,
+  /[/\\]\.env\./,
+  /[/\\]\.git[/\\]config$/,
+  /[/\\]\.npmrc$/,
+  /[/\\]\.netrc$/,
+  /[/\\]id_rsa/,
+  /[/\\]credentials/i,
+  /[/\\]\.aws[/\\]/,
+  /[/\\]\.kube[/\\]/,
+];
+
 /**
  * PatternGate — matches tool calls against configurable regex patterns.
- * Only gates the `exec` tool (MVP). Can be expanded to other tools later.
+ * Gates: exec (shell commands), write_file/edit_file (sensitive paths).
  */
 export class PatternGate {
   private patterns: RegExp[];
@@ -31,13 +46,25 @@ export class PatternGate {
   }
 
   shouldGate(toolName: string, args: Record<string, unknown>): boolean {
-    if (toolName !== 'exec') return false;
+    // Gate exec commands
+    if (toolName === 'exec') {
+      const command = typeof args.command === 'string' ? args.command : '';
+      if (!command) return false;
+      if (this.patterns.some(p => p.test(command))) return true;
+      if (this.isObfuscated(command)) return true;
+      return false;
+    }
 
-    const command = typeof args.command === 'string' ? args.command : '';
-    if (!command) return false;
+    // Gate subagent spawning
+    if (toolName === 'spawn_agent') return true;
 
-    if (this.patterns.some(p => p.test(command))) return true;
-    if (this.isObfuscated(command)) return true;
+    // Gate file writes to sensitive paths
+    if (toolName === 'write_file' || toolName === 'edit_file') {
+      const path = typeof args.path === 'string' ? args.path
+        : typeof args.file_path === 'string' ? args.file_path : '';
+      if (path && SENSITIVE_PATH_PATTERNS.some(p => p.test(path))) return true;
+      return false;
+    }
 
     return false;
   }
@@ -52,6 +79,15 @@ export class PatternGate {
     if (toolName === 'exec') {
       const cmd = typeof args.command === 'string' ? args.command : String(args.command);
       return `exec: ${cmd}`;
+    }
+    if (toolName === 'write_file' || toolName === 'edit_file') {
+      const path = typeof args.path === 'string' ? args.path
+        : typeof args.file_path === 'string' ? args.file_path : '?';
+      return `${toolName}: ${path} (sensitive path)`;
+    }
+    if (toolName === 'spawn_agent') {
+      const task = typeof args.task === 'string' ? args.task.slice(0, 100) : '(unknown)';
+      return `spawn_agent: ${task}`;
     }
     return `${toolName}: ${JSON.stringify(args)}`;
   }

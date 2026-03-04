@@ -1,4 +1,5 @@
 import type { LLMProvider, ChatRequest, ChatResponse, ProviderEntry, StreamCallback } from './types.js';
+import { isFailoverCandidate } from './retry.js';
 import * as log from '../utils/logger.js';
 
 /**
@@ -50,6 +51,8 @@ export class ProviderRegistry implements LLMProvider {
         lastError = err instanceof Error ? err : new Error(String(err));
         log.warn(`Provider "${entry.name}" failed: ${lastError.message}`);
 
+        if (!isFailoverCandidate(lastError)) throw lastError;
+
         if (candidates.length > 1) {
           log.info(`Failing over to next provider...`);
         }
@@ -86,6 +89,8 @@ export class ProviderRegistry implements LLMProvider {
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         log.warn(`Provider "${entry.name}" stream failed: ${lastError.message}`);
+
+        if (!isFailoverCandidate(lastError)) throw lastError;
 
         if (candidates.length > 1) {
           log.info(`Failing over to next provider...`);
