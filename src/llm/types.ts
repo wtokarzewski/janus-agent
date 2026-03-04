@@ -26,6 +26,7 @@ export interface ChatRequest {
   temperature?: number;
   maxTokens?: number;
   thinking?: { type: 'enabled'; budgetTokens: number };
+  reasoningEffort?: 'low' | 'medium' | 'high';
 }
 
 export interface ChatResponse {

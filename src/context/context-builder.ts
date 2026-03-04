@@ -313,10 +313,17 @@ Never read more than one skill at a time.
         }
       }
 
-      // Always include today's daily note in full
-      const todayNote = await this.deps.memory.readDaily();
-      if (todayNote.trim()) {
-        parts.push(`<memory_chunk source="today" section="daily_note">\n${todayNote.trim()}\n</memory_chunk>`);
+      // Always include recent daily notes in full
+      const recentDays = this.deps.config.memory?.recentDays ?? 3;
+      for (let d = 0; d < recentDays; d++) {
+        const date = new Date();
+        date.setDate(date.getDate() - d);
+        const dateStr = date.toISOString().slice(0, 10);
+        const dayNote = await this.deps.memory.readDaily(dateStr);
+        if (dayNote.trim()) {
+          const label = d === 0 ? 'today' : dateStr;
+          parts.push(`<memory_chunk source="${label}" section="daily_note">\n${dayNote.trim()}\n</memory_chunk>`);
+        }
       }
 
       if (parts.length > 0) {

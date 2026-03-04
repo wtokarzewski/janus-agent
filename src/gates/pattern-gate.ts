@@ -55,6 +55,9 @@ export class PatternGate {
       return false;
     }
 
+    // Gate subagent spawning
+    if (toolName === 'spawn_agent') return true;
+
     // Gate file writes to sensitive paths
     if (toolName === 'write_file' || toolName === 'edit_file') {
       const path = typeof args.path === 'string' ? args.path
@@ -81,6 +84,10 @@ export class PatternGate {
       const path = typeof args.path === 'string' ? args.path
         : typeof args.file_path === 'string' ? args.file_path : '?';
       return `${toolName}: ${path} (sensitive path)`;
+    }
+    if (toolName === 'spawn_agent') {
+      const task = typeof args.task === 'string' ? args.task.slice(0, 100) : '(unknown)';
+      return `spawn_agent: ${task}`;
     }
     return `${toolName}: ${JSON.stringify(args)}`;
   }

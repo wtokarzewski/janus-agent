@@ -11,6 +11,10 @@ import type { MemoryStore } from '../memory/memory-store.js';
 import { findUserProfile } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 
+const THINKING_LEVEL_BUDGETS: Record<string, number> = {
+  off: 0, minimal: 2000, low: 5000, medium: 10000, high: 20000,
+};
+
 export interface AgentDeps {
   bus: MessageBus;
   llm: ProviderRegistry;
@@ -146,7 +150,7 @@ export class AgentLoop {
     // 2. Update tool contexts
     this.deps.tools.setContext({
       workspaceDir: this.deps.config.workspace.dir,
-      execDenyPatterns: this.deps.config.tools.execDenyPatterns,
+      execDenyPatterns: [...this.deps.config.tools.execDenyPatterns, ...(this.deps.config.tools.execDenyPatternsExtra ?? [])],
       execTimeout: this.deps.config.tools.execTimeout,
       maxFileSize: this.deps.config.tools.maxFileSize,
       chatId: msg.chatId,
@@ -299,6 +303,7 @@ export class AgentLoop {
     let totalToolCalls = 0;
     let totalTokens = 0;
     let contextRetries = 0;
+    const seenToolCalls = new Set<string>();
 
     for (let i = 0; i < maxIterations; i++) {
       if (signal?.aborted) {
@@ -306,13 +311,19 @@ export class AgentLoop {
       }
       let response;
       const thinkingConfig = this.deps.config.llm.thinking;
+      const thinkingLevel = thinkingConfig?.level;
+      const thinkingEnabled = thinkingLevel ? thinkingLevel !== 'off' : thinkingConfig?.enabled;
+      const thinkingBudget = thinkingLevel ? (THINKING_LEVEL_BUDGETS[thinkingLevel] ?? 10000) : (thinkingConfig?.budgetTokens ?? 10000);
       const chatRequest = {
         model: this.deps.config.llm.model,
         messages,
         tools: tools.length > 0 ? tools : undefined,
-        temperature: this.deps.config.llm.temperature,
+        temperature: i > 0 && this.deps.config.llm.toolTemperature != null
+          ? this.deps.config.llm.toolTemperature
+          : this.deps.config.llm.temperature,
         maxTokens: this.deps.config.llm.maxTokens,
-        ...(thinkingConfig?.enabled ? { thinking: { type: 'enabled' as const, budgetTokens: thinkingConfig.budgetTokens } } : {}),
+        ...(thinkingEnabled ? { thinking: { type: 'enabled' as const, budgetTokens: thinkingBudget } } : {}),
+        ...(this.deps.config.llm.reasoningEffort ? { reasoningEffort: this.deps.config.llm.reasoningEffort as 'low' | 'medium' | 'high' } : {}),
       };
 
       try {
@@ -392,6 +403,16 @@ export class AgentLoop {
         } catch {
           args = {};
         }
+
+        // Duplicate tool call prevention — skip if same name+args already executed
+        const callSig = `${tc.function.name}:${tc.function.arguments}`;
+        if (seenToolCalls.has(callSig)) {
+          const skipMsg: LLMMessage = { role: 'tool', tool_call_id: tc.id, content: 'Skipped: identical tool call already executed. Try a different approach.' };
+          messages.push(skipMsg);
+          await this.deps.sessions.append(sessionKey, [skipMsg]);
+          continue;
+        }
+        seenToolCalls.add(callSig);
 
         log.info(`Tool: ${tc.function.name}(${summarizeArgs(args)})`);
         totalToolCalls++;

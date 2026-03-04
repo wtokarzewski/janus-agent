@@ -32,7 +32,9 @@ export class MemoryStore {
   /** Hybrid search: FTS5 + vector similarity via RRF. Falls back to FTS-only if no embeddings. */
   async hybridSearch(query: string, limit = 5, userId?: string, scope?: InboundMessage['scope']): Promise<MemoryChunk[]> {
     if (!this.index) return [];
-    return this.index.hybridSearch(query, limit, userId, scope);
+    return this.index.hybridSearch(query, limit, userId, scope,
+      this.config.memory?.textWeight ?? 1.0,
+      this.config.memory?.vectorWeight ?? 1.0);
   }
 
   /** Reindex all memory files into the FTS5 index. */

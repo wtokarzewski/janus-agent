@@ -13,6 +13,7 @@ import { ToolRegistry } from './tools/tool-registry.js';
 import { ExecTool } from './tools/builtin/exec.js';
 import { ReadFileTool } from './tools/builtin/read-file.js';
 import { WriteFileTool } from './tools/builtin/write-file.js';
+import { AppendFileTool } from './tools/builtin/append-file.js';
 import { EditFileTool } from './tools/builtin/edit-file.js';
 import { ListDirTool } from './tools/builtin/list-dir.js';
 import { MessageTool } from './tools/builtin/message.js';
@@ -99,6 +100,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   tools.register(new ExecTool());
   tools.register(new ReadFileTool());
   tools.register(new WriteFileTool());
+  tools.register(new AppendFileTool());
   tools.register(new EditFileTool());
   tools.register(new ListDirTool());
   tools.register(new MessageTool(bus));
@@ -113,7 +115,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
 
   tools.setContext({
     workspaceDir: config.workspace.dir,
-    execDenyPatterns: config.tools.execDenyPatterns,
+    execDenyPatterns: [...config.tools.execDenyPatterns, ...(config.tools.execDenyPatternsExtra ?? [])],
     execTimeout: config.tools.execTimeout,
     maxFileSize: config.tools.maxFileSize,
     webFetchTimeoutMs: config.tools.webFetchTimeoutMs,
