@@ -22,11 +22,16 @@ interface StreamState {
   flushTimer?: ReturnType<typeof setInterval>;
 }
 
+/** Interval for refreshing Telegram "typing..." action (expires after ~5s). */
+const TYPING_REFRESH_MS = 4500;
+
 export class TelegramChannel {
   name = 'telegram';
   private bot: Bot | undefined;
   private streamStates = new Map<string, StreamState>();
   private chunkQueues = new Map<string, Promise<void>>();
+  private typingTimers = new Map<string, ReturnType<typeof setInterval>>();
+  private typingStartedAt = new Map<string, number>();
   private throttleMs = 500;
 
   /** Get the bot instance (available after start). */
@@ -74,6 +79,7 @@ export class TelegramChannel {
       }
 
       // 'message' or undefined — backward compatible
+      this.stopTyping(msg.chatId);
       const chunks = chunkMessage(msg.content, MAX_TELEGRAM_MSG);
       for (const chunk of chunks) {
         try {
@@ -137,10 +143,20 @@ export class TelegramChannel {
         scope,
       };
 
+      // If the agent is already processing this chat, buffer as steering message
+      if (bus.isProcessing(chatId)) {
+        bus.pushSteering(inbound);
+        log.info(`Telegram: steering message buffered for ${chatId}`);
+        return;
+      }
+
+      // Show "typing..." indicator while agent processes the message
+      await this.startTyping(bot, chatId);
+
       try {
         await bus.publishInbound(inbound, signal);
       } catch {
-        // Shutting down
+        this.stopTyping(chatId);
       }
     });
 
@@ -157,6 +173,7 @@ export class TelegramChannel {
     } catch (err) {
       log.warn(`Telegram: error during bot.stop(): ${err instanceof Error ? err.message : err}`);
     }
+    this.clearAllTyping();
     this.bot = undefined;
   }
 
@@ -166,7 +183,43 @@ export class TelegramChannel {
     } catch (err) {
       log.warn(`Telegram: error during stop(): ${err instanceof Error ? err.message : err}`);
     }
+    this.clearAllTyping();
     this.bot = undefined;
+  }
+
+  /** Send "typing..." chat action and keep refreshing it until stopped. */
+  private async startTyping(bot: Bot, chatId: string): Promise<void> {
+    this.stopTyping(chatId);
+    log.info(`Telegram: startTyping for ${chatId}`);
+    this.typingStartedAt.set(chatId, Date.now());
+    try {
+      await bot.api.sendChatAction(chatId, 'typing');
+    } catch (err) {
+      log.warn(`Telegram: sendChatAction failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
+    }
+    const timer = setInterval(() => {
+      bot.api.sendChatAction(chatId, 'typing').catch(() => {});
+    }, TYPING_REFRESH_MS);
+    this.typingTimers.set(chatId, timer);
+  }
+
+  /** Stop the typing indicator for a chat. */
+  private stopTyping(chatId: string): void {
+    const timer = this.typingTimers.get(chatId);
+    if (timer) {
+      const started = this.typingStartedAt.get(chatId);
+      const elapsed = started ? Date.now() - started : 0;
+      log.info(`Telegram: stopTyping for ${chatId} (after ${elapsed}ms)`);
+      clearInterval(timer);
+      this.typingTimers.delete(chatId);
+      this.typingStartedAt.delete(chatId);
+    }
+  }
+
+  /** Clear all typing indicators (used during shutdown). */
+  private clearAllTyping(): void {
+    for (const timer of this.typingTimers.values()) clearInterval(timer);
+    this.typingTimers.clear();
   }
 
   /**
@@ -186,7 +239,8 @@ export class TelegramChannel {
       return;
     }
 
-    // First chunk — send initial message (blocks chain until complete)
+    // First chunk — stop typing indicator and send initial message
+    this.stopTyping(chatId);
     try {
       const sent = await bot.api.sendMessage(chatId, content);
       this.streamStates.set(chatId, {

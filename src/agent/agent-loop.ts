@@ -114,7 +114,13 @@ export class AgentLoop {
           continue;
         }
 
-        const response = await this.processMessage(msg);
+        this.deps.bus.markProcessing(msg.chatId);
+        let response;
+        try {
+          response = await this.processMessage(msg);
+        } finally {
+          this.deps.bus.clearProcessing(msg.chatId);
+        }
         if (!response.streamed) {
           await this.deps.bus.publishOutbound(response, signal);
         }
@@ -198,7 +204,7 @@ export class AgentLoop {
     const streamCtx = (this.deps.config.streaming?.enabled ?? true)
       ? { channel: msg.channel, chatId: msg.chatId }
       : undefined;
-    const iterResult = await this.iterate(messages, toolDefs, maxIterations, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal);
+    const iterResult = await this.iterate(messages, toolDefs, maxIterations, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId);
 
     // 6. Save final assistant message
     await this.deps.sessions.append(sessionKey, [
@@ -298,6 +304,7 @@ export class AgentLoop {
     sessionKey: string,
     streamCtx?: { channel: string; chatId: string },
     signal?: AbortSignal,
+    chatId?: string,
   ): Promise<IterateResult> {
     let lastContent = '';
     let totalToolCalls = 0;
@@ -309,6 +316,18 @@ export class AgentLoop {
       if (signal?.aborted) {
         return { content: lastContent || 'Cancelled', iterations: i, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
       }
+
+      // Inject steering messages from user (sent while agent was processing)
+      if (chatId) {
+        const steering = this.deps.bus.drainSteering(chatId);
+        for (const s of steering) {
+          const steerMsg: LLMMessage = { role: 'user', content: s.content };
+          messages.push(steerMsg);
+          await this.deps.sessions.append(sessionKey, [steerMsg]);
+          log.info(`Steering injected: "${s.content.slice(0, 80)}"`);
+        }
+      }
+
       let response;
       const thinkingConfig = this.deps.config.llm.thinking;
       const thinkingLevel = thinkingConfig?.level;

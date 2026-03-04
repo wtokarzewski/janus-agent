@@ -13,6 +13,8 @@ export class MessageBus {
   private inbound: AsyncQueue<InboundMessage>;
   private outbound: AsyncQueue<OutboundMessage>;
   private handlers = new Map<string, OutboundHandler>();
+  private steering = new Map<string, InboundMessage[]>();
+  private processingChats = new Set<string>();
 
   constructor(maxSize = 100) {
     this.inbound = new AsyncQueue<InboundMessage>(maxSize);
@@ -54,6 +56,48 @@ export class MessageBus {
     handler(msg).catch(err => {
       console.error(`Bus: stream handler for "${channel}" failed:`, err instanceof Error ? err.message : String(err));
     });
+  }
+
+  // --- Steering: mid-iteration user messages ---
+
+  /** Mark a chat as being processed by the agent loop. */
+  markProcessing(chatId: string): void {
+    this.processingChats.add(chatId);
+  }
+
+  /** Clear processing state; re-queue any undrained steering messages as inbound. */
+  clearProcessing(chatId: string): void {
+    this.processingChats.delete(chatId);
+    const pending = this.steering.get(chatId);
+    if (pending && pending.length > 0) {
+      this.steering.delete(chatId);
+      for (const msg of pending) {
+        this.inbound.publish(msg).catch(() => {});
+      }
+    }
+  }
+
+  /** Check if a chat is currently being processed. */
+  isProcessing(chatId: string): boolean {
+    return this.processingChats.has(chatId);
+  }
+
+  /** Buffer a steering message for a chat that is currently processing. */
+  pushSteering(msg: InboundMessage): void {
+    let buf = this.steering.get(msg.chatId);
+    if (!buf) {
+      buf = [];
+      this.steering.set(msg.chatId, buf);
+    }
+    buf.push(msg);
+  }
+
+  /** Drain all buffered steering messages for a chat (returns and clears). */
+  drainSteering(chatId: string): InboundMessage[] {
+    const buf = this.steering.get(chatId);
+    if (!buf || buf.length === 0) return [];
+    this.steering.delete(chatId);
+    return buf;
   }
 
   /**

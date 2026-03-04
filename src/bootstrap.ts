@@ -32,6 +32,7 @@ import { AgentLoop } from './agent/agent-loop.js';
 import { SubagentRegistry } from './agent/subagent-registry.js';
 import { CronService } from './services/cron-service.js';
 import { CronTool } from './tools/builtin/cron.js';
+import { HeartbeatTool } from './tools/builtin/heartbeat.js';
 import { WebFetchTool } from './tools/builtin/web-fetch.js';
 import { WebSearchTool } from './tools/builtin/web-search.js';
 import { WebSearchDDGTool } from './tools/builtin/web-search-ddg.js';
@@ -104,6 +105,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   tools.register(new EditFileTool());
   tools.register(new ListDirTool());
   tools.register(new MessageTool(bus));
+  tools.register(new HeartbeatTool());
   // Web tools
   tools.register(new WebFetchTool());
   const webSearchApiKey = config.tools.webSearchApiKey ?? process.env.BRAVE_API_KEY;

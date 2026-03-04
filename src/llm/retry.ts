@@ -96,14 +96,28 @@ export function isFailoverCandidate(err: Error): boolean {
   // Network errors
   if (msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('fetch failed')) return true;
 
+  // Client error keywords — failing over won't help
+  const clientErrors = ['invalid_api_key', 'authentication_error', 'invalid_request', 'malformed', 'invalid_model'];
+  if (clientErrors.some(e => msg.includes(e))) return false;
+
   // Unknown errors — fail over (safe default)
+  log.debug(`Unknown error → failover: ${msg.slice(0, 120)}`);
   return true;
 }
 
 function extractStatusCode(msg: string): number | null {
-  // Match patterns like "status 503", "error 401", or standalone "503"
-  const match = msg.match(/\b([2-5]\d{2})\b/);
-  return match ? parseInt(match[1], 10) : null;
+  // Specific HTTP-context patterns first (avoids false positives from versions, line numbers)
+  for (const p of [
+    /\bstatus[:\s]+(\d{3})\b/i,
+    /\bhttp[\s/]+\d*\.?\d*\s*(\d{3})\b/i,
+    /\berror[:\s]+(\d{3})\b/i,
+  ]) {
+    const m = msg.match(p);
+    if (m) return parseInt(m[1], 10);
+  }
+  // Fallback: standalone 4xx/5xx not preceded by digit/dot
+  const fallback = msg.match(/(?<![.\d])([45]\d{2})(?!\d)/);
+  return fallback ? parseInt(fallback[1], 10) : null;
 }
 
 function sleep(ms: number): Promise<void> {
