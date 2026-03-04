@@ -358,6 +358,13 @@ export class AgentLoop {
       lastContent = response.content;
       totalTokens += response.usage.totalTokens;
 
+      // Normalize tool call IDs (Anthropic max 64 chars, OpenAI can generate 400+)
+      for (const tc of response.toolCalls) {
+        if (tc.id.length > 64) {
+          tc.id = tc.id.slice(0, 64);
+        }
+      }
+
       // No tool calls — done
       if (response.toolCalls.length === 0) {
         if (streamCtx && (this.deps.config.streaming?.enabled ?? true)) {
@@ -408,6 +415,24 @@ export class AgentLoop {
 
         // Save tool result to session immediately
         await this.deps.sessions.append(sessionKey, [toolMsg]);
+      }
+
+      // Append significant tool calls to HISTORY.md (fire and forget)
+      if (this.deps.memory && response.toolCalls.length > 0) {
+        const historySummary = response.toolCalls.map(tc => {
+          try { return `${tc.function.name}(${summarizeArgs(JSON.parse(tc.function.arguments))})`; }
+          catch { return tc.function.name; }
+        }).join(', ');
+        this.deps.memory.appendHistory(historySummary).catch(() => {});
+      }
+
+      // Reflection nudge — reduce tool thrashing by prompting analysis
+      if (response.toolCalls.length >= 2) {
+        const reflectMsg: LLMMessage = {
+          role: 'user',
+          content: '[Reflect on the tool results above before proceeding. Are you on track?]',
+        };
+        messages.push(reflectMsg);
       }
     }
 

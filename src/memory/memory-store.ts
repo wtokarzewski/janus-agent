@@ -174,6 +174,16 @@ export class MemoryStore {
     return notes.join('\n\n');
   }
 
+  /** Append an entry to HISTORY.md (append-only activity log, never edited by agent). */
+  async appendHistory(entry: string): Promise<void> {
+    await mkdir(this.memoryDir, { recursive: true });
+    const path = join(this.memoryDir, 'HISTORY.md');
+    const exists = (await this.readSafe(path)).length > 0;
+    const prefix = exists ? '\n' : '# History\n\n';
+    const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    await appendFile(path, `${prefix}- ${timestamp}: ${entry}\n`, 'utf-8');
+  }
+
   private async readSafe(path: string): Promise<string> {
     try {
       return await readFile(path, 'utf-8');

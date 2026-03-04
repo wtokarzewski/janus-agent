@@ -134,7 +134,10 @@ export class AnthropicProvider implements LLMProvider {
       : response.stop_reason === 'max_tokens' ? 'length' as const
       : 'stop' as const;
 
-    log.debug(`LLM [anthropic]: finish=${finishReason}, tool_calls=${toolCalls.length}, tokens=${response.usage.input_tokens + response.usage.output_tokens}`);
+    const cacheUsage = response.usage as unknown as Record<string, unknown>;
+    const cacheRead = typeof cacheUsage.cache_read_input_tokens === 'number' ? cacheUsage.cache_read_input_tokens as number : undefined;
+    const cacheWrite = typeof cacheUsage.cache_creation_input_tokens === 'number' ? cacheUsage.cache_creation_input_tokens as number : undefined;
+    log.debug(`LLM [anthropic]: finish=${finishReason}, tool_calls=${toolCalls.length}, tokens=${response.usage.input_tokens + response.usage.output_tokens}${cacheRead ? `, cache_read=${cacheRead}` : ''}${cacheWrite ? `, cache_write=${cacheWrite}` : ''}`);
 
     return {
       content,
@@ -143,6 +146,8 @@ export class AnthropicProvider implements LLMProvider {
         promptTokens: response.usage.input_tokens,
         completionTokens: response.usage.output_tokens,
         totalTokens: response.usage.input_tokens + response.usage.output_tokens,
+        ...(cacheRead != null ? { cacheReadTokens: cacheRead } : {}),
+        ...(cacheWrite != null ? { cacheWriteTokens: cacheWrite } : {}),
       },
       finishReason,
       ...(thinkingContent ? { thinkingContent } : {}),
@@ -228,7 +233,10 @@ export class AnthropicProvider implements LLMProvider {
       : finalMessage.stop_reason === 'max_tokens' ? 'length' as const
       : 'stop' as const;
 
-    log.debug(`LLM [anthropic] stream: finish=${finishReason}, tool_calls=${toolCalls.length}`);
+    const streamCacheUsage = finalMessage.usage as unknown as Record<string, unknown>;
+    const streamCacheRead = typeof streamCacheUsage.cache_read_input_tokens === 'number' ? streamCacheUsage.cache_read_input_tokens as number : undefined;
+    const streamCacheWrite = typeof streamCacheUsage.cache_creation_input_tokens === 'number' ? streamCacheUsage.cache_creation_input_tokens as number : undefined;
+    log.debug(`LLM [anthropic] stream: finish=${finishReason}, tool_calls=${toolCalls.length}${streamCacheRead ? `, cache_read=${streamCacheRead}` : ''}${streamCacheWrite ? `, cache_write=${streamCacheWrite}` : ''}`);
 
     return {
       content,
@@ -237,6 +245,8 @@ export class AnthropicProvider implements LLMProvider {
         promptTokens: finalMessage.usage.input_tokens,
         completionTokens: finalMessage.usage.output_tokens,
         totalTokens: finalMessage.usage.input_tokens + finalMessage.usage.output_tokens,
+        ...(streamCacheRead != null ? { cacheReadTokens: streamCacheRead } : {}),
+        ...(streamCacheWrite != null ? { cacheWriteTokens: streamCacheWrite } : {}),
       },
       finishReason,
       ...(thinkingContent ? { thinkingContent } : {}),

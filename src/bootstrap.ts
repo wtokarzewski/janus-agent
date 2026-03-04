@@ -33,6 +33,7 @@ import { CronService } from './services/cron-service.js';
 import { CronTool } from './tools/builtin/cron.js';
 import { WebFetchTool } from './tools/builtin/web-fetch.js';
 import { WebSearchTool } from './tools/builtin/web-search.js';
+import { WebSearchDDGTool } from './tools/builtin/web-search-ddg.js';
 import { MCPClient, createMCPProxyTool } from './mcp/client.js';
 import * as log from './utils/logger.js';
 
@@ -106,6 +107,8 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   const webSearchApiKey = config.tools.webSearchApiKey ?? process.env.BRAVE_API_KEY;
   if (webSearchApiKey) {
     tools.register(new WebSearchTool(webSearchApiKey));
+  } else {
+    tools.register(new WebSearchDDGTool());
   }
 
   tools.setContext({
