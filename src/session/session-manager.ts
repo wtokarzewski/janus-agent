@@ -25,12 +25,25 @@ export interface Session {
 export class SessionManager {
   private sessionsDir: string;
   private cache = new Map<string, Session>();
+  private locks = new Map<string, Promise<void>>();
 
   constructor(config: JanusConfig) {
     this.sessionsDir = resolve(config.workspace.dir, config.workspace.sessionsDir);
   }
 
+  private withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.locks.get(key) ?? Promise.resolve();
+    let resolve!: (v: void) => void;
+    const next = new Promise<void>(r => { resolve = r; });
+    this.locks.set(key, next);
+    return prev.then(fn).finally(() => resolve());
+  }
+
   async getOrCreate(key: string): Promise<Session> {
+    return this.withLock(key, () => this.getOrCreateInner(key));
+  }
+
+  private async getOrCreateInner(key: string): Promise<Session> {
     // Check cache
     const cached = this.cache.get(key);
     if (cached) return cached;
@@ -59,18 +72,22 @@ export class SessionManager {
   }
 
   async append(key: string, messages: LLMMessage[]): Promise<void> {
-    const session = await this.getOrCreate(key);
-    session.messages.push(...messages);
-    session.metadata.messageCount = session.messages.length;
-    session.metadata.updated = new Date().toISOString();
+    return this.withLock(key, async () => {
+      const session = await this.getOrCreateInner(key);
+      session.messages.push(...messages);
+      session.metadata.messageCount = session.messages.length;
+      session.metadata.updated = new Date().toISOString();
 
-    await this.save(key, session);
+      await this.save(key, session);
+    });
   }
 
   async getHistory(key: string, maxMessages = 50): Promise<LLMMessage[]> {
-    const session = await this.getOrCreate(key);
-    if (session.messages.length <= maxMessages) return session.messages;
-    return session.messages.slice(-maxMessages);
+    return this.withLock(key, async () => {
+      const session = await this.getOrCreateInner(key);
+      if (session.messages.length <= maxMessages) return session.messages;
+      return session.messages.slice(-maxMessages);
+    });
   }
 
   /**
@@ -78,18 +95,20 @@ export class SessionManager {
    * Strategy: split-half-merge — summarize first half, keep last 4 messages.
    */
   async summarize(key: string, summaryText: string): Promise<void> {
-    const session = await this.getOrCreate(key);
+    return this.withLock(key, async () => {
+      const session = await this.getOrCreateInner(key);
 
-    if (session.messages.length <= 8) return; // nothing to summarize
+      if (session.messages.length <= 8) return; // nothing to summarize
 
-    // Keep last 4 messages
-    const keepCount = 4;
-    session.messages = session.messages.slice(-keepCount);
-    session.metadata.summary = summaryText;
-    session.metadata.messageCount = session.messages.length;
+      // Keep last 4 messages
+      const keepCount = 4;
+      session.messages = session.messages.slice(-keepCount);
+      session.metadata.summary = summaryText;
+      session.metadata.messageCount = session.messages.length;
 
-    await this.save(key, session);
-    log.debug(`Summarized session ${key}, kept ${keepCount} messages`);
+      await this.save(key, session);
+      log.debug(`Summarized session ${key}, kept ${keepCount} messages`);
+    });
   }
 
   private async save(key: string, session: Session): Promise<void> {

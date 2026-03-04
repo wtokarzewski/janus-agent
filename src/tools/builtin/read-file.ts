@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import type { ContextualTool, ToolContext } from '../types.js';
+import { validatePath } from '../validate-path.js';
 
 export class ReadFileTool implements ContextualTool {
   name = 'read_file';
@@ -25,7 +25,12 @@ export class ReadFileTool implements ContextualTool {
     const filePath = String(args.path ?? '');
     if (!filePath) return 'Error: No path provided';
 
-    const fullPath = resolve(this.workspaceDir, filePath);
+    let fullPath: string;
+    try {
+      fullPath = validatePath(this.workspaceDir, filePath);
+    } catch (err) {
+      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+    }
 
     try {
       const content = await readFile(fullPath, 'utf-8');
