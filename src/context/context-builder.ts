@@ -251,6 +251,15 @@ If exactly one skill clearly applies to the user's request, read its file with r
 If multiple could apply, choose the most specific one.
 If none apply, proceed without loading a skill.
 Never read more than one skill at a time.
+
+If you notice a task pattern you have performed multiple times and no existing skill covers it, create a new SKILL.md file in the workspace skills/ directory. Use this format:
+---
+name: skill-name
+description: "One-line description of when this skill applies"
+version: "1.0.0"
+---
+# Skill Name
+Instructions for how to perform this type of task.
 </instructions>`;
 
     const skillEntries: string[] = [];
