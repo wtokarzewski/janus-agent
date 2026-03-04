@@ -136,6 +136,51 @@ describe('ProviderRegistry', () => {
     expect(response.content).toBe('generic');
   });
 
+  it('should NOT failover on 401 auth error', async () => {
+    const registry = new ProviderRegistry();
+    registry.register({
+      name: 'bad-auth',
+      provider: {
+        async chat() { throw new Error('401 Unauthorized: Invalid API key'); },
+      },
+      model: 'm1',
+      purpose: [],
+      priority: 0,
+    });
+    registry.register({
+      name: 'backup',
+      provider: makeMockProvider({ content: 'should not reach' }),
+      model: 'm2',
+      purpose: [],
+      priority: 1,
+    });
+
+    await expect(registry.chat(baseRequest)).rejects.toThrow('401 Unauthorized');
+  });
+
+  it('should failover on 503 server error', async () => {
+    const registry = new ProviderRegistry();
+    registry.register({
+      name: 'overloaded',
+      provider: {
+        async chat() { throw new Error('503 Service Unavailable'); },
+      },
+      model: 'm1',
+      purpose: [],
+      priority: 0,
+    });
+    registry.register({
+      name: 'backup',
+      provider: makeMockProvider({ content: 'backup response' }),
+      model: 'm2',
+      purpose: [],
+      priority: 1,
+    });
+
+    const response = await registry.chat(baseRequest);
+    expect(response.content).toBe('backup response');
+  });
+
   it('should list registered entries', () => {
     const registry = new ProviderRegistry();
     registry.register({

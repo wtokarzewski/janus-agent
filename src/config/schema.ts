@@ -12,6 +12,11 @@ const ProviderSpecSchema = z.object({
 
 export type ProviderSpec = z.infer<typeof ProviderSpecSchema>;
 
+const ThinkingSchema = z.object({
+  enabled: z.boolean().default(false),
+  budgetTokens: z.number().default(10_000),
+});
+
 const LLMSchema = z.object({
   provider: z.enum(['openrouter', 'anthropic', 'openai', 'deepseek', 'groq', 'claude-agent', 'codex']).default('openrouter'),
   auth: z.enum(['api_key', 'oauth', 'cli']).optional(),
@@ -20,6 +25,7 @@ const LLMSchema = z.object({
   model: z.string().default('anthropic/claude-sonnet-4-5-20250929'),
   maxTokens: z.number().default(4096),
   temperature: z.number().default(0.7),
+  thinking: ThinkingSchema.optional(),
   providers: z.array(ProviderSpecSchema).optional(),
 });
 
@@ -86,6 +92,17 @@ const MemorySchema = z.object({
   vectorSearch: z.boolean().default(false),
 });
 
+const MCPServerSpecSchema = z.object({
+  name: z.string(),
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
+
+const MCPSchema = z.object({
+  servers: z.array(MCPServerSpecSchema).default([]),
+});
+
 const UserIdentitySchema = z.object({
   channel: z.string(),
   channelUserId: z.string().optional(),
@@ -134,6 +151,9 @@ const ToolsSchema = z.object({
     'dd\\s+if=/dev/zero',
   ]),
   maxFileSize: z.number().default(1_048_576),
+  webSearchApiKey: z.string().optional(),
+  webFetchTimeoutMs: z.number().default(10_000),
+  webFetchMaxBytes: z.number().default(51_200),
 });
 
 export const JanusConfigSchema = z.object({
@@ -148,6 +168,7 @@ export const JanusConfigSchema = z.object({
   streaming: StreamingSchema.optional().transform(v => StreamingSchema.parse(v ?? {})),
   gates: GatesSchema.optional().transform(v => GatesSchema.parse(v ?? {})),
   memory: MemorySchema.optional().transform(v => MemorySchema.parse(v ?? {})),
+  mcp: MCPSchema.optional().transform(v => MCPSchema.parse(v ?? {})),
   users: z.array(UserProfileSchema).default([]),
   family: FamilySchema.optional(),
 });

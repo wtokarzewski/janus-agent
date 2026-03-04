@@ -75,6 +75,37 @@ function parseRetryAfter(err: Error): number | null {
   return null;
 }
 
+/**
+ * Should a multi-provider registry fail over to the next provider?
+ * True for transient errors (5xx, network, rate-limit).
+ * False for client errors that would fail on any provider (401, 400, prompt-too-big).
+ */
+export function isFailoverCandidate(err: Error): boolean {
+  const msg = err.message.toLowerCase();
+  const status = extractStatusCode(msg);
+
+  // Client errors — failing over won't help
+  if (status !== null && status >= 400 && status < 500) return false;
+
+  // Server errors
+  if (status !== null && status >= 500) return true;
+
+  // Transient rate limit (but not prompt-too-big disguised as 429)
+  if (msg.includes('rate limit') && !msg.includes('input tokens') && !msg.includes('prompt length')) return true;
+
+  // Network errors
+  if (msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('fetch failed')) return true;
+
+  // Unknown errors — fail over (safe default)
+  return true;
+}
+
+function extractStatusCode(msg: string): number | null {
+  // Match patterns like "status 503", "error 401", or standalone "503"
+  const match = msg.match(/\b([2-5]\d{2})\b/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }

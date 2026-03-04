@@ -25,6 +25,7 @@ export interface ChatRequest {
   tools?: ToolDefinition[];
   temperature?: number;
   maxTokens?: number;
+  thinking?: { type: 'enabled'; budgetTokens: number };
 }
 
 export interface ChatResponse {
@@ -32,6 +33,7 @@ export interface ChatResponse {
   toolCalls: ToolCall[];
   usage: TokenUsage;
   finishReason: 'stop' | 'tool_calls' | 'length';
+  thinkingContent?: string;
 }
 
 export interface TokenUsage {

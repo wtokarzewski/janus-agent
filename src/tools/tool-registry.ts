@@ -23,7 +23,9 @@ export class ToolRegistry {
   }
 
   list(): ToolDefinition[] {
-    return Array.from(this.tools.values()).map(toolToDefinition);
+    return Array.from(this.tools.values())
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(toolToDefinition);
   }
 
   names(): string[] {
@@ -32,10 +34,12 @@ export class ToolRegistry {
 
   /** Return name + description for each tool (for system prompt). */
   summaries(): Array<{ name: string; description: string }> {
-    return Array.from(this.tools.values()).map(t => ({
-      name: t.name,
-      description: t.description,
-    }));
+    return Array.from(this.tools.values())
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(t => ({
+        name: t.name,
+        description: t.description,
+      }));
   }
 
   setGate(patterns: PatternGate, service: GateService): void {

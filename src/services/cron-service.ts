@@ -58,6 +58,7 @@ export class CronService {
   private bus: MessageBus;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  private runningJobs = new Set<string>();
 
   constructor(db: Database, bus: MessageBus) {
     this.db = db;
@@ -181,6 +182,10 @@ export class CronService {
 
     for (const job of jobs) {
       if (!job.nextRunAt) continue;
+
+      // Skip if this job is already running (concurrency guard)
+      if (this.runningJobs.has(job.id)) continue;
+
       const nextRun = new Date(job.nextRunAt);
       if (now >= nextRun) {
         // Check backoff for consecutive errors
@@ -199,6 +204,7 @@ export class CronService {
 
   private async executeJob(job: CronJob): Promise<void> {
     const startedAt = new Date();
+    this.runningJobs.add(job.id);
     log.info(`Cron: firing job "${job.name}" (${job.id})`);
 
     try {
@@ -209,6 +215,7 @@ export class CronService {
         content: `[Cron job: ${job.name}]\n\n${job.task}`,
         author: 'system',
         timestamp: startedAt,
+        cronDepth: 1,
       });
 
       const durationMs = Date.now() - startedAt.getTime();
@@ -240,6 +247,8 @@ export class CronService {
       `).run(job.id, errorText, startedAt.toISOString(), durationMs);
 
       log.warn(`Cron job "${job.name}" failed: ${errorText}`);
+    } finally {
+      this.runningJobs.delete(job.id);
     }
   }
 

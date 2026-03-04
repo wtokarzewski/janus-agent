@@ -6,6 +6,7 @@ export interface InboundMessage {
   author: string;
   timestamp: Date;
   contextMode?: 'full' | 'minimal';
+  cronDepth?: number;
   user?: {
     userId: string;
     name?: string;

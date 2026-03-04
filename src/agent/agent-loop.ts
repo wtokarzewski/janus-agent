@@ -71,8 +71,9 @@ export class AgentLoop {
     contextMode?: 'full' | 'minimal';
     user?: InboundMessage['user'];
     scope?: InboundMessage['scope'];
+    signal?: AbortSignal;
   }): Promise<string> {
-    const msg: InboundMessage = {
+    const msg = {
       id: `direct-${Date.now()}`,
       channel: opts?.channel ?? 'cli',
       chatId: opts?.chatId ?? 'direct',
@@ -82,7 +83,8 @@ export class AgentLoop {
       contextMode: opts?.contextMode,
       user: opts?.user,
       scope: opts?.scope,
-    };
+      signal: opts?.signal,
+    } as InboundMessage & { signal?: AbortSignal };
 
     try {
       const response = await this.processMessage(msg);
@@ -152,6 +154,7 @@ export class AgentLoop {
       userToolAllow: userProfile?.tools?.allow,
       userToolDeny: userProfile?.tools?.deny,
       toolPolicy: userProfile?.tools?.policy,
+      cronDepth: msg.cronDepth,
     });
 
     // 3. Get session + build system prompt
@@ -191,7 +194,7 @@ export class AgentLoop {
     const streamCtx = (this.deps.config.streaming?.enabled ?? true)
       ? { channel: msg.channel, chatId: msg.chatId }
       : undefined;
-    const iterResult = await this.iterate(messages, toolDefs, maxIterations, sessionKey, streamCtx);
+    const iterResult = await this.iterate(messages, toolDefs, maxIterations, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal);
 
     // 6. Save final assistant message
     await this.deps.sessions.append(sessionKey, [
@@ -290,6 +293,7 @@ export class AgentLoop {
     maxIterations: number,
     sessionKey: string,
     streamCtx?: { channel: string; chatId: string },
+    signal?: AbortSignal,
   ): Promise<IterateResult> {
     let lastContent = '';
     let totalToolCalls = 0;
@@ -297,13 +301,18 @@ export class AgentLoop {
     let contextRetries = 0;
 
     for (let i = 0; i < maxIterations; i++) {
+      if (signal?.aborted) {
+        return { content: lastContent || 'Cancelled', iterations: i, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
+      }
       let response;
+      const thinkingConfig = this.deps.config.llm.thinking;
       const chatRequest = {
         model: this.deps.config.llm.model,
         messages,
         tools: tools.length > 0 ? tools : undefined,
         temperature: this.deps.config.llm.temperature,
         maxTokens: this.deps.config.llm.maxTokens,
+        ...(thinkingConfig?.enabled ? { thinking: { type: 'enabled' as const, budgetTokens: thinkingConfig.budgetTokens } } : {}),
       };
 
       try {

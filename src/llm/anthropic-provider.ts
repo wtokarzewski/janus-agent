@@ -71,29 +71,52 @@ export class AnthropicProvider implements LLMProvider {
     const params: Anthropic.MessageCreateParams = {
       model,
       max_tokens: request.maxTokens ?? 4096,
-      temperature: request.temperature ?? 0.7,
       messages: nonSystemMsgs.map(m => convertMessage(m)),
     };
 
+    // Extended thinking requires temperature=1 and uses a dedicated budget
+    if (request.thinking) {
+      (params as unknown as Record<string, unknown>).thinking = request.thinking;
+      params.temperature = 1;
+      // Ensure max_tokens accommodates thinking budget
+      params.max_tokens = Math.max(params.max_tokens, request.thinking.budgetTokens + 4096);
+    } else {
+      params.temperature = request.temperature ?? 0.7;
+    }
+
     if (systemMsg) {
-      params.system = systemMsg.content;
+      params.system = [{
+        type: 'text' as const,
+        text: systemMsg.content,
+        cache_control: { type: 'ephemeral' as const },
+      }];
     }
 
     if (request.tools && request.tools.length > 0) {
-      params.tools = request.tools.map(t => ({
-        name: t.function.name,
-        description: t.function.description ?? '',
-        input_schema: t.function.parameters as Anthropic.Tool.InputSchema,
-      }));
+      params.tools = request.tools.map((t, i, arr) => {
+        const tool: Anthropic.Tool = {
+          name: t.function.name,
+          description: t.function.description ?? '',
+          input_schema: t.function.parameters as Anthropic.Tool.InputSchema,
+        };
+        // Cache breakpoint on last tool for prompt caching
+        if (i === arr.length - 1) {
+          (tool as Anthropic.Tool & { cache_control?: unknown }).cache_control = { type: 'ephemeral' };
+        }
+        return tool;
+      });
     }
 
     const response = await this.client.messages.create(params);
 
     let content = '';
+    let thinkingContent = '';
     const toolCalls: ToolCall[] = [];
 
     for (const block of response.content) {
-      if (block.type === 'text') {
+      if (block.type === 'thinking') {
+        thinkingContent += (block as unknown as { thinking: string }).thinking;
+      } else if (block.type === 'text') {
         content += block.text;
       } else if (block.type === 'tool_use') {
         toolCalls.push({
@@ -122,6 +145,7 @@ export class AnthropicProvider implements LLMProvider {
         totalTokens: response.usage.input_tokens + response.usage.output_tokens,
       },
       finishReason,
+      ...(thinkingContent ? { thinkingContent } : {}),
     };
   }
 
@@ -137,21 +161,38 @@ export class AnthropicProvider implements LLMProvider {
     const params: Anthropic.MessageCreateParams = {
       model,
       max_tokens: request.maxTokens ?? 4096,
-      temperature: request.temperature ?? 0.7,
       messages: nonSystemMsgs.map(m => convertMessage(m)),
       stream: true,
     };
 
+    if (request.thinking) {
+      (params as unknown as Record<string, unknown>).thinking = request.thinking;
+      params.temperature = 1;
+      params.max_tokens = Math.max(params.max_tokens, request.thinking.budgetTokens + 4096);
+    } else {
+      params.temperature = request.temperature ?? 0.7;
+    }
+
     if (systemMsg) {
-      params.system = systemMsg.content;
+      params.system = [{
+        type: 'text' as const,
+        text: systemMsg.content,
+        cache_control: { type: 'ephemeral' as const },
+      }];
     }
 
     if (request.tools && request.tools.length > 0) {
-      params.tools = request.tools.map(t => ({
-        name: t.function.name,
-        description: t.function.description ?? '',
-        input_schema: t.function.parameters as Anthropic.Tool.InputSchema,
-      }));
+      params.tools = request.tools.map((t, i, arr) => {
+        const tool: Anthropic.Tool = {
+          name: t.function.name,
+          description: t.function.description ?? '',
+          input_schema: t.function.parameters as Anthropic.Tool.InputSchema,
+        };
+        if (i === arr.length - 1) {
+          (tool as Anthropic.Tool & { cache_control?: unknown }).cache_control = { type: 'ephemeral' };
+        }
+        return tool;
+      });
     }
 
     const stream = this.client.messages.stream(params);
@@ -163,10 +204,13 @@ export class AnthropicProvider implements LLMProvider {
     const finalMessage = await stream.finalMessage();
 
     let content = '';
+    let thinkingContent = '';
     const toolCalls: ToolCall[] = [];
 
     for (const block of finalMessage.content) {
-      if (block.type === 'text') {
+      if (block.type === 'thinking') {
+        thinkingContent += (block as unknown as { thinking: string }).thinking;
+      } else if (block.type === 'text') {
         content += block.text;
       } else if (block.type === 'tool_use') {
         toolCalls.push({
@@ -195,6 +239,7 @@ export class AnthropicProvider implements LLMProvider {
         totalTokens: finalMessage.usage.input_tokens + finalMessage.usage.output_tokens,
       },
       finishReason,
+      ...(thinkingContent ? { thinkingContent } : {}),
     };
   }
 }

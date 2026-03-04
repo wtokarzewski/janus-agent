@@ -1,10 +1,12 @@
 import { AgentLoop } from './agent-loop.js';
 import type { AgentDeps } from './agent-loop.js';
+import type { SubagentRegistry } from './subagent-registry.js';
 import * as log from '../utils/logger.js';
 
 export interface SubagentConfig {
   task: string;
   maxIterations?: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -15,11 +17,17 @@ export interface SubagentConfig {
 export async function spawnSubagent(
   parentDeps: AgentDeps,
   config: SubagentConfig,
-): Promise<string> {
+  registry?: SubagentRegistry,
+): Promise<{ id: string; result: string }> {
   const maxIterations = config.maxIterations ?? parentDeps.config.agent.maxSubagentIterations;
   const sessionKey = `sub-${Date.now()}`;
+  const id = sessionKey;
 
-  log.info(`Subagent spawned: "${config.task.slice(0, 80)}" (maxIter=${maxIterations})`);
+  // Register with registry if available
+  const controller = registry?.register(id, config.task);
+  const signal = config.signal ?? controller?.signal;
+
+  log.info(`Subagent spawned: "${config.task.slice(0, 80)}" (id=${id}, maxIter=${maxIterations})`);
 
   // Create a child config with limited iterations
   const childConfig = {
@@ -35,12 +43,22 @@ export async function spawnSubagent(
     config: childConfig,
   });
 
-  const result = await childAgent.processDirect(config.task, {
-    channel: 'system',
-    chatId: sessionKey,
-    contextMode: 'minimal',
-  });
+  try {
+    // Check if already cancelled
+    if (signal?.aborted) {
+      return { id, result: 'Cancelled before start' };
+    }
 
-  log.info(`Subagent finished: "${config.task.slice(0, 40)}..." → ${result.length} chars`);
-  return result;
+    const result = await childAgent.processDirect(config.task, {
+      channel: 'system',
+      chatId: sessionKey,
+      contextMode: 'minimal',
+      signal,
+    });
+
+    log.info(`Subagent finished: "${config.task.slice(0, 40)}..." → ${result.length} chars`);
+    return { id, result };
+  } finally {
+    registry?.unregister(id);
+  }
 }
