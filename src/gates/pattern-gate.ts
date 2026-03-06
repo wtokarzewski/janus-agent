@@ -58,6 +58,11 @@ export class PatternGate {
     // Gate subagent spawning
     if (toolName === 'spawn_agent') return true;
 
+    // Gate self_update "update" action (check is free)
+    if (toolName === 'self_update') {
+      return String(args.action) === 'update';
+    }
+
     // Gate file writes to sensitive paths
     if (toolName === 'write_file' || toolName === 'edit_file') {
       const path = typeof args.path === 'string' ? args.path
@@ -88,6 +93,9 @@ export class PatternGate {
     if (toolName === 'spawn_agent') {
       const task = typeof args.task === 'string' ? args.task.slice(0, 100) : '(unknown)';
       return `spawn_agent: ${task}`;
+    }
+    if (toolName === 'self_update') {
+      return `self_update: ${String(args.action)} (pull + install + restart)`;
     }
     return `${toolName}: ${JSON.stringify(args)}`;
   }

@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import chalk from 'chalk';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage } from '../bus/types.js';
+import type { AgentLoop } from '../agent/agent-loop.js';
+import type { SubagentRegistry } from '../agent/subagent-registry.js';
 import { randomUUID } from 'node:crypto';
 import * as log from '../utils/logger.js';
 
@@ -19,7 +21,7 @@ export class CLIChannel {
   name = 'cli';
   private rl?: readline.Interface;
 
-  async start(bus: MessageBus, signal: AbortSignal): Promise<void> {
+  async start(bus: MessageBus, signal: AbortSignal, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry }): Promise<void> {
     // Load persistent history
     const history = await loadHistory();
 
@@ -77,11 +79,27 @@ export class CLIChannel {
         return;
       }
 
+      // /stop command — cancel running agent + subagents
+      if (content.toLowerCase() === '/stop') {
+        const agent = opts?.agent;
+        const registry = opts?.subagentRegistry;
+        const result = agent?.stop();
+        const subsCancelled = registry?.cancelAll() ?? 0;
+        if (result?.cancelled || subsCancelled > 0) {
+          console.log(chalk.yellow(`\nStopped.${subsCancelled > 0 ? ` Cancelled ${subsCancelled} subagent(s).` : ''}\n`));
+        } else {
+          console.log(chalk.gray('\nNothing running.\n'));
+        }
+        this.rl?.prompt();
+        return;
+      }
+
       // /help command — show available commands
       if (content.toLowerCase() === '/help' || content.toLowerCase() === 'help') {
         console.log('');
         console.log(chalk.bold('Commands:'));
         console.log(`  ${chalk.green('/help')}     Show this help`);
+        console.log(`  ${chalk.green('/stop')}     Stop the running task`);
         console.log(`  ${chalk.green('/config')}   Reconfigure LLM provider`);
         console.log(`  ${chalk.green('exit')}      Quit (also: quit, /exit, /quit, :q, Ctrl+C)`);
         console.log('');

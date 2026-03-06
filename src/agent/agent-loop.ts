@@ -60,9 +60,23 @@ interface IterateResult {
 export class AgentLoop {
   private deps: AgentDeps;
   private messageCounters = new Map<string, { count: number; userId?: string; scope?: InboundMessage['scope'] }>();
+  private _iterationController: AbortController | null = null;
 
   constructor(deps: AgentDeps) {
     this.deps = deps;
+  }
+
+  /**
+   * Stop the current iteration (if running) and cancel all subagents.
+   * Returns true if something was actually cancelled.
+   */
+  stop(): { cancelled: boolean } {
+    if (!this._iterationController) {
+      return { cancelled: false };
+    }
+    this._iterationController.abort();
+    this._iterationController = null;
+    return { cancelled: true };
   }
 
   /**
@@ -115,10 +129,13 @@ export class AgentLoop {
         }
 
         this.deps.bus.markProcessing(msg.chatId);
+        this._iterationController = new AbortController();
         let response;
         try {
+          (msg as InboundMessage & { signal?: AbortSignal }).signal = this._iterationController.signal;
           response = await this.processMessage(msg);
         } finally {
+          this._iterationController = null;
           this.deps.bus.clearProcessing(msg.chatId);
         }
         if (!response.streamed) {
@@ -314,7 +331,10 @@ export class AgentLoop {
 
     for (let i = 0; i < maxIterations; i++) {
       if (signal?.aborted) {
-        return { content: lastContent || 'Cancelled', iterations: i, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
+        if (streamCtx) {
+          this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
+        }
+        return { content: lastContent || 'Stopped.', iterations: i, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
       }
 
       // Inject steering messages from user (sent while agent was processing)

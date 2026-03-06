@@ -3,6 +3,8 @@ import { Bot } from 'grammy';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage } from '../bus/types.js';
 import type { JanusConfig } from '../config/schema.js';
+import type { AgentLoop } from '../agent/agent-loop.js';
+import type { SubagentRegistry } from '../agent/subagent-registry.js';
 import { resolveUser } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 
@@ -39,7 +41,7 @@ export class TelegramChannel {
     return this.bot;
   }
 
-  async start(bus: MessageBus, config: JanusConfig, signal: AbortSignal, externalBot?: Bot): Promise<void> {
+  async start(bus: MessageBus, config: JanusConfig, signal: AbortSignal, externalBot?: Bot, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry }): Promise<void> {
     const tg = config.telegram;
 
     if (!externalBot && !tg.token) {
@@ -101,6 +103,18 @@ export class TelegramChannel {
         const username = ctx.from.username ? String(ctx.from.username) : '(none)';
         const type = String(ctx.chat.type);
         await ctx.reply(`chatId: ${chatId}\nuserId: ${userId}\nusername: ${username}\ntype: ${type}`);
+        return;
+      }
+
+      // /stop — cancel running agent + subagents
+      if (ctx.message?.text?.trim() === '/stop') {
+        const result = opts?.agent?.stop();
+        const subsCancelled = opts?.subagentRegistry?.cancelAll() ?? 0;
+        if (result?.cancelled || subsCancelled > 0) {
+          await ctx.reply(`Stopped.${subsCancelled > 0 ? ` Cancelled ${subsCancelled} subagent(s).` : ''}`);
+        } else {
+          await ctx.reply('Nothing running.');
+        }
         return;
       }
 
