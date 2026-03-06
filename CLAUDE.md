@@ -8,7 +8,7 @@ Janus is a universal AI agent. CLI + Telegram, ~7,500 lines TypeScript.
 
 **Name:** Janus — Roman god of beginnings, transitions, and duality. Two faces looking to the past and the future. Reflects the agent's dual nature: planning vs execution, analysis vs implementation, AI vs human control.
 
-**Status:** Post-Phase 7 — `/stop` command (CLI + Telegram, aborts running agent + subagents), `self_update` tool (check/update with git pull, npm install, test, self-respawn, auto-revert on failure, Docker detection, post-restart Telegram notification), configurable auto-update cron (`autoUpdate` config section), native OAuth (PKCE for Anthropic + Codex), security hardening (path validation, process tree kill, session locking, obfuscation detection), reliability (tool call guidelines, error hints, reflection prompt, duplicate prevention), new tools (web_fetch, web_search, append_file, heartbeat, self_update), MCP client, steering messages, extended thinking, SubagentRegistry with cancel, prompt caching, 5xx failover, skill self-creation (prompt-driven). Prior: multi-user (scoped memory, per-user filtering, family groups), subscription providers (Claude Agent SDK, Codex SDK), setup wizard, MCP server, vector search (local embeddings), temporal decay, memory flush, lazy skills, token management, cron scheduler, streaming, gates, hybrid memory search (FTS5), SQLite storage, tests (262), CI pipeline.
+**Status:** Post-Phase 7 — `/stop` command (CLI + Telegram, aborts running agent + subagents), `self_update` tool (check/update with git pull, npm install, test, self-respawn, auto-revert on failure, Docker detection, post-restart Telegram notification), configurable auto-update cron (`autoUpdate` config section), native OAuth (PKCE for Anthropic + Codex), security hardening (path validation, process tree kill, session locking, obfuscation detection), reliability (tool call guidelines, error hints, reflection prompt, duplicate prevention), new tools (web_fetch, web_search, append_file, heartbeat, self_update), MCP client, steering messages, extended thinking, SubagentRegistry with cancel, prompt caching, 5xx failover, skill self-creation (prompt-driven, cache invalidation on write), cross-platform shell (`getShellConfig` — Git Bash/bash/sh/cmd.exe, `killProcessTree`), cron/heartbeat in CLI mode (auto-detect HEARTBEAT.md). Prior: multi-user (scoped memory, per-user filtering, family groups), subscription providers (Claude Agent SDK, Codex SDK), setup wizard, MCP server, vector search (local embeddings), temporal decay, memory flush, lazy skills, token management, cron scheduler, streaming, gates, hybrid memory search (FTS5), SQLite storage, tests (268), CI pipeline.
 
 ## Architecture
 
@@ -36,8 +36,9 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `memory/` — MEMORY.md + HISTORY.md + daily notes + MemoryIndex (FTS5 + vector hybrid search with temporal decay), embedder (local @xenova/transformers)
 - `services/` — CronService (persistent cron scheduler, SQLite, recursion guard), HeartbeatService (HEARTBEAT.md → CronService sync)
 - `session/` — JSONL persistence, atomic writes, summarization, per-key mutex locking
-- `skills/` — SKILL.md loader (YAML frontmatter + markdown), lazy loading (stubs + read on demand)
+- `skills/` — SKILL.md loader (YAML frontmatter + markdown), lazy loading (stubs + read on demand), cache invalidation on skill file writes
 - `tools/` — 13 built-in tools (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update), path validation (symlink safety)
+- `utils/` — Logger, cross-platform shell config (`getShellConfig`, `killProcessTree`)
 - `users/` — User resolver (Telegram userId/username → Janus user), per-user profiles, tool/skill filtering
 
 ### Bootstrap files (unique to Janus)
@@ -84,7 +85,7 @@ npm test           # Run all tests (vitest)
 npm run typecheck   # TypeScript type checking
 ```
 
-262 tests across 31 test files: unit (anthropic-oauth, async-queue, codex-oauth, config-schema, context-builder, cron-service, cron-tool, exec-tool, gate-routing, heartbeat-parser, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sdk-utils, self-update-tool, session-lock, setup, skill-loading, stop-command, streaming, system-message, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
+268 tests across 32 test files: unit (anthropic-oauth, async-queue, codex-oauth, config-schema, context-builder, cron-service, cron-tool, exec-tool, gate-routing, heartbeat-parser, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sdk-utils, self-update-tool, session-lock, setup, shell, skill-loading, stop-command, streaming, system-message, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
 
 ## Conventions
 
