@@ -16,9 +16,11 @@ export class AppendFileTool implements ContextualTool {
   };
 
   private workspaceDir = process.cwd();
+  private onSkillsChange?: () => void;
 
   setContext(ctx: ToolContext): void {
     this.workspaceDir = ctx.workspaceDir;
+    this.onSkillsChange = ctx.onSkillsChange;
   }
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -36,6 +38,7 @@ export class AppendFileTool implements ContextualTool {
     try {
       await mkdir(dirname(fullPath), { recursive: true });
       await appendFile(fullPath, content, 'utf-8');
+      if (this.onSkillsChange && fullPath.includes('/skills/')) this.onSkillsChange();
       return `Content appended to: ${filePath}`;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : String(err)}`;

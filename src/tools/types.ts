@@ -20,6 +20,7 @@ export interface ToolContext {
   webFetchTimeoutMs?: number;
   webFetchMaxBytes?: number;
   cronDepth?: number;
+  onSkillsChange?: () => void;
   // Multi-user fields
   chatId?: string;
   userId?: string;

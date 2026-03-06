@@ -3,6 +3,8 @@
  * Starts agent loop + enabled channels (Telegram, etc.) without interactive CLI.
  */
 
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { loadConfig } from '../config/config.js';
 import { createApp } from '../bootstrap.js';
 import { Bot } from 'grammy';
@@ -10,6 +12,7 @@ import { TelegramChannel } from '../channels/telegram-channel.js';
 import { HeartbeatService } from '../services/heartbeat-service.js';
 import { PatternGate } from '../gates/pattern-gate.js';
 import { TelegramGate } from '../gates/telegram-gate.js';
+import { consumeUpdateMarker } from '../tools/builtin/self-update.js';
 import * as log from '../utils/logger.js';
 
 export async function runGateway(): Promise<void> {
@@ -67,7 +70,7 @@ export async function runGateway(): Promise<void> {
       }
 
       channelPromises.push(
-        tg.start(app.bus, config, signal, bot).catch((err) => {
+        tg.start(app.bus, config, signal, bot, { agent: app.agent, subagentRegistry: app.subagentRegistry }).catch((err) => {
           log.error(`Gateway: Telegram channel failed: ${err instanceof Error ? err.message : err}`);
         }),
       );
@@ -85,8 +88,9 @@ export async function runGateway(): Promise<void> {
     app.cronService.start(signal);
   }
 
-  // Start heartbeat service if enabled (syncs HEARTBEAT.md to CronService)
-  if (config.heartbeat.enabled) {
+  // Start heartbeat service if enabled or HEARTBEAT.md exists
+  const heartbeatFileExists = existsSync(resolve(config.workspace.dir, 'HEARTBEAT.md'));
+  if (config.heartbeat.enabled || heartbeatFileExists) {
     log.info('Gateway: starting Heartbeat service...');
     const heartbeat = new HeartbeatService({
       bus: app.bus,
@@ -97,6 +101,35 @@ export async function runGateway(): Promise<void> {
     heartbeat.start(signal).catch(err => {
       log.error(`Gateway: Heartbeat service failed: ${err instanceof Error ? err.message : err}`);
     });
+  }
+
+  // Register auto-update check cron (if enabled in config)
+  if (app.cronService && config.autoUpdate.enabled) {
+    app.cronService.upsertByName({
+      name: 'self_update:check',
+      scheduleKind: 'cron',
+      scheduleValue: config.autoUpdate.schedule,
+      task: 'Check for Janus updates using the self_update tool with action "check". If updates are available, report what changed.',
+      enabled: true,
+    });
+    log.info(`Gateway: auto-update check registered (${config.autoUpdate.schedule})`);
+  }
+
+  // Post-update notification — if we just restarted after an update
+  const updateMsg = consumeUpdateMarker();
+  if (updateMsg && config.telegram.enabled && config.telegram.allowlist.length > 0) {
+    const targetChatId = config.telegram.allowlist[0];
+    // Small delay so channels have time to initialize
+    setTimeout(() => {
+      app.bus.publishOutbound({
+        chatId: targetChatId,
+        channel: 'telegram',
+        content: `Updated and restarted successfully.\n\n${updateMsg}`,
+        timestamp: new Date(),
+      }, signal).catch(err => {
+        log.warn(`Gateway: failed to send update notification: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }, 3000);
   }
 
   console.log('Gateway running. Press Ctrl+C to stop.');

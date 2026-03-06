@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Database } from '../../src/db/database.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import { CronService } from '../../src/services/cron-service.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { HeartbeatService } from '../../src/services/heartbeat-service.js';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createTestConfig } from '../helpers/test-fixtures.js';
 
 let db: Database;
 let bus: MessageBus;
@@ -130,6 +132,52 @@ describe('CronService start/stop', () => {
   it('should start and stop without errors', () => {
     const ac = new AbortController();
     service.start(ac.signal);
+    ac.abort();
+  });
+});
+
+describe('HeartbeatService → CronService sync', () => {
+  it('should sync HEARTBEAT.md tasks to cron_jobs', async () => {
+    const heartbeatContent = `# Heartbeat
+
+## Status Check
+- schedule: every 30m
+- task: Check system status
+
+## Morning Report
+- schedule: at 09:00
+- task: Generate morning report
+`;
+    writeFileSync(join(tempDir, 'HEARTBEAT.md'), heartbeatContent);
+
+    const config = createTestConfig({
+      workspace: { dir: tempDir },
+      heartbeat: { enabled: true },
+    });
+
+    const heartbeat = new HeartbeatService({
+      bus,
+      config,
+      workspaceDir: tempDir,
+      cronService: service,
+    });
+
+    const ac = new AbortController();
+    await heartbeat.start(ac.signal);
+
+    const jobs = service.listJobs();
+    expect(jobs).toHaveLength(2);
+
+    const statusJob = jobs.find(j => j.name === 'heartbeat:Status Check');
+    expect(statusJob).toBeTruthy();
+    expect(statusJob!.scheduleKind).toBe('every');
+    expect(statusJob!.task).toBe('Check system status');
+
+    const morningJob = jobs.find(j => j.name === 'heartbeat:Morning Report');
+    expect(morningJob).toBeTruthy();
+    expect(morningJob!.scheduleKind).toBe('cron');
+    expect(morningJob!.scheduleValue).toBe('0 9 * * *');
+
     ac.abort();
   });
 });

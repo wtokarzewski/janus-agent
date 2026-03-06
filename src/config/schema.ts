@@ -69,6 +69,11 @@ const HeartbeatSchema = z.object({
   checkIntervalMs: z.number().default(60_000),
 });
 
+const AutoUpdateSchema = z.object({
+  enabled: z.boolean().default(false),
+  schedule: z.string().default('0 9 * * 1'),
+});
+
 const TelegramSchema = z.object({
   enabled: z.boolean().default(false),
   token: z.string().optional(),
@@ -176,6 +181,7 @@ export const JanusConfigSchema = z.object({
   gates: GatesSchema.optional().transform(v => GatesSchema.parse(v ?? {})),
   memory: MemorySchema.optional().transform(v => MemorySchema.parse(v ?? {})),
   mcp: MCPSchema.optional().transform(v => MCPSchema.parse(v ?? {})),
+  autoUpdate: AutoUpdateSchema.optional().transform(v => AutoUpdateSchema.parse(v ?? {})),
   users: z.array(UserProfileSchema).default([]),
   family: FamilySchema.optional(),
 });

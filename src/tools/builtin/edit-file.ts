@@ -16,9 +16,11 @@ export class EditFileTool implements ContextualTool {
   };
 
   private workspaceDir = process.cwd();
+  private onSkillsChange?: () => void;
 
   setContext(ctx: ToolContext): void {
     this.workspaceDir = ctx.workspaceDir;
+    this.onSkillsChange = ctx.onSkillsChange;
   }
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -48,6 +50,7 @@ export class EditFileTool implements ContextualTool {
 
       const newContent = content.replace(oldString, newString);
       await writeFile(fullPath, newContent, 'utf-8');
+      if (this.onSkillsChange && fullPath.includes('/skills/')) this.onSkillsChange();
       return `File edited: ${filePath}`;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : String(err)}`;

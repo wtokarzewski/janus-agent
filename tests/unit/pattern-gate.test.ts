@@ -88,6 +88,23 @@ describe('PatternGate', () => {
     expect(gate.formatAction('other', { key: 'val' })).toBe('other: {"key":"val"}');
   });
 
+  describe('self_update gating', () => {
+    const gate = new PatternGate([]);
+
+    it('should gate self_update with action "update"', () => {
+      expect(gate.shouldGate('self_update', { action: 'update' })).toBe(true);
+    });
+
+    it('should not gate self_update with action "check"', () => {
+      expect(gate.shouldGate('self_update', { action: 'check' })).toBe(false);
+    });
+
+    it('should format self_update action', () => {
+      expect(gate.formatAction('self_update', { action: 'update' })).toContain('self_update');
+      expect(gate.formatAction('self_update', { action: 'update' })).toContain('pull');
+    });
+  });
+
   describe('obfuscation detection', () => {
     // Use empty patterns to test only obfuscation detection
     const gate = new PatternGate([]);
