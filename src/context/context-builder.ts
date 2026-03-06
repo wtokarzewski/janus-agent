@@ -252,7 +252,7 @@ If multiple could apply, choose the most specific one.
 If none apply, proceed without loading a skill.
 Never read more than one skill at a time.
 
-If you notice a task pattern you have performed multiple times and no existing skill covers it, create a new SKILL.md file in the workspace skills/ directory. Use this format:
+If you notice a task pattern you have performed multiple times and no existing skill covers it, create a new SKILL.md file in the workspace skills/ directory using write_file. Use this format:
 ---
 name: skill-name
 description: "One-line description of when this skill applies"
@@ -260,6 +260,8 @@ version: "1.0.0"
 ---
 # Skill Name
 Instructions for how to perform this type of task.
+
+After writing the file, the skill is available immediately in the next interaction — no restart needed.
 </instructions>`;
 
     const skillEntries: string[] = [];

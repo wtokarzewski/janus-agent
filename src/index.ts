@@ -14,6 +14,7 @@ import { createApp } from './bootstrap.js';
 import { CLIChannel } from './channels/cli-channel.js';
 import { PatternGate } from './gates/pattern-gate.js';
 import { CLIGate } from './gates/cli-gate.js';
+import { HeartbeatService } from './services/heartbeat-service.js';
 import * as log from './utils/logger.js';
 
 const require = createRequire(import.meta.url);
@@ -77,8 +78,24 @@ program
     const agentPromise = app.agent.run(signal);
     const dispatcherPromise = app.bus.startDispatcher(signal);
 
+    // Start cron + heartbeat services (same as gateway)
+    if (app.cronService) {
+      app.cronService.start(signal);
+    }
+    if (config.heartbeat.enabled) {
+      const heartbeat = new HeartbeatService({
+        bus: app.bus,
+        config,
+        workspaceDir: config.workspace.dir,
+        cronService: app.cronService ?? undefined,
+      });
+      heartbeat.start(signal).catch(err => {
+        log.warn(`Heartbeat service failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+
     const cli = new CLIChannel();
-    await cli.start(app.bus, signal);
+    await cli.start(app.bus, signal, { agent: app.agent, subagentRegistry: app.subagentRegistry });
 
     await app.agent.flushAllSessions();
     ac.abort();

@@ -38,6 +38,10 @@ export class SkillLoader {
     return this.cache.get(name);
   }
 
+  clearCache(): void {
+    this.cache.clear();
+  }
+
   async getSummaries(): Promise<SkillSummary[]> {
     const skills = await this.loadAll();
     return skills.map(s => ({

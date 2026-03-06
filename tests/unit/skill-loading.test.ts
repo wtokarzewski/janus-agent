@@ -53,6 +53,35 @@ describe('Skill loading with location', () => {
   });
 });
 
+describe('Skill cache invalidation', () => {
+  it('should pick up new skills after clearCache()', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'janus-skill-test-'));
+    createSkillFile(tempDir, 'existing-skill');
+
+    const config = createTestConfig({ workspace: { dir: tempDir, skillsDir: 'skills' } });
+    const loader = new SkillLoader(config);
+
+    // Initial load — may include builtin skills, so check by name
+    const initial = await loader.loadAll();
+    expect(initial.find(s => s.name === 'existing-skill')).toBeTruthy();
+    expect(initial.find(s => s.name === 'new-skill')).toBeUndefined();
+    const initialCount = initial.length;
+
+    // Create a new skill on disk
+    createSkillFile(tempDir, 'new-skill', { description: 'Dynamically created' });
+
+    // Without clearCache, still returns old data
+    const cached = await loader.loadAll();
+    expect(cached.find(s => s.name === 'new-skill')).toBeUndefined();
+
+    // After clearCache, picks up the new skill
+    loader.clearCache();
+    const refreshed = await loader.loadAll();
+    expect(refreshed).toHaveLength(initialCount + 1);
+    expect(refreshed.find(s => s.name === 'new-skill')).toBeTruthy();
+  });
+});
+
 describe('Context builder skill stubs', () => {
   it('should emit location attribute in skill stubs', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'janus-skill-test-'));

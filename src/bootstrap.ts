@@ -36,6 +36,7 @@ import { HeartbeatTool } from './tools/builtin/heartbeat.js';
 import { WebFetchTool } from './tools/builtin/web-fetch.js';
 import { WebSearchTool } from './tools/builtin/web-search.js';
 import { WebSearchDDGTool } from './tools/builtin/web-search-ddg.js';
+import { SelfUpdateTool } from './tools/builtin/self-update.js';
 import { MCPClient, createMCPProxyTool } from './mcp/client.js';
 import * as log from './utils/logger.js';
 
@@ -122,6 +123,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
     maxFileSize: config.tools.maxFileSize,
     webFetchTimeoutMs: config.tools.webFetchTimeoutMs,
     webFetchMaxBytes: config.tools.webFetchMaxBytes,
+    onSkillsChange: () => skills.clearCache(),
   });
 
   // 4. Memory
@@ -178,6 +180,12 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   const agentDeps = { bus, llm, tools, sessions, context, skills, config, learner, memory };
   tools.register(new SpawnAgentTool(agentDeps, subagentRegistry));
   const agent = new AgentLoop(agentDeps);
+
+  // Self-update tool (needs agent for pre-restart flush)
+  tools.register(new SelfUpdateTool({
+    workspaceDir: config.workspace.dir,
+    onBeforeRestart: () => agent.flushAllSessions(),
+  }));
 
   return { config, db, bus, llm, tools, sessions, context, skills, learner, agent, cronService, subagentRegistry, mcpClients };
 }
