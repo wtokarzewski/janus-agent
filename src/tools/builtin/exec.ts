@@ -1,6 +1,9 @@
 import { spawn } from 'node:child_process';
 import { resolve, relative } from 'node:path';
 import type { ContextualTool, ToolContext } from '../types.js';
+import { getShellConfig, killProcessTree } from '../../utils/shell.js';
+
+const IS_WIN = process.platform === 'win32';
 
 const DEFAULT_DENY_PATTERNS = [
   'rm\\s+-rf\\s+/',
@@ -70,10 +73,12 @@ export class ExecTool implements ContextualTool {
       return `Error: working_dir must be inside workspace. Got: ${args.working_dir}`;
     }
 
+    const { shell, args: shellArgs } = getShellConfig();
+
     return new Promise<string>((resolveP) => {
-      const child = spawn('sh', ['-c', command], {
+      const child = spawn(shell, [...shellArgs, command], {
         cwd: workingDir,
-        detached: true,
+        detached: !IS_WIN,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env, HOME: process.env.HOME },
       });
@@ -87,13 +92,7 @@ export class ExecTool implements ContextualTool {
 
       const timer = setTimeout(() => {
         killed = true;
-        try {
-          process.kill(-child.pid!, 'SIGTERM');
-        } catch { /* already dead */ }
-        // Fallback SIGKILL after 2s
-        setTimeout(() => {
-          try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already dead */ }
-        }, 2000);
+        if (child.pid) killProcessTree(child.pid, { graceMs: 2000 });
       }, this.timeoutMs);
 
       child.on('close', () => {

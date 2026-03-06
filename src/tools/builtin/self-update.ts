@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import type { Tool } from '../types.js';
 import * as log from '../../utils/logger.js';
 
+const IS_WIN = process.platform === 'win32';
 const execAsync = promisify(execFile);
 const GIT_TIMEOUT = 30_000;
 const UPDATE_MARKER = resolve(process.env.HOME || '.', '.janus', '.update-complete');
@@ -147,7 +148,7 @@ export class SelfUpdateTool implements Tool {
       setTimeout(() => {
         const child = spawn(process.execPath, process.argv.slice(1), {
           cwd: process.cwd(),
-          detached: true,
+          detached: !IS_WIN,
           stdio: 'inherit',
           env: process.env,
         });
@@ -170,10 +171,10 @@ export class SelfUpdateTool implements Tool {
   }
 
   private git(args: string[]): Promise<{ stdout: string; stderr: string }> {
-    return execAsync('git', args, { cwd: this.workspaceDir, timeout: GIT_TIMEOUT });
+    return execAsync('git', args, { cwd: this.workspaceDir, timeout: GIT_TIMEOUT, shell: IS_WIN });
   }
 
   private npm(args: string[], timeout = GIT_TIMEOUT): Promise<{ stdout: string; stderr: string }> {
-    return execAsync('npm', args, { cwd: this.workspaceDir, timeout });
+    return execAsync('npm', args, { cwd: this.workspaceDir, timeout, shell: IS_WIN });
   }
 }
