@@ -5,7 +5,9 @@
  * Entry point: commander-based CLI with subcommands.
  */
 
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
 import { Command } from 'commander';
 import { runOnboard } from './commands/onboard.js';
 import { runGateway } from './commands/gateway.js';
@@ -82,7 +84,9 @@ program
     if (app.cronService) {
       app.cronService.start(signal);
     }
-    if (config.heartbeat.enabled) {
+    const heartbeatFileExists = existsSync(resolve(config.workspace.dir, 'HEARTBEAT.md'));
+    if (config.heartbeat.enabled || heartbeatFileExists) {
+      log.info('Starting Heartbeat service...');
       const heartbeat = new HeartbeatService({
         bus: app.bus,
         config,
