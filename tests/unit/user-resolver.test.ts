@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { resolveUser, loadProfileMd, findUserProfile } from '../../src/users/user-resolver.js';
+import { resolveUser, autoIdentifyUser, loadProfileMd, findUserProfile } from '../../src/users/user-resolver.js';
 import { JanusConfigSchema, type JanusConfig } from '../../src/config/schema.js';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -101,6 +101,36 @@ describe('resolveUser', () => {
     });
     const result = resolveUser('telegram', undefined, undefined, config);
     expect(result).toBeNull();
+  });
+});
+
+describe('autoIdentifyUser', () => {
+  it('should create synthetic user from channel metadata', () => {
+    const result = autoIdentifyUser('telegram', '6209059349', 'wojtek', 'Wojtek');
+    expect(result).not.toBeNull();
+    expect(result!.userId).toBe('telegram:6209059349');
+    expect(result!.name).toBe('Wojtek');
+    expect(result!.identity).toEqual({ channel: 'telegram', channelUserId: '6209059349', channelUsername: 'wojtek' });
+  });
+
+  it('should return null when channelUserId is undefined', () => {
+    expect(autoIdentifyUser('telegram', undefined, 'wojtek', 'Wojtek')).toBeNull();
+  });
+
+  it('should fallback name to username when displayName is undefined', () => {
+    const result = autoIdentifyUser('telegram', '123', 'alice', undefined);
+    expect(result!.name).toBe('alice');
+  });
+
+  it('should fallback name to channelUserId when both displayName and username are undefined', () => {
+    const result = autoIdentifyUser('telegram', '123', undefined, undefined);
+    expect(result!.name).toBe('123');
+  });
+
+  it('should work with non-telegram channels', () => {
+    const result = autoIdentifyUser('whatsapp', '+48123456789', undefined, 'Jan');
+    expect(result!.userId).toBe('whatsapp:+48123456789');
+    expect(result!.name).toBe('Jan');
   });
 });
 

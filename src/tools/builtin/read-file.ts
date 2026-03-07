@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import type { ContextualTool, ToolContext } from '../types.js';
 import { validatePath } from '../validate-path.js';
 
@@ -33,6 +33,12 @@ export class ReadFileTool implements ContextualTool {
     }
 
     try {
+      // Check file size before reading to prevent OOM on huge files
+      const fileInfo = await stat(fullPath);
+      if (fileInfo.size > this.maxSize * 2) {
+        return `Error: File too large (${(fileInfo.size / 1_048_576).toFixed(1)}MB). Max readable size is ${(this.maxSize / 1_048_576).toFixed(1)}MB.`;
+      }
+
       const content = await readFile(fullPath, 'utf-8');
       if (content.length > this.maxSize) {
         return content.slice(0, this.maxSize) + '\n... (file truncated)';

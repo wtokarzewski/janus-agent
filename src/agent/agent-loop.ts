@@ -8,6 +8,7 @@ import type { ContextBuilder } from '../context/context-builder.js';
 import type { SkillLoader } from '../skills/skill-loader.js';
 import type { JanusConfig } from '../config/schema.js';
 import type { MemoryStore } from '../memory/memory-store.js';
+import type { GateService } from '../gates/types.js';
 import { findUserProfile } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 
@@ -25,6 +26,7 @@ export interface AgentDeps {
   config: JanusConfig;
   learner?: { recordExecution(record: ExecutionRecord): Promise<void> };
   memory?: MemoryStore;
+  gateService?: GateService;
 }
 
 export interface ExecutionRecord {
@@ -64,6 +66,11 @@ export class AgentLoop {
 
   constructor(deps: AgentDeps) {
     this.deps = deps;
+  }
+
+  /** Set gate service for error recovery prompts (onToolError: 'ask'). */
+  setGateService(service: GateService): void {
+    this.deps.gateService = service;
   }
 
   /**
@@ -434,24 +441,30 @@ export class AgentLoop {
       // Save assistant+tool_calls to session
       await this.deps.sessions.append(sessionKey, [assistantMsg]);
 
-      // Execute each tool call (with retry on error)
-      for (const tc of response.toolCalls) {
-        let args: Record<string, unknown>;
-        try {
-          args = JSON.parse(tc.function.arguments);
-        } catch {
-          args = {};
-        }
+      // Execute tool calls — parallel when multiple, sequential for single
+      const uniqueCalls: typeof response.toolCalls = [];
+      const dupMessages: LLMMessage[] = [];
 
-        // Duplicate tool call prevention — skip if same name+args already executed
+      for (const tc of response.toolCalls) {
         const callSig = `${tc.function.name}:${tc.function.arguments}`;
         if (seenToolCalls.has(callSig)) {
-          const skipMsg: LLMMessage = { role: 'tool', tool_call_id: tc.id, content: 'Skipped: identical tool call already executed. Try a different approach.' };
-          messages.push(skipMsg);
-          await this.deps.sessions.append(sessionKey, [skipMsg]);
-          continue;
+          dupMessages.push({ role: 'tool', tool_call_id: tc.id, content: 'Skipped: identical tool call already executed. Try a different approach.' });
+        } else {
+          seenToolCalls.add(callSig);
+          uniqueCalls.push(tc);
         }
-        seenToolCalls.add(callSig);
+      }
+
+      // Append duplicate skip messages
+      for (const msg of dupMessages) {
+        messages.push(msg);
+        await this.deps.sessions.append(sessionKey, [msg]);
+      }
+
+      // Execute unique tool calls (parallel when >1)
+      const executeOne = async (tc: typeof uniqueCalls[0]): Promise<LLMMessage> => {
+        let args: Record<string, unknown>;
+        try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
 
         log.info(`Tool: ${tc.function.name}(${summarizeArgs(args)})`);
         totalToolCalls++;
@@ -464,17 +477,33 @@ export class AgentLoop {
           rawResult = await this.deps.tools.execute(tc.function.name, args);
         }
 
-        const result = truncateToolResult(rawResult);
+        // Error recovery: ask user whether to continue after persistent failure
+        if (rawResult.startsWith('Error:') && this.deps.config.agent.onToolError === 'ask' && this.deps.gateService) {
+          const allowed = await this.deps.gateService.confirm({
+            tool: tc.function.name,
+            action: `Tool "${tc.function.name}" failed: ${rawResult.slice(0, 200)}. Continue?`,
+            args,
+          });
+          if (!allowed) {
+            return { role: 'tool', tool_call_id: tc.id, content: 'Stopped by user after tool error.' };
+          }
+        }
 
-        const toolMsg: LLMMessage = {
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: result,
-        };
+        return { role: 'tool', tool_call_id: tc.id, content: truncateToolResult(rawResult) };
+      };
+
+      const toolResults = uniqueCalls.length > 1
+        ? await Promise.all(uniqueCalls.map(executeOne))
+        : uniqueCalls.length === 1
+          ? [await executeOne(uniqueCalls[0])]
+          : [];
+
+      // Append results in original order (preserves determinism)
+      for (const toolMsg of toolResults) {
         messages.push(toolMsg);
-
-        // Save tool result to session immediately
-        await this.deps.sessions.append(sessionKey, [toolMsg]);
+      }
+      if (toolResults.length > 0) {
+        await this.deps.sessions.append(sessionKey, toolResults);
       }
 
       // Append significant tool calls to HISTORY.md (fire and forget)

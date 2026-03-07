@@ -5,7 +5,7 @@ import type { InboundMessage, OutboundMessage } from '../bus/types.js';
 import type { JanusConfig } from '../config/schema.js';
 import type { AgentLoop } from '../agent/agent-loop.js';
 import type { SubagentRegistry } from '../agent/subagent-registry.js';
-import { resolveUser } from '../users/user-resolver.js';
+import { resolveUser, autoIdentifyUser } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 
 const MAX_TELEGRAM_MSG = 4096;
@@ -124,13 +124,11 @@ export class TelegramChannel {
         return;
       }
 
-      // Resolve user identity
-      const resolved = resolveUser(
-        'telegram',
-        ctx.from ? String(ctx.from.id) : undefined,
-        ctx.from?.username ?? undefined,
-        config,
-      );
+      // Resolve user identity (explicit config first, then auto-identify from channel metadata)
+      const channelUserId = ctx.from ? String(ctx.from.id) : undefined;
+      const channelUsername = ctx.from?.username ?? undefined;
+      const resolved = resolveUser('telegram', channelUserId, channelUsername, config)
+        ?? autoIdentifyUser('telegram', channelUserId, channelUsername, ctx.from?.first_name);
 
       // Determine scope
       let scope: InboundMessage['scope'];

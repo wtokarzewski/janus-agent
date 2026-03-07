@@ -39,6 +39,7 @@ const AgentSchema = z.object({
   contextWindow: z.number().default(128_000),
   toolRetries: z.number().default(2),
   onLLMError: z.enum(['stop', 'retry']).default('retry'),
+  onToolError: z.enum(['continue', 'ask']).default('continue'),
   maxSubagentIterations: z.number().default(5),
   maxSkillsInPrompt: z.number().default(150),
   maxSkillsPromptChars: z.number().default(30_000),
