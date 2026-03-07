@@ -13,6 +13,7 @@ import { HeartbeatService } from '../services/heartbeat-service.js';
 import { PatternGate } from '../gates/pattern-gate.js';
 import { TelegramGate } from '../gates/telegram-gate.js';
 import { consumeUpdateMarker } from '../tools/builtin/self-update.js';
+import { deriveChannelAllowlist } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 
 export async function runGateway(): Promise<void> {
@@ -50,7 +51,13 @@ export async function runGateway(): Promise<void> {
   const channelPromises: Promise<void>[] = [];
   let channelsAttempted = 0;
 
-  if (config.telegram.enabled) {
+  // Derive telegram allowlist + enabled from config.users when explicit config is empty
+  const telegramAllowlist = config.telegram.allowlist.length > 0
+    ? config.telegram.allowlist
+    : deriveChannelAllowlist('telegram', config);
+  const telegramEnabled = config.telegram.enabled || telegramAllowlist.length > 0;
+
+  if (telegramEnabled) {
     channelsAttempted++;
     log.info('Gateway: starting Telegram channel...');
 
@@ -63,9 +70,9 @@ export async function runGateway(): Promise<void> {
       const tg = new TelegramChannel();
 
       // Wire gate for Telegram (use first allowlist entry as default chatId)
-      if (config.gates.enabled && config.telegram.allowlist.length > 0) {
+      if (config.gates.enabled && telegramAllowlist.length > 0) {
         const patternGate = new PatternGate(config.gates.execPatterns);
-        const telegramGate = new TelegramGate(bot, config.telegram.allowlist[0]);
+        const telegramGate = new TelegramGate(bot, telegramAllowlist[0]);
         app.tools.setGate(patternGate, telegramGate);
         app.agent.setGateService(telegramGate);
       }
@@ -79,7 +86,7 @@ export async function runGateway(): Promise<void> {
   }
 
   if (channelsAttempted === 0) {
-    console.error('Error: No channels enabled. Enable at least one channel in janus.json (e.g. telegram.enabled: true).');
+    console.error('Error: No channels enabled. Enable at least one channel in janus.json (e.g. telegram.enabled or users with telegram identities).');
     process.exit(1);
   }
 
@@ -118,8 +125,8 @@ export async function runGateway(): Promise<void> {
 
   // Post-update notification — if we just restarted after an update
   const updateMsg = consumeUpdateMarker();
-  if (updateMsg && config.telegram.enabled && config.telegram.allowlist.length > 0) {
-    const targetChatId = config.telegram.allowlist[0];
+  if (updateMsg && telegramEnabled && telegramAllowlist.length > 0) {
+    const targetChatId = telegramAllowlist[0];
     // Small delay so channels have time to initialize
     setTimeout(() => {
       app.bus.publishOutbound({

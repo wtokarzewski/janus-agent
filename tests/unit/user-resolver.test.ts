@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { resolveUser, autoIdentifyUser, loadProfileMd, findUserProfile } from '../../src/users/user-resolver.js';
+import { resolveUser, autoIdentifyUser, loadProfileMd, findUserProfile, deriveChannelAllowlist } from '../../src/users/user-resolver.js';
 import { JanusConfigSchema, type JanusConfig } from '../../src/config/schema.js';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -164,6 +164,44 @@ describe('loadProfileMd', () => {
     const result = await loadProfileMd('user1');
     process.env.HOME = origHome;
     expect(result).toBeNull();
+  });
+});
+
+describe('deriveChannelAllowlist', () => {
+  it('should return channelUserIds for matching channel', () => {
+    const config = makeConfig({
+      users: [
+        { id: 'alice', name: 'Alice', identities: [{ channel: 'telegram', channelUserId: '111' }] },
+        { id: 'bob', name: 'Bob', identities: [{ channel: 'telegram', channelUserId: '222' }] },
+      ],
+    });
+    expect(deriveChannelAllowlist('telegram', config)).toEqual(['111', '222']);
+  });
+
+  it('should return empty array when no users configured', () => {
+    const config = makeConfig({ users: [] });
+    expect(deriveChannelAllowlist('telegram', config)).toEqual([]);
+  });
+
+  it('should filter by channel (not cross-match)', () => {
+    const config = makeConfig({
+      users: [
+        { id: 'alice', name: 'Alice', identities: [{ channel: 'telegram', channelUserId: '111' }] },
+        { id: 'bob', name: 'Bob', identities: [{ channel: 'whatsapp', channelUserId: '222' }] },
+      ],
+    });
+    expect(deriveChannelAllowlist('telegram', config)).toEqual(['111']);
+    expect(deriveChannelAllowlist('whatsapp', config)).toEqual(['222']);
+  });
+
+  it('should skip identities without channelUserId', () => {
+    const config = makeConfig({
+      users: [
+        { id: 'alice', name: 'Alice', identities: [{ channel: 'telegram', channelUsername: 'alice_t' }] },
+        { id: 'bob', name: 'Bob', identities: [{ channel: 'telegram', channelUserId: '222' }] },
+      ],
+    });
+    expect(deriveChannelAllowlist('telegram', config)).toEqual(['222']);
   });
 });
 

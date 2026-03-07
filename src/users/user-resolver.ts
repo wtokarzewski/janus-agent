@@ -91,6 +91,17 @@ export async function loadProfileMd(userId: string, profilePath?: string): Promi
 }
 
 /**
+ * Derive an allowlist of channelUserIds from config.users for a given channel.
+ * Generic — works for any channel (telegram, whatsapp, etc.).
+ */
+export function deriveChannelAllowlist(channel: string, config: JanusConfig): string[] {
+  return config.users
+    .flatMap(u => u.identities)
+    .filter(i => i.channel === channel && i.channelUserId)
+    .map(i => i.channelUserId!);
+}
+
+/**
  * Find a UserProfile from config by userId.
  */
 export function findUserProfile(userId: string, config: JanusConfig): UserProfile | undefined {

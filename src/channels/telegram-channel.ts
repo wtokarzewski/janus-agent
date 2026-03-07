@@ -5,7 +5,7 @@ import type { InboundMessage, OutboundMessage } from '../bus/types.js';
 import type { JanusConfig } from '../config/schema.js';
 import type { AgentLoop } from '../agent/agent-loop.js';
 import type { SubagentRegistry } from '../agent/subagent-registry.js';
-import { resolveUser, autoIdentifyUser } from '../users/user-resolver.js';
+import { resolveUser, autoIdentifyUser, deriveChannelAllowlist } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 
 const MAX_TELEGRAM_MSG = 4096;
@@ -118,8 +118,9 @@ export class TelegramChannel {
         return;
       }
 
-      // Allowlist check — always first
-      if (tg.allowlist.length > 0 && !tg.allowlist.includes(chatId) && !tg.allowlist.includes(author)) {
+      // Allowlist check — always first (explicit allowlist takes priority, fallback to users-derived)
+      const effectiveAllowlist = tg.allowlist.length > 0 ? tg.allowlist : deriveChannelAllowlist('telegram', config);
+      if (effectiveAllowlist.length > 0 && !effectiveAllowlist.includes(chatId) && !effectiveAllowlist.includes(author)) {
         log.debug(`Telegram: ignoring message from ${author} (chat ${chatId}, not in allowlist)`);
         return;
       }
