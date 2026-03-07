@@ -1,25 +1,25 @@
 {
   "llm": {
-    "provider": "codex",
-    "model": "gpt-5.3-codex",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
     "apiKey": "",
-    "auth": "oauth"
+    "maxTokens": 4096,
+    "temperature": 0.7
+  },
+  "telegram": {
+    "enabled": false,
+    "token": "",
+    "allowlist": []
   },
   "heartbeat": {
-    "enabled": true
+    "enabled": false
   },
   "autoUpdate": {
-    "enabled": true,
+    "enabled": false,
     "schedule": "0 9 * * 1"
   },
   "memory": {
-    "vectorSearch": true
+    "vectorSearch": false
   },
-  "users": [
-    {
-      "id": "wojtek",
-      "name": "Wojtek",
-      "identities": [{ "channel": "telegram", "channelUserId": "" }]
-    }
-  ]
+  "users": []
 }
