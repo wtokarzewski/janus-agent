@@ -127,47 +127,51 @@ export class TelegramChannel {
       // Invite redemption — handle /start invite_TOKEN before allowlist check
       const inviteMatch = ctx.message?.text?.match(/^\/start\s+invite_(.+)$/);
       if (inviteMatch && opts?.inviteStore) {
-        const invitedBy = opts.inviteStore.redeem(inviteMatch[1]);
-        if (invitedBy) {
-          const userId = String(ctx.from.id);
-          const username = ctx.from.username ?? undefined;
-          const firstName = ctx.from.first_name ?? 'User';
-          runtimeAllowlist.add(chatId);
+        try {
+          const invitedBy = opts.inviteStore.redeem(inviteMatch[1]);
+          if (invitedBy) {
+            const userId = String(ctx.from.id);
+            const username = ctx.from.username ?? undefined;
+            const firstName = ctx.from.first_name ?? 'User';
+            runtimeAllowlist.add(chatId);
 
-          // Persist to config
-          const newUser = {
-            id: username ?? `user-${userId}`,
-            name: firstName,
-            identities: [{ channel: 'telegram', channelUserId: userId, ...(username ? { channelUsername: username } : {}) }],
-          };
-          const existingUsers = config.users ?? [];
-          const alreadyExists = existingUsers.some(u =>
-            u.identities.some(i => i.channel === 'telegram' && i.channelUserId === userId),
-          );
-          if (!alreadyExists) {
-            existingUsers.push(newUser as typeof existingUsers[0]);
+            // Persist to config
+            const newUser = {
+              id: username ?? `user-${userId}`,
+              name: firstName,
+              identities: [{ channel: 'telegram', channelUserId: userId, ...(username ? { channelUsername: username } : {}) }],
+            };
+            const existingUsers = config.users ?? [];
+            const alreadyExists = existingUsers.some(u =>
+              u.identities.some(i => i.channel === 'telegram' && i.channelUserId === userId),
+            );
+            if (!alreadyExists) {
+              existingUsers.push(newUser as typeof existingUsers[0]);
 
-            // Also add to explicit telegram allowlist so it survives restart
-            const allowlist = tg.allowlist.length > 0 ? [...tg.allowlist] : [];
-            if (allowlist.length > 0 && !allowlist.includes(userId)) {
-              allowlist.push(userId);
+              // Also add to explicit telegram allowlist so it survives restart
+              const allowlist = tg.allowlist.length > 0 ? [...tg.allowlist] : [];
+              if (allowlist.length > 0 && !allowlist.includes(userId)) {
+                allowlist.push(userId);
+              }
+
+              saveConfig({
+                users: existingUsers,
+                ...(allowlist.length > 0 ? { telegram: { ...tg, allowlist } } : {}),
+              }).catch(err => {
+                log.warn(`Failed to save invited user to config: ${err instanceof Error ? err.message : String(err)}`);
+              });
             }
 
-            saveConfig({
-              users: existingUsers,
-              ...(allowlist.length > 0 ? { telegram: { ...tg, allowlist } } : {}),
-            }).catch(err => {
-              log.warn(`Failed to save invited user to config: ${err instanceof Error ? err.message : String(err)}`);
-            });
+            log.info(`Telegram: user ${firstName} (${userId}) joined via invite from ${invitedBy}`);
+            await ctx.reply(`Welcome, ${firstName}! You were invited by ${invitedBy}. You can now chat with me.`);
+          } else {
+            log.info(`Telegram: expired/invalid invite from ${author} (chat ${chatId})`);
+            await ctx.reply('This invite link is invalid or has expired.');
           }
-
-          log.info(`Telegram: user ${firstName} (${userId}) joined via invite from ${invitedBy}`);
-          await ctx.reply(`Welcome, ${firstName}! You were invited by ${invitedBy}. You can now chat with me.`);
-          return;
-        } else {
-          await ctx.reply('This invite link is invalid or has expired.');
-          return;
+        } catch (err) {
+          log.error(`Telegram: invite handling failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
         }
+        return;
       }
 
       // Allowlist check — explicit allowlist, users-derived, or runtime (invite)
