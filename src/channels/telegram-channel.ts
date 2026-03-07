@@ -163,10 +163,10 @@ export class TelegramChannel {
             }
 
             log.info(`Telegram: user ${firstName} (${userId}) joined via invite from ${invitedBy}`);
-            await ctx.reply(`Welcome, ${firstName}! You were invited by ${invitedBy}. You can now chat with me.`);
+            ctx.reply(`Welcome, ${firstName}! You were invited by ${invitedBy}. You can now chat with me.`).catch(() => {});
           } else {
             log.info(`Telegram: expired/invalid invite from ${author} (chat ${chatId})`);
-            await ctx.reply('This invite link is invalid or has expired.');
+            ctx.reply('This invite link is invalid or has expired.').catch(() => {});
           }
         } catch (err) {
           log.error(`Telegram: invite handling failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
