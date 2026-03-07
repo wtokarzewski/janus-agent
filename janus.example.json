@@ -1,0 +1,161 @@
+{
+  "llm": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "apiKey": "",
+    "apiBase": "",
+    "auth": "api_key",
+    "maxTokens": 4096,
+    "temperature": 0.7,
+    "toolTemperature": 0.3,
+    "reasoningEffort": "medium",
+    "thinking": {
+      "enabled": false,
+      "budgetTokens": 10000,
+      "level": "medium"
+    },
+    "providers": [
+      {
+        "name": "primary",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6",
+        "apiKey": "",
+        "apiBase": "",
+        "purpose": ["chat"],
+        "priority": 0
+      },
+      {
+        "name": "fallback",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "apiKey": "",
+        "purpose": ["chat"],
+        "priority": 1
+      }
+    ]
+  },
+
+  "agent": {
+    "maxIterations": 20,
+    "summarizationThreshold": 20,
+    "tokenBudget": 100000,
+    "toolRetries": 2,
+    "onLLMError": "retry",
+    "maxSubagentIterations": 5,
+    "maxSkillsInPrompt": 150,
+    "maxSkillsPromptChars": 30000,
+    "memoryFlushInterval": 10
+  },
+
+  "workspace": {
+    "dir": ".",
+    "memoryDir": "memory",
+    "sessionsDir": "sessions",
+    "skillsDir": "skills"
+  },
+
+  "tools": {
+    "execTimeout": 30000,
+    "maxFileSize": 1048576,
+    "webSearchApiKey": "",
+    "webFetchTimeoutMs": 10000,
+    "webFetchMaxBytes": 51200,
+    "execDenyPatterns": [
+      "rm\\s+-rf\\s+/",
+      "rm\\s+-rf\\s+~",
+      "sudo\\s+rm",
+      "mkfs",
+      ":\\(\\)\\{:|:&\\};:",
+      ">\\s*/dev/sda",
+      "dd\\s+if=/dev/zero"
+    ],
+    "execDenyPatternsExtra": []
+  },
+
+  "database": {
+    "enabled": true,
+    "path": ".janus/janus.db"
+  },
+
+  "telegram": {
+    "enabled": false,
+    "token": "",
+    "allowlist": []
+  },
+
+  "streaming": {
+    "enabled": true,
+    "telegramThrottleMs": 500
+  },
+
+  "heartbeat": {
+    "enabled": false,
+    "checkIntervalMs": 60000
+  },
+
+  "autoUpdate": {
+    "enabled": false,
+    "schedule": "0 9 * * 1"
+  },
+
+  "gates": {
+    "enabled": true,
+    "execPatterns": [
+      "rm\\s",
+      "git\\s+push",
+      "git\\s+reset",
+      "npm\\s+publish",
+      "docker\\s+rm"
+    ]
+  },
+
+  "memory": {
+    "vectorSearch": false,
+    "vectorWeight": 1.0,
+    "textWeight": 1.0,
+    "recentDays": 3
+  },
+
+  "mcp": {
+    "servers": [
+      {
+        "name": "example-server",
+        "command": "npx",
+        "args": ["-y", "@example/mcp-server"],
+        "env": {
+          "API_KEY": ""
+        }
+      }
+    ]
+  },
+
+  "users": [
+    {
+      "id": "alice",
+      "name": "Alice",
+      "identities": [
+        { "channel": "telegram", "channelUserId": "123456789", "channelUsername": "alice" }
+      ],
+      "profilePath": "",
+      "tools": {
+        "allow": [],
+        "deny": [],
+        "policy": {
+          "maxRecencyDays": 30,
+          "domainsAllow": [],
+          "domainsDeny": [],
+          "contentRating": "R"
+        }
+      },
+      "skills": {
+        "allow": [],
+        "deny": []
+      }
+    }
+  ],
+
+  "family": {
+    "id": "family",
+    "groupChatIds": []
+  }
+}
