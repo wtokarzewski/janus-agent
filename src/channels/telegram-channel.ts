@@ -145,7 +145,17 @@ export class TelegramChannel {
           );
           if (!alreadyExists) {
             existingUsers.push(newUser as typeof existingUsers[0]);
-            saveConfig({ users: existingUsers }).catch(err => {
+
+            // Also add to explicit telegram allowlist so it survives restart
+            const allowlist = tg.allowlist.length > 0 ? [...tg.allowlist] : [];
+            if (allowlist.length > 0 && !allowlist.includes(userId)) {
+              allowlist.push(userId);
+            }
+
+            saveConfig({
+              users: existingUsers,
+              ...(allowlist.length > 0 ? { telegram: { ...tg, allowlist } } : {}),
+            }).catch(err => {
               log.warn(`Failed to save invited user to config: ${err instanceof Error ? err.message : String(err)}`);
             });
           }
