@@ -2,7 +2,7 @@
   "llm": {
     "provider": "anthropic",
     "model": "claude-sonnet-4-6",
-    "apiKey": "",
+    "apiKey": "sk-ant-...",
     "apiBase": "",
     "auth": "api_key",
     "maxTokens": 4096,
@@ -19,7 +19,7 @@
         "name": "primary",
         "provider": "anthropic",
         "model": "claude-sonnet-4-6",
-        "apiKey": "",
+        "apiKey": "sk-ant-...",
         "apiBase": "",
         "purpose": ["chat"],
         "priority": 0
@@ -28,7 +28,7 @@
         "name": "fallback",
         "provider": "openai",
         "model": "gpt-4o",
-        "apiKey": "",
+        "apiKey": "sk-...",
         "purpose": ["chat"],
         "priority": 1
       }
@@ -78,9 +78,9 @@
   },
 
   "telegram": {
-    "enabled": false,
-    "token": "",
-    "allowlist": []
+    "enabled": true,
+    "token": "123456789:AABBccDDeeFFggHHiiJJkkLLmmNNoo",
+    "allowlist": ["123456789"]
   },
 
   "streaming": {
@@ -136,16 +136,9 @@
       "identities": [
         { "channel": "telegram", "channelUserId": "123456789", "channelUsername": "alice" }
       ],
-      "profilePath": "",
       "tools": {
         "allow": [],
-        "deny": [],
-        "policy": {
-          "maxRecencyDays": 30,
-          "domainsAllow": [],
-          "domainsDeny": [],
-          "contentRating": "R"
-        }
+        "deny": []
       },
       "skills": {
         "allow": [],
