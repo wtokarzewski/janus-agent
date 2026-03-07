@@ -12,7 +12,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
                                              + Vector
 ```
 
-**Status (Phase 7):** ~6,000 LOC, 176 tests across 21 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
+**Status (Phase 8):** ~8,000 LOC, 299 tests across 33 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
 
 ## Core Pipeline
 
@@ -70,7 +70,7 @@ Providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Groq (OpenAI-compatible API)
 
 ### 5. Tools (`src/tools/`)
 
-8 built-in tools:
+14 built-in tools:
 
 | Tool | Description |
 |------|-------------|
@@ -78,10 +78,16 @@ Providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Groq (OpenAI-compatible API)
 | `read_file` | Read file contents |
 | `write_file` | Write/create files |
 | `edit_file` | Find-and-replace in files |
+| `append_file` | Append content to files |
 | `list_dir` | List directory contents |
 | `message` | Send message to user via bus |
 | `spawn_agent` | Spawn child agent for subtasks |
 | `cron` | Manage persistent cron jobs |
+| `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards) |
+| `web_search` | Web search (Brave API or DuckDuckGo fallback) |
+| `heartbeat` | Manage periodic heartbeat tasks |
+| `self_update` | Check/apply updates (git pull, test, restart) |
+| `invite` | Generate Telegram invite links for new users |
 
 **Gates:** Pattern-based confirmation before destructive commands (rm, git push, etc.).
 
@@ -102,11 +108,12 @@ Before summarization discards old messages, LLM extracts key facts → `appendDa
 
 ## Database (`src/db/`)
 
-SQLite (better-sqlite3, WAL mode). 4 migrations:
+SQLite (better-sqlite3, WAL mode). 5 migrations:
 1. `memory_chunks` + FTS5 virtual table + triggers
 2. `learner_records`
 3. `cron_jobs` + `cron_runs`
 4. `embedding` column on `memory_chunks`
+5. Multi-user columns (`owner`, `scope`, `scope_id`) on `memory_chunks`
 
 Falls back to file-based storage when disabled.
 
@@ -140,7 +147,7 @@ Key sections: `llm`, `agent`, `workspace`, `tools`, `database`, `heartbeat`, `te
 
 ## Testing
 
-176 tests across 21 files. Vitest. Mock LLM provider for integration tests. In-memory SQLite for DB tests.
+299 tests across 33 files. Vitest. Mock LLM provider for integration tests. In-memory SQLite for DB tests.
 
 ```bash
 npm test           # Run all tests

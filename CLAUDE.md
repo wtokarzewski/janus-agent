@@ -24,7 +24,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `agent/` — Agent loop (LLM iteration with tool calls, `stop()` for mid-task cancellation), subagent spawning, SubagentRegistry (cancel/cancelAll)
 - `auth/` — Native OAuth (PKCE S256, token storage, auto-refresh) for Anthropic + Codex
 - `bus/` — MessageBus + AsyncQueue (bounded, backpressure), steering messages (mid-run injection)
-- `channels/` — CLI (interactive REPL, persistent history, `/stop` + `/help` + `/config`), Telegram (grammy, typing indicators, start retry, `/stop` + `/whoami`)
+- `channels/` — CLI (interactive REPL, persistent history, `/stop` + `/help` + `/config`), Telegram (grammy, typing indicators, start retry, `/stop` + `/whoami`, invite deep-link onboarding)
 - `commands/` — onboard (alias: init), gateway, mcp-server, setup (interactive wizard)
 - `config/` — JSON config + Zod schema, `~/.janus/config.json` (user) + `janus.json` (workspace) + env
 - `context/` — System prompt builder (identity + tool guidelines + EGO + project + skills + memory + learner)
@@ -37,7 +37,8 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `services/` — CronService (persistent cron scheduler, SQLite, recursion guard), HeartbeatService (HEARTBEAT.md → CronService sync)
 - `session/` — JSONL persistence, atomic writes, summarization, per-key mutex locking
 - `skills/` — SKILL.md loader (YAML frontmatter + markdown), lazy loading (stubs + read on demand), cache invalidation on skill file writes
-- `tools/` — 13 built-in tools (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update), path validation (symlink safety)
+- `invites/` — InviteStore (in-memory, 24h TTL) for Telegram deep-link onboarding
+- `tools/` — 14 built-in tools (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update, invite), path validation (symlink safety)
 - `utils/` — Logger, cross-platform shell config (`getShellConfig`, `killProcessTree`)
 - `users/` — User resolver (Telegram userId/username → Janus user), per-user profiles, tool/skill filtering
 
