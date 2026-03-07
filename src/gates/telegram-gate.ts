@@ -4,17 +4,49 @@ import * as log from '../utils/logger.js';
 
 const TIMEOUT_MS = 60_000;
 
+interface PendingGate {
+  callbackId: string;
+  chatId: string;
+  messageId: number;
+  resolve: (allowed: boolean) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 /**
  * TelegramGate — asks the user for confirmation via inline keyboard.
  * Auto-denies after 60s timeout.
+ *
+ * Registers a single callback_query listener in the constructor to avoid
+ * accumulating listeners (grammY throws if listeners are added inside handlers).
  */
 export class TelegramGate implements GateService {
   private bot: Bot;
   private chatId: string;
+  private pending = new Map<string, PendingGate>();
 
   constructor(bot: Bot, chatId: string) {
     this.bot = bot;
     this.chatId = chatId;
+
+    // Single listener for all gate confirmations
+    this.bot.on('callback_query:data', (ctx) => {
+      const data = ctx.callbackQuery?.data;
+      if (!data) return;
+
+      // Find matching pending gate by prefix
+      for (const [key, gate] of this.pending) {
+        if (data.startsWith(gate.callbackId)) {
+          this.pending.delete(key);
+          clearTimeout(gate.timer);
+
+          const allowed = data.endsWith(':allow');
+          ctx.answerCallbackQuery({ text: allowed ? 'Allowed' : 'Denied' }).catch(() => {});
+          this.bot.api.editMessageReplyMarkup(gate.chatId, gate.messageId, { reply_markup: { inline_keyboard: [] } }).catch(() => {});
+          gate.resolve(allowed);
+          return;
+        }
+      }
+    });
   }
 
   async confirm(check: GateCheck): Promise<boolean> {
@@ -32,29 +64,15 @@ export class TelegramGate implements GateService {
     });
 
     return new Promise<boolean>((resolve) => {
-      let resolved = false;
-
       const timer = setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
+        if (!this.pending.has(callbackId)) return;
+        this.pending.delete(callbackId);
         this.bot.api.editMessageReplyMarkup(targetChatId, msg.message_id, { reply_markup: { inline_keyboard: [] } }).catch(() => {});
         log.info('TelegramGate: timed out, auto-denied');
         resolve(false);
       }, TIMEOUT_MS);
 
-      this.bot.on('callback_query:data', (ctx) => {
-        if (resolved) return;
-        const data = ctx.callbackQuery?.data;
-        if (!data?.startsWith(callbackId)) return;
-
-        resolved = true;
-        clearTimeout(timer);
-
-        const allowed = data.endsWith(':allow');
-        ctx.answerCallbackQuery({ text: allowed ? 'Allowed' : 'Denied' }).catch(() => {});
-        this.bot.api.editMessageReplyMarkup(targetChatId, msg.message_id, { reply_markup: { inline_keyboard: [] } }).catch(() => {});
-        resolve(allowed);
-      });
+      this.pending.set(callbackId, { callbackId, chatId: targetChatId, messageId: msg.message_id, resolve, timer });
     });
   }
 }
