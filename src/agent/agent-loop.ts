@@ -207,7 +207,7 @@ export class AgentLoop {
     // 3. Build messages: [system, ...history, user]
     //    Trim history if estimated tokens exceed token budget
     const history = await this.deps.sessions.getHistory(sessionKey);
-    const cleanHistory = stripOrphanToolMessages(history);
+    const cleanHistory = repairToolMessages(history);
     const maxTokens = this.deps.config.agent.tokenBudget;
     const trimmedHistory = trimHistoryToTokenBudget(cleanHistory, systemPrompt, msg.content, maxTokens);
     const messages: LLMMessage[] = [
@@ -402,8 +402,19 @@ export class AgentLoop {
           continue;
         }
 
+        // Detect orphaned tool_use (missing tool_result) and auto-repair
+        if (/tool_use.*without.*tool_result/i.test(errorText)) {
+          log.warn('Detected orphaned tool_use — repairing message history');
+          messages = [messages[0], ...repairToolMessages(messages.slice(1))];
+          continue;
+        }
+
         log.error(`LLM error: ${errorText}`);
-        if (this.deps.config.agent.onLLMError === 'retry') {
+
+        // Don't retry client errors (400) — they never self-heal
+        const isClientError = /^4\d\d\s|"status":\s*4\d\d|invalid_request|malformed/i.test(errorText);
+
+        if (this.deps.config.agent.onLLMError === 'retry' && !isClientError) {
           log.info('LLM error recovery: retrying iteration...');
           await sleep(1000);
           continue;
@@ -626,13 +637,15 @@ export class AgentLoop {
 }
 
 /**
- * Strip orphan tool messages from the beginning of history.
+ * Repair tool message integrity in history.
  *
- * If session was saved mid-iteration (crash), history may start with
- * role="tool" messages that have no matching assistant+tool_calls.
- * The LLM will error on these. Strip them.
+ * Fixes two crash-recovery scenarios:
+ * 1. Orphan tool_result at the start (no preceding assistant+tool_calls)
+ * 2. Assistant with tool_calls but missing tool_result responses
+ *    → adds synthetic "Error: tool execution interrupted" results
  */
-function stripOrphanToolMessages(history: LLMMessage[]): LLMMessage[] {
+function repairToolMessages(history: LLMMessage[]): LLMMessage[] {
+  // 1. Strip leading orphan tool messages
   let startIdx = 0;
   for (let i = 0; i < history.length; i++) {
     if (history[i].role === 'tool') {
@@ -641,11 +654,42 @@ function stripOrphanToolMessages(history: LLMMessage[]): LLMMessage[] {
       break;
     }
   }
+
+  const result: LLMMessage[] = startIdx > 0 ? history.slice(startIdx) : [...history];
+
   if (startIdx > 0) {
-    log.warn(`Stripped ${startIdx} orphan tool message(s) from session history`);
-    return history.slice(startIdx);
+    log.warn(`Stripped ${startIdx} orphan tool message(s) from session start`);
   }
-  return history;
+
+  // 2. Find assistant messages with tool_calls and ensure each has matching tool_result
+  const repaired: LLMMessage[] = [];
+  for (let i = 0; i < result.length; i++) {
+    repaired.push(result[i]);
+    const msg = result[i];
+
+    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+      // Collect tool_result IDs that follow
+      const expectedIds = new Set(msg.tool_calls.map(tc => tc.id));
+      let j = i + 1;
+      while (j < result.length && result[j].role === 'tool') {
+        const toolMsg = result[j] as { role: 'tool'; tool_call_id: string; content: string };
+        expectedIds.delete(toolMsg.tool_call_id);
+        j++;
+      }
+
+      // Add synthetic results for missing tool_call_ids
+      for (const missingId of expectedIds) {
+        log.warn(`Repairing missing tool_result for ${missingId}`);
+        repaired.push({
+          role: 'tool',
+          tool_call_id: missingId,
+          content: 'Error: tool execution was interrupted (crash recovery)',
+        });
+      }
+    }
+  }
+
+  return repaired;
 }
 
 /** Conservative token estimation: ~2.5 chars per token (better to over-estimate). */
