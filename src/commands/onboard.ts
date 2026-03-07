@@ -1,6 +1,10 @@
-import { mkdir, writeFile, access } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, writeFile, readFile, access } from 'node:fs/promises';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const EXAMPLES_DIR = resolve(__dirname, '..', '..', 'examples');
 
 const DEFAULT_CONFIG = JSON.stringify({
   llm: {
@@ -20,71 +24,9 @@ const DEFAULT_CONFIG = JSON.stringify({
   },
 }, null, 2) + '\n';
 
-const DEFAULT_EGO = `# Ego
-
-You are Janus — a universal AI agent. You are helpful, thorough, and honest.
-
-## Personality
-- You explain what you're doing and why
-- You ask for clarification when tasks are ambiguous
-- You prefer small, focused changes over big rewrites
-- You show your work and reason step by step
-
-## Principles
-- Read before editing
-- Test after changing
-- Commit with clear messages
-- Don't guess — verify
-`;
-
-const DEFAULT_PROJECT = `# JANUS.md
-
-<!-- Project-specific instructions for Janus in this repository -->
-<!-- This file is committed to git — your team shares the same instructions -->
-
-## Overview
-<!-- What this project does, tech stack, key conventions -->
-
-## Rules
-<!-- Coding style, naming conventions, testing requirements -->
-`;
-
-const DEFAULT_AGENTS = `# AGENTS.md
-
-<!-- Agent behavior rules for this workspace -->
-<!-- Customize how Janus works in this project -->
-
-## Role
-You help with any task — programming, research, writing, planning, and more.
-
-## Rules
-- Use tools to accomplish tasks, don't just describe what you would do
-- Read files before editing them
-- Prefer small, focused changes
-- If a task is unclear, ask for clarification
-- Show your work — explain what you're doing and why
-
-## Communication
-- Be concise and direct
-- Explain reasoning when making decisions
-- Ask before making large changes
-`;
-
-const DEFAULT_HEARTBEAT = `# HEARTBEAT.md
-
-<!-- Autonomous tasks Janus can perform periodically -->
-<!-- Uncomment and customize tasks as needed -->
-
-<!-- ## Tasks -->
-
-<!-- ### Check for uncommitted changes -->
-<!-- schedule: every 30m -->
-<!-- action: Run git status and remind about uncommitted work -->
-
-<!-- ### Review TODOs -->
-<!-- schedule: daily -->
-<!-- action: Scan for TODO/FIXME comments and summarize -->
-`;
+async function readExample(filename: string): Promise<string> {
+  return readFile(resolve(EXAMPLES_DIR, filename), 'utf-8');
+}
 
 /** Onboard command — creates workspace structure, config, and bootstrap files. */
 export async function runOnboard(dir?: string): Promise<void> {
@@ -104,7 +46,8 @@ export async function runOnboard(dir?: string): Promise<void> {
     await mkdir(resolve(globalDir, 'skills'), { recursive: true });
 
     // Global ego — agent character, same across all projects
-    await createIfMissing(resolve(globalDir, 'EGO.md'), DEFAULT_EGO, '~/.janus/EGO.md', created, skipped);
+    const egoContent = await readExample('EGO.md');
+    await createIfMissing(resolve(globalDir, 'EGO.md'), egoContent, '~/.janus/EGO.md', created, skipped);
   }
 
   // Workspace directories
@@ -114,11 +57,16 @@ export async function runOnboard(dir?: string): Promise<void> {
     created.push(`${subdir}/`);
   }
 
-  // Workspace files — per-project
+  // Workspace files — per-project (templates from examples/)
+  const [janusContent, agentsContent, heartbeatContent] = await Promise.all([
+    readExample('JANUS.md'),
+    readExample('AGENTS.md'),
+    readExample('HEARTBEAT.md'),
+  ]);
   await createIfMissing(resolve(workspace, 'janus.json'), DEFAULT_CONFIG, 'janus.json', created, skipped);
-  await createIfMissing(resolve(workspace, 'JANUS.md'), DEFAULT_PROJECT, 'JANUS.md', created, skipped);
-  await createIfMissing(resolve(workspace, 'AGENTS.md'), DEFAULT_AGENTS, 'AGENTS.md', created, skipped);
-  await createIfMissing(resolve(workspace, 'HEARTBEAT.md'), DEFAULT_HEARTBEAT, 'HEARTBEAT.md', created, skipped);
+  await createIfMissing(resolve(workspace, 'JANUS.md'), janusContent, 'JANUS.md', created, skipped);
+  await createIfMissing(resolve(workspace, 'AGENTS.md'), agentsContent, 'AGENTS.md', created, skipped);
+  await createIfMissing(resolve(workspace, 'HEARTBEAT.md'), heartbeatContent, 'HEARTBEAT.md', created, skipped);
 
   // Report
   console.log(chalk.green('Created:'));

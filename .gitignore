@@ -184,6 +184,11 @@ janus.json
 *.db-wal
 *.db-shm
 
+# Workspace bootstrap files (local copies from examples/)
+/AGENTS.md
+/JANUS.md
+/HEARTBEAT.md
+
 # Safety net — these should never be in the repo
 .claude/settings.local.json
 *.docx
