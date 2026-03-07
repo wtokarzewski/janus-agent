@@ -13,6 +13,8 @@ import { HeartbeatService } from '../services/heartbeat-service.js';
 import { PatternGate } from '../gates/pattern-gate.js';
 import { TelegramGate } from '../gates/telegram-gate.js';
 import { consumeUpdateMarker } from '../tools/builtin/self-update.js';
+import { InviteStore } from '../invites/invite-store.js';
+import { InviteTool } from '../tools/builtin/invite.js';
 import { deriveChannelAllowlist } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 
@@ -77,8 +79,13 @@ export async function runGateway(): Promise<void> {
         app.agent.setGateService(telegramGate);
       }
 
+      // Invite system — get bot username for deep links
+      const botInfo = await bot.api.getMe();
+      const inviteStore = new InviteStore(botInfo.username);
+      app.tools.register(new InviteTool(inviteStore));
+
       channelPromises.push(
-        tg.start(app.bus, config, signal, bot, { agent: app.agent, subagentRegistry: app.subagentRegistry }).catch((err) => {
+        tg.start(app.bus, config, signal, bot, { agent: app.agent, subagentRegistry: app.subagentRegistry, inviteStore }).catch((err) => {
           log.error(`Gateway: Telegram channel failed: ${err instanceof Error ? err.message : err}`);
         }),
       );
