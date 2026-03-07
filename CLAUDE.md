@@ -8,7 +8,7 @@ Janus is a universal AI agent. CLI + Telegram, ~7,500 lines TypeScript.
 
 **Name:** Janus — Roman god of beginnings, transitions, and duality. Two faces looking to the past and the future. Reflects the agent's dual nature: planning vs execution, analysis vs implementation, AI vs human control.
 
-**Status:** Phase 8 — PROFILE.md auto-update (agent learns user preferences from conversation and writes to `.janus/users/{userId}/PROFILE.md` in workspace), invite links (Telegram deep-link onboarding, InviteStore with 24h TTL, runtime + persistent allowlist, auto-save to config.users), Telegram hardening (drop pending updates on startup, fire-and-forget invite replies, markdown URL cleanup for deep links, bot.init() for clean initialization), orphaned tool_use repair (`repairToolMessages`, client error guard — no infinite 400 retry). Prior: `/stop` command, `self_update` tool, auto-update cron, native OAuth (PKCE), security hardening, reliability (tool call guidelines, error hints, reflection prompt, duplicate prevention), tools (web_fetch, web_search, append_file, heartbeat, self_update, invite), MCP client, steering messages, extended thinking, SubagentRegistry with cancel, prompt caching, 5xx failover, skill self-creation, cross-platform shell, cron/heartbeat in CLI mode, web_fetch hardening, web search cache. Prior: multi-user, subscription providers, setup wizard, MCP server, vector search, temporal decay, memory flush, lazy skills, token management, cron scheduler, streaming, gates, hybrid memory search (FTS5), SQLite storage, tests (327), CI pipeline.
+**Status:** Phase 8 — PROFILE.md auto-update (agent learns user preferences from conversation and writes to `.janus/users/{userId}/PROFILE.md` in workspace), invite links (Telegram deep-link onboarding, InviteStore with 24h TTL, runtime + persistent allowlist, auto-save to config.users), Telegram hardening (drop pending updates on startup, fire-and-forget invite replies, markdown URL cleanup for deep links, bot.init() for clean initialization), orphaned tool_use repair (`repairToolMessages`, client error guard — no infinite 400 retry). Prior: `/stop` command, `self_update` tool, auto-update cron, native OAuth (PKCE), security hardening, reliability (tool call guidelines, error hints, reflection prompt, duplicate prevention), tools (web_fetch, web_search, append_file, heartbeat, self_update, invite), MCP client, steering messages, extended thinking, SubagentRegistry with cancel, prompt caching, 5xx failover, skill self-creation, cross-platform shell, cron/heartbeat in CLI mode, web_fetch hardening, web search cache. Prior: multi-user, subscription providers, setup wizard, MCP server, vector search, temporal decay, memory flush, lazy skills, token management, cron scheduler, streaming, gates, hybrid memory search (FTS5), SQLite storage, tests (320), CI pipeline.
 
 ## Architecture
 
@@ -48,8 +48,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `~/.janus/auth.json` — OAuth tokens (0o600 permissions, auto-refresh)
 - `~/.janus/history` — CLI command history (max 500 entries)
 - `~/.janus/.update-complete` — Post-update marker (consumed on startup, triggers Telegram notification)
-- `~/.janus/users/{id}/PROFILE.md` — Per-user profile (read-only, loaded into system prompt)
-- `./.janus/users/{id}/PROFILE.md` — Per-user profile in workspace (auto-updated by agent when learning preferences)
+- `./.janus/users/{id}/PROFILE.md` — Per-user profile (auto-updated by agent when learning preferences)
 - `./JANUS.md` — Project-specific instructions (per-repo, like CLAUDE.md)
 - `./AGENTS.md` — Agent behavior rules (per-workspace, customizable)
 - `./HEARTBEAT.md` — Autonomous periodic tasks (per-workspace, supports `every Xm/h/d`, `at HH:MM`, and cron expressions)
@@ -87,7 +86,7 @@ npm test           # Run all tests (vitest)
 npm run typecheck   # TypeScript type checking
 ```
 
-327 tests across 34 test files: unit (anthropic-oauth, async-queue, codex-oauth, config-schema, context-builder, cron-service, cron-tool, exec-tool, gate-routing, heartbeat-parser, invite, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sdk-utils, self-update-tool, session-lock, setup, shell, skill-loading, stop-command, streaming, system-message, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search, web-tools) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
+320 tests across 34 test files: unit (anthropic-oauth, async-queue, codex-oauth, config-schema, context-builder, cron-service, cron-tool, exec-tool, gate-routing, heartbeat-parser, invite, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sdk-utils, self-update-tool, session-lock, setup, shell, skill-loading, stop-command, streaming, system-message, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search, web-tools) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
 
 ## Conventions
 
