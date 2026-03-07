@@ -45,7 +45,7 @@ Run `/config` during a session to reconfigure. See `examples/janus.json` for a c
 ## Key Features
 
 - **7 LLM providers** with multi-provider failover and streaming
-- **8 built-in tools** — exec, read/write/edit-file, list-dir, message, spawn_agent, cron
+- **14 built-in tools** — exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update, invite
 - **Hybrid memory search** — FTS5 + vector (local embeddings, all-MiniLM-L6-v2) + temporal decay
 - **Safety gates** — Pattern-based confirmation before destructive commands
 - **Persistent cron** — SQLite-backed scheduler with heartbeat tasks
@@ -53,6 +53,7 @@ Run `/config` during a session to reconfigure. See `examples/janus.json` for a c
 - **Learner** — Execution metrics with keyword-based recommendations
 - **MCP server** — Expose tools to editors via JSON-RPC over stdio
 - **Multi-user** — Per-user profiles, memory scoping, tool/skill restrictions
+- **Invite links** — Existing users generate Telegram deep links to onboard new users
 - **Lazy skills** — SKILL.md files loaded on demand to save tokens
 
 See [FEATURES.md](FEATURES.md) for the full verified feature list.
@@ -143,7 +144,7 @@ volumes:
 ## Testing
 
 ```bash
-npm test           # 176 tests across 21 files (vitest)
+npm test           # 299 tests across 33 files (vitest)
 npm run typecheck   # TypeScript type checking
 ```
 
