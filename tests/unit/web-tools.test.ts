@@ -174,7 +174,7 @@ describe('WebFetchTool', () => {
     const tool = new WebFetchTool();
 
     let callCount = 0;
-    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+    globalThis.fetch = vi.fn().mockImplementation((_url: string) => {
       callCount++;
       if (callCount <= 3) {
         return Promise.resolve({
