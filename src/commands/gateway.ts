@@ -79,18 +79,13 @@ export async function runGateway(): Promise<void> {
         app.agent.setGateService(telegramGate);
       }
 
-      // Invite system — get bot username for deep links (retry on transient network errors)
-      let botUsername = 'unknown';
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          const botInfo = await bot.api.getMe();
-          botUsername = botInfo.username;
-          break;
-        } catch (err) {
-          log.error(`Gateway: getMe failed (attempt ${attempt}/3): ${err instanceof Error ? err.message : err}`);
-          if (attempt < 3) await new Promise(r => setTimeout(r, 3000));
-        }
+      // Initialize bot (fetches bot info once — reused by bot.start(), no duplicate getMe call)
+      try {
+        await bot.init();
+      } catch (err) {
+        log.error(`Gateway: bot.init() failed: ${err instanceof Error ? err.message : err}`);
       }
+      const botUsername = bot.botInfo?.username ?? 'unknown';
       const inviteStore = new InviteStore(botUsername);
       app.tools.register(new InviteTool(inviteStore));
 
