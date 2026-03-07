@@ -1,5 +1,6 @@
 import type { ContextualTool, ToolContext } from '../types.js';
 import * as log from '../../utils/logger.js';
+import { getCache, setCache } from './web-cache.js';
 
 const DDG_URL = 'https://html.duckduckgo.com/html/';
 const MAX_RESULTS = 5;
@@ -43,6 +44,13 @@ export class WebSearchDDGTool implements ContextualTool {
 
     log.info(`web_search [ddg]: "${query}" (count=${count})`);
 
+    const cacheKey = `search:ddg:${query}:${count}`;
+    const cached = getCache(cacheKey);
+    if (cached) {
+      log.debug(`web_search [ddg]: cache hit for "${query}"`);
+      return cached;
+    }
+
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -70,9 +78,12 @@ export class WebSearchDDGTool implements ContextualTool {
         return 'No results found.';
       }
 
-      return results.map((r, i) =>
+      const formatted = results.map((r, i) =>
         `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`
       ).join('\n\n');
+
+      setCache(cacheKey, formatted);
+      return formatted;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('abort')) {

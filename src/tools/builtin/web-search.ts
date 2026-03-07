@@ -1,5 +1,6 @@
 import type { ContextualTool, ToolContext } from '../types.js';
 import * as log from '../../utils/logger.js';
+import { getCache, setCache } from './web-cache.js';
 
 const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search';
 const MAX_RESULTS = 5;
@@ -48,6 +49,13 @@ export class WebSearchTool implements ContextualTool {
 
     log.info(`web_search: "${query}" (count=${count})`);
 
+    const cacheKey = `search:brave:${query}:${count}`;
+    const cached = getCache(cacheKey);
+    if (cached) {
+      log.debug(`web_search: cache hit for "${query}"`);
+      return cached;
+    }
+
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -82,6 +90,7 @@ export class WebSearchTool implements ContextualTool {
         return `${i + 1}. ${r.title}\n   ${r.url}\n   ${snippet}`;
       }).join('\n\n');
 
+      setCache(cacheKey, formatted);
       return formatted;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
