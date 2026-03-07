@@ -12,7 +12,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
                                              + Vector
 ```
 
-**Status (Phase 8):** ~8,000 LOC, 299 tests across 33 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
+**Status (Phase 8):** ~8,000 LOC, 323 tests across 34 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
 
 ## Core Pipeline
 
@@ -147,7 +147,7 @@ Key sections: `llm`, `agent`, `workspace`, `tools`, `database`, `heartbeat`, `te
 
 ## Testing
 
-299 tests across 33 files. Vitest. Mock LLM provider for integration tests. In-memory SQLite for DB tests.
+323 tests across 34 files. Vitest. Mock LLM provider for integration tests. In-memory SQLite for DB tests.
 
 ```bash
 npm test           # Run all tests

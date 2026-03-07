@@ -1,8 +1,8 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 176 passing tests.
+Canonical list of implemented, working features. Verified against source code and 319 passing tests.
 
-**Last updated:** 2026-02-24
+**Last updated:** 2026-03-07
 
 ---
 
@@ -34,7 +34,7 @@ Two auth modes (mutually exclusive):
 - **Structured output** — Subscription providers use JSON schema enforcement via `sdk-utils.ts` (~99% reliability + fallback parsing).
 - **Setup wizard** — Interactive first-run config. Detects API key vs subscription. `/config` command for reconfiguration.
 
-## Tools (8)
+## Tools (14)
 
 | Tool | Description |
 |------|-------------|
@@ -42,10 +42,16 @@ Two auth modes (mutually exclusive):
 | `read_file` | Read file contents with size limit. |
 | `write_file` | Create/overwrite files with atomic writes. |
 | `edit_file` | Find-and-replace in files. |
+| `append_file` | Append content to files. |
 | `list_dir` | List directory contents with sizes. |
 | `message` | Send message to user via bus. |
 | `spawn_agent` | Spawn child agent for subtasks (minimal prompt, isolated session). |
 | `cron` | Create, list, update, delete persistent cron jobs. |
+| `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards, browser User-Agent). |
+| `web_search` | Web search (Brave API or DuckDuckGo fallback, in-memory cache 15min TTL). |
+| `heartbeat` | Manage periodic heartbeat tasks. |
+| `self_update` | Check/apply updates (git pull, npm install, test, self-respawn, auto-revert). |
+| `invite` | Generate Telegram invite links for new user onboarding. |
 
 ### Tool Infrastructure
 
@@ -72,7 +78,7 @@ Two auth modes (mutually exclusive):
 | Channel | Features |
 |---------|----------|
 | **CLI** | Interactive REPL, single-message mode (`-m`), persistent history (~/.janus/history), `/help` and `/config` commands, inline streaming output, gate confirmation via readline. |
-| **Telegram** | Grammy bot, user allowlist, streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami` diagnostic. |
+| **Telegram** | Grammy bot, user allowlist, streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami` diagnostic, `/stop` command, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup. |
 | **MCP Server** | JSON-RPC 2.0 over stdio. Exposes tools and prompts to editors (VS Code, Cursor, Claude Code). Tool bridge maps ToolRegistry to MCP protocol. |
 
 ## Gates (Safety)
@@ -101,6 +107,14 @@ Two auth modes (mutually exclusive):
 - **Per-user memory** — Scoped memory chunks (owner + scope filtering in MemoryIndex).
 - **Family groups** — Shared memory scope via `family.groupChatIds` config.
 - **Wired into AgentLoop** — User profile passed to context builder, tool context, learner.
+
+## Invite Links
+
+- **InviteStore** — In-memory token store with 24h TTL. Tokens are base64url (16 chars).
+- **Deep links** — `https://t.me/BOT?start=invite_TOKEN`. New user clicks → `/start invite_TOKEN` → auto-added to allowlist + config.users.
+- **Persistence** — Invited users saved to `janus.json` (both `config.users` and `telegram.allowlist`).
+- **Non-blocking** — Fire-and-forget `ctx.reply()` prevents invite handler from blocking grammY pipeline.
+- **Markdown cleanup** — `cleanMarkdownUrls()` strips `**`/`*`/`__`/`_` from URLs before sending to Telegram.
 
 ## Learner
 
@@ -155,7 +169,7 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 ## Database
 
 - **SQLite** (better-sqlite3), WAL mode, numbered migrations.
-- **4 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column.
+- **5 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id).
 - **Graceful fallback** — File-based storage when database disabled.
 
 ## Configuration
@@ -185,7 +199,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 176 tests across 21 files (vitest, mock LLM, in-memory SQLite).
+- **Tests** — 323 tests across 34 files (vitest, mock LLM, in-memory SQLite).
 
 ## Commands
 

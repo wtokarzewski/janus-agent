@@ -144,7 +144,7 @@ volumes:
 ## Testing
 
 ```bash
-npm test           # 299 tests across 33 files (vitest)
+npm test           # 323 tests across 34 files (vitest)
 npm run typecheck   # TypeScript type checking
 ```
 
