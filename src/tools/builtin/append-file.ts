@@ -16,10 +16,12 @@ export class AppendFileTool implements ContextualTool {
   };
 
   private workspaceDir = process.cwd();
+  private allowedDirs?: string[];
   private onSkillsChange?: () => void;
 
   setContext(ctx: ToolContext): void {
     this.workspaceDir = ctx.workspaceDir;
+    this.allowedDirs = ctx.allowedDirs;
     this.onSkillsChange = ctx.onSkillsChange;
   }
 
@@ -30,7 +32,7 @@ export class AppendFileTool implements ContextualTool {
 
     let fullPath: string;
     try {
-      fullPath = validatePath(this.workspaceDir, filePath);
+      fullPath = validatePath(this.workspaceDir, filePath, this.allowedDirs);
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : String(err)}`;
     }
