@@ -101,6 +101,7 @@ export class TelegramChannel {
     bot.on('message:text', async (ctx) => {
       const chatId = String(ctx.chat.id);
       const author = ctx.from?.username || String(ctx.from?.id || 'unknown');
+      log.info(`Telegram: incoming from ${author} (chat ${chatId}): ${ctx.message.text?.substring(0, 80)}`);
 
       // /whoami — simple diagnostic command (no agent loop)
       if (ctx.message?.text?.trim() === '/whoami') {
