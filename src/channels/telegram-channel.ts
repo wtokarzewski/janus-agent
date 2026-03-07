@@ -363,6 +363,7 @@ export class TelegramChannel {
       try {
         log.info(`Telegram: starting bot (attempt ${attempt}/${START_MAX_RETRIES})...`);
         bot.start({
+          drop_pending_updates: true,
           onStart: (info) => {
             log.info(`Telegram: connected as @${info.username}`);
           },
