@@ -39,8 +39,10 @@
     "maxIterations": 20,
     "summarizationThreshold": 20,
     "tokenBudget": 100000,
+    "contextWindow": 128000,
     "toolRetries": 2,
     "onLLMError": "retry",
+    "onToolError": "continue",
     "maxSubagentIterations": 5,
     "maxSkillsInPrompt": 150,
     "maxSkillsPromptChars": 30000,
@@ -57,7 +59,7 @@
   "tools": {
     "execTimeout": 30000,
     "maxFileSize": 1048576,
-    "webSearchApiKey": "",
+    "webSearchApiKey": "BSA...",
     "webFetchTimeoutMs": 10000,
     "webFetchMaxBytes": 51200,
     "execDenyPatterns": [
