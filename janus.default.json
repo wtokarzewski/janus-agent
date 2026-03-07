@@ -1,0 +1,23 @@
+{
+  "llm": {
+    "provider": "codex",
+    "model": "gpt-5.3-codex",
+    "apiKey": "",
+    "auth": "oauth"
+  },
+  "telegram": {
+    "enabled": true,
+    "allowlist": []
+  },
+  "heartbeat": {
+    "enabled": true
+  },
+  "autoUpdate": {
+    "enabled": true,
+    "schedule": "0 9 * * 1"
+  },
+  "memory": {
+    "vectorSearch": true
+  },
+  "users": []
+}
