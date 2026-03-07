@@ -87,7 +87,7 @@ export class TelegramChannel {
 
       // 'message' or undefined — backward compatible
       this.stopTyping(msg.chatId);
-      const chunks = chunkMessage(msg.content, MAX_TELEGRAM_MSG);
+      const chunks = chunkMessage(cleanMarkdownUrls(msg.content), MAX_TELEGRAM_MSG);
       for (const chunk of chunks) {
         try {
           await bot.api.sendMessage(msg.chatId, chunk);
@@ -350,9 +350,9 @@ export class TelegramChannel {
 
     if (state.flushTimer) clearInterval(state.flushTimer);
 
-    // Final edit with complete text
+    // Final edit with complete text (clean markdown from URLs)
     try {
-      await bot.api.editMessageText(chatId, state.messageId, state.text);
+      await bot.api.editMessageText(chatId, state.messageId, cleanMarkdownUrls(state.text));
     } catch (err) {
       log.debug(`Telegram: stream final edit failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
     }
@@ -389,6 +389,14 @@ export class TelegramChannel {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Strip markdown formatting (bold/italic) that wraps or touches URLs. */
+export function cleanMarkdownUrls(text: string): string {
+  // Remove **, *, __, _ wrapping URLs: **https://...** → https://...
+  return text.replace(/(\*{1,2}|_{1,2})(https?:\/\/\S+?)\1/g, '$2')
+    // Also handle trailing-only ** or * stuck to URLs (LLM sometimes only closes)
+    .replace(/(https?:\/\/\S+?)(\*{1,2}|_{1,2})(?=\s|$)/g, '$1');
 }
 
 /** Split long messages into chunks at newline or space boundaries. */

@@ -90,3 +90,46 @@ describe('Invite deep link regex', () => {
     expect(match![1]).toBe('token extra');
   });
 });
+
+describe('cleanMarkdownUrls', () => {
+  // Dynamic import to avoid circular deps
+  let cleanMarkdownUrls: (text: string) => string;
+
+  beforeEach(async () => {
+    const mod = await import('../../src/channels/telegram-channel.js');
+    cleanMarkdownUrls = mod.cleanMarkdownUrls;
+  });
+
+  it('should strip ** wrapping a URL', () => {
+    expect(cleanMarkdownUrls('**https://t.me/bot?start=invite_abc**')).toBe('https://t.me/bot?start=invite_abc');
+  });
+
+  it('should strip trailing ** from URL', () => {
+    expect(cleanMarkdownUrls('https://t.me/bot?start=invite_abc**')).toBe('https://t.me/bot?start=invite_abc');
+  });
+
+  it('should strip * wrapping a URL', () => {
+    expect(cleanMarkdownUrls('*https://example.com/path*')).toBe('https://example.com/path');
+  });
+
+  it('should strip trailing * from URL', () => {
+    expect(cleanMarkdownUrls('https://example.com/path*')).toBe('https://example.com/path');
+  });
+
+  it('should not modify URLs without markdown', () => {
+    expect(cleanMarkdownUrls('https://t.me/bot?start=invite_abc')).toBe('https://t.me/bot?start=invite_abc');
+  });
+
+  it('should not modify non-URL bold text', () => {
+    expect(cleanMarkdownUrls('This is **bold** text')).toBe('This is **bold** text');
+  });
+
+  it('should handle URL in middle of text', () => {
+    expect(cleanMarkdownUrls('Click here: **https://t.me/bot?start=abc** to join')).toBe('Click here: https://t.me/bot?start=abc to join');
+  });
+
+  it('should handle multiple URLs', () => {
+    const input = 'Link: **https://a.com** and **https://b.com**';
+    expect(cleanMarkdownUrls(input)).toBe('Link: https://a.com and https://b.com');
+  });
+});
