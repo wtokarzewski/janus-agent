@@ -8,14 +8,19 @@ import { resolve, dirname } from 'node:path';
  * For existing paths: resolves symlinks fully and checks prefix.
  * For non-existing paths (write-file): walks up to nearest existing ancestor.
  */
-export function validatePath(workspaceDir: string, filePath: string): string {
+export function validatePath(workspaceDir: string, filePath: string, allowedDirs?: string[]): string {
   const realWorkspace = realpathSync(resolve(workspaceDir));
+  const realAllowed = (allowedDirs ?? []).filter(d => existsSync(d)).map(d => realpathSync(resolve(d)));
   const resolved = resolve(realWorkspace, filePath);
+
+  const isWithinAllowed = (realPath: string): boolean =>
+    (realPath.startsWith(realWorkspace + '/') || realPath === realWorkspace) ||
+    realAllowed.some(dir => realPath.startsWith(dir + '/') || realPath === dir);
 
   // For existing paths, resolve symlinks and check
   if (existsSync(resolved)) {
     const real = realpathSync(resolved);
-    if (!real.startsWith(realWorkspace + '/') && real !== realWorkspace) {
+    if (!isWithinAllowed(real)) {
       throw new Error(`Path escapes workspace: ${filePath}`);
     }
     return real;
@@ -31,7 +36,7 @@ export function validatePath(workspaceDir: string, filePath: string): string {
 
   if (existsSync(current)) {
     const realAncestor = realpathSync(current);
-    if (!realAncestor.startsWith(realWorkspace + '/') && realAncestor !== realWorkspace) {
+    if (!isWithinAllowed(realAncestor)) {
       throw new Error(`Path escapes workspace: ${filePath}`);
     }
   }
