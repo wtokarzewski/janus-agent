@@ -67,6 +67,7 @@ export async function runGateway(): Promise<void> {
         const patternGate = new PatternGate(config.gates.execPatterns);
         const telegramGate = new TelegramGate(bot, config.telegram.allowlist[0]);
         app.tools.setGate(patternGate, telegramGate);
+        app.agent.setGateService(telegramGate);
       }
 
       channelPromises.push(

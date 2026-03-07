@@ -77,10 +77,13 @@ export class ToolRegistry {
       log.info(`Gate approved: ${action}`);
     }
 
-    log.debug(`Executing tool: ${name}`, args);
+    // Coerce args to match tool schema types (LLMs sometimes return "5" instead of 5)
+    const coerced = coerceToolArgs(args, tool.parameters);
+
+    log.debug(`Executing tool: ${name}`, coerced);
 
     try {
-      const result = await tool.execute(args);
+      const result = await tool.execute(coerced);
       return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -97,4 +100,34 @@ export class ToolRegistry {
       }
     }
   }
+}
+
+/**
+ * Coerce tool arguments to match the expected schema types.
+ * LLMs sometimes return "5" (string) when the schema expects number,
+ * or "true" (string) when it expects boolean.
+ */
+function coerceToolArgs(
+  args: Record<string, unknown>,
+  schema?: { properties?: Record<string, { type?: string }> },
+): Record<string, unknown> {
+  if (!schema?.properties) return args;
+
+  const result = { ...args };
+  for (const [key, prop] of Object.entries(schema.properties)) {
+    if (!(key in result) || result[key] == null) continue;
+    const val = result[key];
+    const expectedType = prop.type;
+
+    if (expectedType === 'number' || expectedType === 'integer') {
+      if (typeof val === 'string') {
+        const n = Number(val);
+        if (!Number.isNaN(n)) result[key] = n;
+      }
+    } else if (expectedType === 'boolean') {
+      if (val === 'true') result[key] = true;
+      else if (val === 'false') result[key] = false;
+    }
+  }
+  return result;
 }

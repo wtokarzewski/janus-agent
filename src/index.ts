@@ -53,10 +53,12 @@ program
 
     const app = await createApp(config);
 
-    // Gates (confirmation before destructive commands)
+    // Gates (confirmation before destructive commands + error recovery)
     if (config.gates.enabled) {
+      const cliGate = new CLIGate();
       const patternGate = new PatternGate(config.gates.execPatterns);
-      app.tools.setGate(patternGate, new CLIGate());
+      app.tools.setGate(patternGate, cliGate);
+      app.agent.setGateService(cliGate);
     }
 
     // Single-message mode

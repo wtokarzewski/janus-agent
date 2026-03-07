@@ -52,6 +52,25 @@ export function resolveUser(
 }
 
 /**
+ * Auto-identify a user from channel metadata when no config.users match exists.
+ * Returns a synthetic ResolvedUser with ID like "telegram:123456789".
+ */
+export function autoIdentifyUser(
+  channel: string,
+  channelUserId: string | undefined,
+  channelUsername: string | undefined,
+  displayName: string | undefined,
+): ResolvedUser | null {
+  if (!channelUserId) return null;
+  const userId = `${channel}:${channelUserId}`;
+  return {
+    userId,
+    name: displayName || channelUsername || channelUserId,
+    identity: { channel, channelUserId, channelUsername },
+  };
+}
+
+/**
  * Load a user's PROFILE.md file.
  * Default path: ~/.janus/users/{userId}/PROFILE.md
  * Custom path from config profilePath overrides default.

@@ -424,6 +424,94 @@ describe('AgentLoop integration', () => {
     expect(mock.calls.length).toBeGreaterThan(2);
   });
 
+  it('should execute multiple tool calls in parallel', async () => {
+    const callOrder: string[] = [];
+    const mock = new MockProvider([
+      {
+        content: 'Reading files...',
+        toolCalls: [
+          { id: 'tc-a', type: 'function', function: { name: 'slow_tool', arguments: JSON.stringify({ id: 'a' }) } },
+          { id: 'tc-b', type: 'function', function: { name: 'slow_tool', arguments: JSON.stringify({ id: 'b' }) } },
+          { id: 'tc-c', type: 'function', function: { name: 'slow_tool', arguments: JSON.stringify({ id: 'c' }) } },
+        ],
+      },
+      { content: 'All done.' },
+    ]);
+
+    const { deps } = createDeps(mock);
+    deps.tools.register({
+      name: 'slow_tool',
+      description: 'Slow tool for testing parallel execution',
+      parameters: { type: 'object', properties: { id: { type: 'string' } } },
+      execute: async (args) => {
+        callOrder.push(`start:${args.id}`);
+        await new Promise(r => setTimeout(r, 50));
+        callOrder.push(`end:${args.id}`);
+        return `result:${args.id}`;
+      },
+    });
+
+    const agent = new AgentLoop(deps);
+    const start = Date.now();
+    const result = await agent.processDirect('run all');
+    const elapsed = Date.now() - start;
+
+    expect(result).toBe('All done.');
+    // All 3 should have started before any finished (parallel)
+    expect(callOrder.filter(c => c.startsWith('start:'))).toHaveLength(3);
+    // Total time should be ~50ms (parallel), not ~150ms (sequential)
+    // Allow generous margin for CI
+    expect(elapsed).toBeLessThan(300);
+  });
+
+  it('should ask user on tool error when onToolError is ask', async () => {
+    const mock = new MockProvider([
+      {
+        content: 'Running command...',
+        toolCalls: [{
+          id: 'tc-err',
+          type: 'function',
+          function: { name: 'failing_tool', arguments: '{}' },
+        }],
+      },
+      { content: 'Stopped.' },
+    ]);
+
+    const config = createTestConfig({ agent: { onToolError: 'ask', toolRetries: 1 } });
+    const bus = new MessageBus();
+    const registry = new ProviderRegistry();
+    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
+
+    const tools = new ToolRegistry();
+    tools.setContext({ workspaceDir: config.workspace.dir, execDenyPatterns: [], execTimeout: 5000, maxFileSize: 1_000_000 });
+    tools.register({
+      name: 'failing_tool',
+      description: 'Always fails',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => 'Error: something broke',
+    });
+
+    const sessions = new SessionManager(config);
+    const memory = new MemoryStore(config);
+    const skills = new SkillLoader(config);
+    const context = new ContextBuilder({ skills, memory, config });
+    const learner = new SkillLearner(new InMemoryLearnerStorage());
+
+    let gateAsked = false;
+    const denyGate: GateService = {
+      async confirm(): Promise<boolean> { gateAsked = true; return false; },
+    };
+
+    const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner, gateService: denyGate });
+    const result = await agent.processDirect('do it');
+
+    expect(gateAsked).toBe(true);
+    expect(result).toBe('Stopped.');
+    // Tool result should indicate user stopped it
+    const toolMsg = mock.calls[1].messages.find((m: any) => m.role === 'tool');
+    expect(toolMsg?.content).toContain('Stopped by user');
+  });
+
   it('should deny tool execution when gate denies', async () => {
     const mock = new MockProvider([
       {
