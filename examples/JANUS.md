@@ -1,10 +1,12 @@
 # JANUS.md
 
-<!-- Project-specific instructions for Janus in this repository -->
-<!-- This file is committed to git — your team shares the same instructions -->
+<!-- Project-specific instructions for Janus in this workspace -->
+<!-- Copy to your project root and customize -->
 
 ## Overview
-<!-- What this project does, tech stack, key conventions -->
+This workspace is for personal planning and research. Janus helps with organizing ideas, gathering information, and keeping track of tasks.
 
 ## Rules
-<!-- Coding style, naming conventions, testing requirements -->
+- Write notes and summaries in clear, simple language
+- When researching a topic, check multiple sources
+- Save important findings to memory for future reference
