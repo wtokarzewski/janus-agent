@@ -6,6 +6,8 @@ import type { JanusConfig } from '../config/schema.js';
 import type { AgentLoop } from '../agent/agent-loop.js';
 import type { SubagentRegistry } from '../agent/subagent-registry.js';
 import { resolveUser, autoIdentifyUser, deriveChannelAllowlist } from '../users/user-resolver.js';
+import type { InviteStore } from '../invites/invite-store.js';
+import { saveConfig } from '../config/config.js';
 import * as log from '../utils/logger.js';
 
 const MAX_TELEGRAM_MSG = 4096;
@@ -41,7 +43,7 @@ export class TelegramChannel {
     return this.bot;
   }
 
-  async start(bus: MessageBus, config: JanusConfig, signal: AbortSignal, externalBot?: Bot, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry }): Promise<void> {
+  async start(bus: MessageBus, config: JanusConfig, signal: AbortSignal, externalBot?: Bot, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry; inviteStore?: InviteStore }): Promise<void> {
     const tg = config.telegram;
 
     if (!externalBot && !tg.token) {
@@ -57,6 +59,9 @@ export class TelegramChannel {
     });
 
     this.throttleMs = config.streaming?.telegramThrottleMs ?? 500;
+
+    // Runtime allowlist — users added via invite links (survives until restart, also saved to config)
+    const runtimeAllowlist = new Set<string>();
 
     // Register outbound handler — sends responses back to Telegram
     bus.registerHandler('telegram', async (msg: OutboundMessage) => {
@@ -118,9 +123,45 @@ export class TelegramChannel {
         return;
       }
 
-      // Allowlist check — always first (explicit allowlist takes priority, fallback to users-derived)
+      // Invite redemption — handle /start invite_TOKEN before allowlist check
+      const inviteMatch = ctx.message?.text?.match(/^\/start\s+invite_(.+)$/);
+      if (inviteMatch && opts?.inviteStore) {
+        const invitedBy = opts.inviteStore.redeem(inviteMatch[1]);
+        if (invitedBy) {
+          const userId = String(ctx.from.id);
+          const username = ctx.from.username ?? undefined;
+          const firstName = ctx.from.first_name ?? 'User';
+          runtimeAllowlist.add(chatId);
+
+          // Persist to config
+          const newUser = {
+            id: username ?? `user-${userId}`,
+            name: firstName,
+            identities: [{ channel: 'telegram', channelUserId: userId, ...(username ? { channelUsername: username } : {}) }],
+          };
+          const existingUsers = config.users ?? [];
+          const alreadyExists = existingUsers.some(u =>
+            u.identities.some(i => i.channel === 'telegram' && i.channelUserId === userId),
+          );
+          if (!alreadyExists) {
+            existingUsers.push(newUser as typeof existingUsers[0]);
+            saveConfig({ users: existingUsers }).catch(err => {
+              log.warn(`Failed to save invited user to config: ${err instanceof Error ? err.message : String(err)}`);
+            });
+          }
+
+          log.info(`Telegram: user ${firstName} (${userId}) joined via invite from ${invitedBy}`);
+          await ctx.reply(`Welcome, ${firstName}! You were invited by ${invitedBy}. You can now chat with me.`);
+          return;
+        } else {
+          await ctx.reply('This invite link is invalid or has expired.');
+          return;
+        }
+      }
+
+      // Allowlist check — explicit allowlist, users-derived, or runtime (invite)
       const effectiveAllowlist = tg.allowlist.length > 0 ? tg.allowlist : deriveChannelAllowlist('telegram', config);
-      if (effectiveAllowlist.length > 0 && !effectiveAllowlist.includes(chatId) && !effectiveAllowlist.includes(author)) {
+      if (effectiveAllowlist.length > 0 && !effectiveAllowlist.includes(chatId) && !effectiveAllowlist.includes(author) && !runtimeAllowlist.has(chatId)) {
         log.debug(`Telegram: ignoring message from ${author} (chat ${chatId}, not in allowlist)`);
         return;
       }
