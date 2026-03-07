@@ -11,6 +11,9 @@
     "token": "",
     "allowlist": []
   },
+  "tools": {
+    "webSearchApiKey": ""
+  },
   "heartbeat": {
     "enabled": false
   },
