@@ -5,10 +5,6 @@
     "apiKey": "",
     "auth": "oauth"
   },
-  "telegram": {
-    "enabled": true,
-    "allowlist": []
-  },
   "heartbeat": {
     "enabled": true
   },
@@ -19,5 +15,11 @@
   "memory": {
     "vectorSearch": true
   },
-  "users": []
+  "users": [
+    {
+      "id": "wojtek",
+      "name": "Wojtek",
+      "identities": [{ "channel": "telegram", "channelUserId": "" }]
+    }
+  ]
 }

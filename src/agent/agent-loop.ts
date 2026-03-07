@@ -9,7 +9,7 @@ import type { SkillLoader } from '../skills/skill-loader.js';
 import type { JanusConfig } from '../config/schema.js';
 import type { MemoryStore } from '../memory/memory-store.js';
 import type { GateService } from '../gates/types.js';
-import { findUserProfile } from '../users/user-resolver.js';
+import { findUserProfile, deriveChannelAllowlist } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 
 const THINKING_LEVEL_BUDGETS: Record<string, number> = {
@@ -305,8 +305,12 @@ export class AgentLoop {
     if (!response.streamed && msg.chatId !== 'internal') {
       // Route cron/heartbeat responses to the last known user channel
       if (msg.chatId.startsWith('cron:') || msg.chatId === 'heartbeat') {
-        const targetChannel = this.deps.config.telegram?.enabled ? 'telegram' : 'cli';
-        const targetChatId = this.deps.config.telegram?.allowlist?.[0] ?? 'default';
+        const tgAllowlist = this.deps.config.telegram?.allowlist?.length
+          ? this.deps.config.telegram.allowlist
+          : deriveChannelAllowlist('telegram', this.deps.config);
+        const tgEnabled = this.deps.config.telegram?.enabled || tgAllowlist.length > 0;
+        const targetChannel = tgEnabled ? 'telegram' : 'cli';
+        const targetChatId = tgAllowlist[0] ?? 'default';
         response.channel = targetChannel;
         response.chatId = targetChatId;
       }
