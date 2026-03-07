@@ -4,7 +4,6 @@
  */
 
 import { resolve } from 'node:path';
-import { homedir } from 'node:os';
 import type { JanusConfig } from './config/schema.js';
 import { FileTokenStore } from './auth/token-store.js';
 import { MessageBus } from './bus/message-bus.js';
@@ -119,7 +118,6 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
 
   tools.setContext({
     workspaceDir: config.workspace.dir,
-    allowedDirs: [resolve(homedir(), '.janus', 'users')],
     execDenyPatterns: [...config.tools.execDenyPatterns, ...(config.tools.execDenyPatternsExtra ?? [])],
     execTimeout: config.tools.execTimeout,
     maxFileSize: config.tools.maxFileSize,
