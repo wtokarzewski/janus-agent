@@ -134,7 +134,7 @@ Configure in editor (e.g. Claude Code):
 
 ## Config (`src/config/schema.ts`)
 
-`janus.json` + env vars. Zod-validated.
+`janus.json` (all config including API keys and tokens). Env vars supported as overrides. Zod-validated.
 
 Key sections: `llm`, `agent`, `workspace`, `tools`, `database`, `heartbeat`, `telegram`, `streaming`, `gates`, `memory`.
 
