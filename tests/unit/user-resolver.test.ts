@@ -149,20 +149,25 @@ describe('loadProfileMd', () => {
   it('should load PROFILE.md from custom path', async () => {
     const profilePath = join(tempDir, 'PROFILE.md');
     writeFileSync(profilePath, 'You are Alice. Be concise.');
-    const result = await loadProfileMd('user1', profilePath);
+    const result = await loadProfileMd('user1', tempDir, profilePath);
     expect(result).toBe('You are Alice. Be concise.');
   });
 
   it('should return null when file does not exist', async () => {
-    const result = await loadProfileMd('nonexistent', join(tempDir, 'nope.md'));
+    const result = await loadProfileMd('nonexistent', tempDir, join(tempDir, 'nope.md'));
     expect(result).toBeNull();
   });
 
-  it('should return null when no home and no custom path', async () => {
-    const origHome = process.env.HOME;
-    process.env.HOME = '';
-    const result = await loadProfileMd('user1');
-    process.env.HOME = origHome;
+  it('should load PROFILE.md from workspace default path', async () => {
+    const profileDir = join(tempDir, '.janus', 'users', 'user1');
+    mkdirSync(profileDir, { recursive: true });
+    writeFileSync(join(profileDir, 'PROFILE.md'), 'workspace profile');
+    const result = await loadProfileMd('user1', tempDir);
+    expect(result).toBe('workspace profile');
+  });
+
+  it('should return null when workspace profile does not exist', async () => {
+    const result = await loadProfileMd('user1', tempDir);
     expect(result).toBeNull();
   });
 });

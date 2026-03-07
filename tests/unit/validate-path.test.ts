@@ -81,33 +81,4 @@ describe('validatePath', () => {
     expect(result).toBe(join(realpathSync(workspace), 'file.txt'));
   });
 
-  describe('allowedDirs', () => {
-    let allowedDir: string;
-
-    beforeEach(() => {
-      const base = join(workspace, '..');
-      allowedDir = join(base, 'allowed');
-      mkdirSync(join(allowedDir, 'sub'), { recursive: true });
-      writeFileSync(join(allowedDir, 'profile.md'), '# Profile');
-    });
-
-    it('allows path within allowedDir', () => {
-      const result = validatePath(workspace, join(allowedDir, 'profile.md'), [allowedDir]);
-      expect(result).toBe(join(realpathSync(allowedDir), 'profile.md'));
-    });
-
-    it('allows non-existing file within allowedDir', () => {
-      const result = validatePath(workspace, join(allowedDir, 'sub', 'new.md'), [allowedDir]);
-      expect(result).toContain('new.md');
-    });
-
-    it('blocks path outside workspace AND allowedDirs', () => {
-      expect(() => validatePath(workspace, join(outside, 'secret.txt'), [allowedDir])).toThrow('Path escapes workspace');
-    });
-
-    it('blocks symlink escape through allowedDir', () => {
-      symlinkSync(outside, join(allowedDir, 'escape-link'));
-      expect(() => validatePath(workspace, join(allowedDir, 'escape-link', 'secret.txt'), [allowedDir])).toThrow('Path escapes workspace');
-    });
-  });
 });

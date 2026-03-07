@@ -72,16 +72,13 @@ export function autoIdentifyUser(
 
 /**
  * Load a user's PROFILE.md file.
- * Default path: ~/.janus/users/{userId}/PROFILE.md
+ * Default path: {workspaceDir}/.janus/users/{userId}/PROFILE.md
  * Custom path from config profilePath overrides default.
  */
-export async function loadProfileMd(userId: string, profilePath?: string): Promise<string | null> {
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  if (!home && !profilePath) return null;
-
+export async function loadProfileMd(userId: string, workspaceDir: string, profilePath?: string): Promise<string | null> {
   const path = profilePath
     ? resolve(profilePath)
-    : resolve(home, '.janus', 'users', userId, 'PROFILE.md');
+    : resolve(workspaceDir, '.janus', 'users', userId, 'PROFILE.md');
 
   try {
     return await readFile(path, 'utf-8');
