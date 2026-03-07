@@ -85,7 +85,7 @@ Disabled by default to avoid the initial model download on machines where it's n
 
 Run Janus in Docker — useful for deploying the Telegram gateway on a server/VPS.
 
-**Prerequisites:** Docker and Docker Compose installed, `.env` file with your API keys/tokens, `janus.json` configured.
+**Prerequisites:** Docker and Docker Compose installed, `janus.json` configured (API keys, Telegram token, etc.).
 
 ```bash
 # Build the image
