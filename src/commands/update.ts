@@ -35,8 +35,8 @@ async function ensureWorkspace(cwd: string): Promise<void> {
     } else {
       console.log('  All workspace files up to date.');
     }
-  } catch {
-    // Config might not exist yet — skip silently
+  } catch (err) {
+    console.log(chalk.yellow(`  Skipped: ${err instanceof Error ? err.message : String(err)}`));
   }
 }
 
