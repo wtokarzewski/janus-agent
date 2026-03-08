@@ -149,6 +149,7 @@ export class HeartbeatService {
           content: `[Heartbeat task: ${task.name}]\n\n${task.description}`,
           author: 'system',
           timestamp: new Date(),
+          lane: 'heartbeat',
         };
         if (task.userId) {
           inbound.user = { userId: task.userId };

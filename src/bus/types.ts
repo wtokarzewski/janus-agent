@@ -1,3 +1,5 @@
+export type Lane = 'user' | 'cron' | 'heartbeat';
+
 export interface InboundMessage {
   id: string;
   channel: string;
@@ -17,6 +19,7 @@ export interface InboundMessage {
     kind: 'user' | 'family';
     id: string;
   };
+  lane?: Lane;
 }
 
 export interface OutboundMessage {

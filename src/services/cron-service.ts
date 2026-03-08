@@ -216,6 +216,7 @@ export class CronService {
         author: 'system',
         timestamp: startedAt,
         cronDepth: 1,
+        lane: job.name.startsWith('heartbeat:') ? 'heartbeat' : 'cron',
       });
 
       const durationMs = Date.now() - startedAt.getTime();
