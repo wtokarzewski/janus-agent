@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '../llm/types.js';
-import type { Tool, ToolContext } from './types.js';
+import type { Tool, ToolContext, RequestContext } from './types.js';
 import type { PatternGate } from '../gates/pattern-gate.js';
 import type { GateService } from '../gates/types.js';
 import { isContextualTool, toolToDefinition } from './types.js';
@@ -8,7 +8,6 @@ import * as log from '../utils/logger.js';
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
   private gate?: { patterns: PatternGate; service: GateService };
-  private currentContext?: ToolContext;
 
   register(tool: Tool): void {
     if (this.tools.has(tool.name)) {
@@ -47,18 +46,18 @@ export class ToolRegistry {
     log.debug('Gate system enabled');
   }
 
-  async execute(name: string, args: Record<string, unknown>): Promise<string> {
+  async execute(name: string, args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) {
       return `Error: Unknown tool "${name}". Available tools: ${this.names().join(', ')}`;
     }
 
-    // Per-user allow/deny enforcement
-    if (this.currentContext?.userToolAllow && !this.currentContext.userToolAllow.includes(name)) {
+    // Per-user allow/deny enforcement (from per-request context, not shared state)
+    if (reqCtx?.userToolAllow && !reqCtx.userToolAllow.includes(name)) {
       log.info(`Tool "${name}" blocked: not in user allow list`);
       return `Error: Tool "${name}" is not available for this user.`;
     }
-    if (this.currentContext?.userToolDeny?.includes(name)) {
+    if (reqCtx?.userToolDeny?.includes(name)) {
       log.info(`Tool "${name}" blocked: in user deny list`);
       return `Error: Tool "${name}" is not available for this user.`;
     }
@@ -69,7 +68,7 @@ export class ToolRegistry {
       const action = this.gate.patterns.formatAction(name, args);
       log.info(`Gate triggered: ${action}`);
 
-      const allowed = await this.gate.service.confirm({ tool: name, action, args, chatId: this.currentContext?.chatId });
+      const allowed = await this.gate.service.confirm({ tool: name, action, args, chatId: reqCtx?.chatId });
       if (!allowed) {
         log.info(`Gate denied: ${action}`);
         return `Action denied by user: ${action}`;
@@ -83,7 +82,7 @@ export class ToolRegistry {
     log.debug(`Executing tool: ${name}`, coerced);
 
     try {
-      const result = await tool.execute(coerced);
+      const result = await tool.execute(coerced, reqCtx);
       return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -93,7 +92,6 @@ export class ToolRegistry {
   }
 
   setContext(ctx: ToolContext): void {
-    this.currentContext = ctx;
     for (const tool of this.tools.values()) {
       if (isContextualTool(tool)) {
         tool.setContext(ctx);

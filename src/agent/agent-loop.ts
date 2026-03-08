@@ -3,6 +3,7 @@ import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
 import type { LLMMessage } from '../llm/types.js';
 import type { ProviderRegistry } from '../llm/provider-registry.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
+import type { RequestContext } from '../tools/types.js';
 import type { SessionManager } from '../session/session-manager.js';
 import type { ContextBuilder } from '../context/context-builder.js';
 import type { SkillLoader } from '../skills/skill-loader.js';
@@ -144,14 +145,24 @@ export class AgentLoop {
 
   private async runLane(lane: Lane, concurrency: number, signal: AbortSignal): Promise<void> {
     let active = 0;
-    const waiters: Array<() => void> = [];
+    const waiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
 
     const acquire = (): Promise<void> => {
       if (active < concurrency) {
         active++;
         return Promise.resolve();
       }
-      return new Promise<void>(resolve => waiters.push(resolve));
+      return new Promise<void>((resolve, reject) => {
+        const entry = { resolve, reject };
+        waiters.push(entry);
+        signal.addEventListener('abort', () => {
+          const idx = waiters.indexOf(entry);
+          if (idx !== -1) {
+            waiters.splice(idx, 1);
+            reject(new Error('Aborted'));
+          }
+        }, { once: true });
+      });
     };
 
     const release = () => {
@@ -159,7 +170,7 @@ export class AgentLoop {
       const next = waiters.shift();
       if (next) {
         active++;
-        next();
+        next.resolve();
       }
     };
 
@@ -226,19 +237,25 @@ export class AgentLoop {
       ? findUserProfile(msg.user.userId, this.deps.config)
       : undefined;
 
-    // 2. Update tool contexts
+    // 2. Update tool contexts (static — workspace/deny patterns, safe to share across lanes)
     this.deps.tools.setContext({
       workspaceDir: this.deps.config.workspace.dir,
       execDenyPatterns: [...this.deps.config.tools.execDenyPatterns, ...(this.deps.config.tools.execDenyPatternsExtra ?? [])],
       execTimeout: this.deps.config.tools.execTimeout,
       maxFileSize: this.deps.config.tools.maxFileSize,
+      webFetchTimeoutMs: this.deps.config.tools.webFetchTimeoutMs,
+      webFetchMaxBytes: this.deps.config.tools.webFetchMaxBytes,
+      cronDepth: msg.cronDepth,
+    });
+
+    // Per-request context — passed to execute(), not shared across concurrent lanes
+    const reqCtx: RequestContext = {
       chatId: msg.chatId,
       userId: msg.user?.userId,
       userToolAllow: userProfile?.tools?.allow,
       userToolDeny: userProfile?.tools?.deny,
       toolPolicy: userProfile?.tools?.policy,
-      cronDepth: msg.cronDepth,
-    });
+    };
 
     // 3. Get session + build system prompt
     const session = await this.deps.sessions.getOrCreate(sessionKey);
@@ -277,7 +294,7 @@ export class AgentLoop {
     const streamCtx = (this.deps.config.streaming?.enabled ?? true)
       ? { channel: msg.channel, chatId: msg.chatId }
       : undefined;
-    const iterResult = await this.iterate(messages, toolDefs, maxIterations, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId);
+    const iterResult = await this.iterate(messages, toolDefs, maxIterations, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx);
 
     // 6. Save final assistant message
     await this.deps.sessions.append(sessionKey, [
@@ -397,6 +414,7 @@ export class AgentLoop {
     streamCtx?: { channel: string; chatId: string },
     signal?: AbortSignal,
     chatId?: string,
+    reqCtx?: RequestContext,
   ): Promise<IterateResult> {
     let lastContent = '';
     let totalToolCalls = 0;
@@ -548,12 +566,12 @@ export class AgentLoop {
         log.info(`Tool: ${tc.function.name}(${summarizeArgs(args)})`);
         totalToolCalls++;
         const maxRetries = this.deps.config.agent.toolRetries;
-        let rawResult = await this.deps.tools.execute(tc.function.name, args);
+        let rawResult = await this.deps.tools.execute(tc.function.name, args, reqCtx);
 
         for (let attempt = 1; attempt < maxRetries && rawResult.startsWith('Error:'); attempt++) {
           log.warn(`Tool "${tc.function.name}" failed (attempt ${attempt}/${maxRetries}), retrying...`);
           await sleep(500 * attempt);
-          rawResult = await this.deps.tools.execute(tc.function.name, args);
+          rawResult = await this.deps.tools.execute(tc.function.name, args, reqCtx);
         }
 
         // Error recovery: ask user whether to continue after persistent failure
