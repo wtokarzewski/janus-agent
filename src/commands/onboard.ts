@@ -29,14 +29,18 @@ async function readExample(filename: string): Promise<string> {
   return readFile(resolve(EXAMPLES_DIR, filename), 'utf-8');
 }
 
-/** Onboard command — creates workspace structure, config, and bootstrap files. */
-export async function runOnboard(dir?: string): Promise<void> {
-  const workspace = resolve(dir ?? '.');
-
-  console.log(chalk.bold('\nJanus — Workspace Setup\n'));
-
-  const created: string[] = [];
-  const skipped: string[] = [];
+/**
+ * Ensure workspace bootstrap files exist (non-destructive).
+ * Creates missing files from examples/ templates.
+ * Called by both onboard and update commands.
+ */
+export async function ensureBootstrapFiles(
+  workspace: string,
+  created?: string[],
+  skipped?: string[],
+): Promise<void> {
+  const c = created ?? [];
+  const s = skipped ?? [];
 
   // Global dir (~/.janus/)
   const home = process.env.HOME || process.env.USERPROFILE || '';
@@ -46,16 +50,14 @@ export async function runOnboard(dir?: string): Promise<void> {
     await mkdir(globalDir, { recursive: true });
     await mkdir(resolve(globalDir, 'skills'), { recursive: true });
 
-    // Global ego — agent character, same across all projects
     const egoContent = await readExample('EGO.md');
-    await createIfMissing(resolve(globalDir, 'EGO.md'), egoContent, '~/.janus/EGO.md', created, skipped);
+    await createIfMissing(resolve(globalDir, 'EGO.md'), egoContent, '~/.janus/EGO.md', c, s);
   }
 
   // Workspace directories
   for (const subdir of ['memory', 'sessions', 'skills']) {
     const path = resolve(workspace, subdir);
     await mkdir(path, { recursive: true });
-    created.push(`${subdir}/`);
   }
 
   // Workspace files — per-project (templates from examples/)
@@ -64,13 +66,25 @@ export async function runOnboard(dir?: string): Promise<void> {
     readExample('AGENTS.md'),
     readExample('HEARTBEAT.md'),
   ]);
-  await createIfMissing(resolve(workspace, 'janus.json'), DEFAULT_CONFIG, 'janus.json', created, skipped);
-  await createIfMissing(resolve(workspace, 'JANUS.md'), janusContent, 'JANUS.md', created, skipped);
-  await createIfMissing(resolve(workspace, 'AGENTS.md'), agentsContent, 'AGENTS.md', created, skipped);
-  await createIfMissing(resolve(workspace, 'HEARTBEAT.md'), heartbeatContent, 'HEARTBEAT.md', created, skipped);
+  await createIfMissing(resolve(workspace, 'janus.json'), DEFAULT_CONFIG, 'janus.json', c, s);
+  await createIfMissing(resolve(workspace, 'JANUS.md'), janusContent, 'JANUS.md', c, s);
+  await createIfMissing(resolve(workspace, 'AGENTS.md'), agentsContent, 'AGENTS.md', c, s);
+  await createIfMissing(resolve(workspace, 'HEARTBEAT.md'), heartbeatContent, 'HEARTBEAT.md', c, s);
 
-  // Per-user directories (from config)
-  await setupUserDirs(workspace, [], created, skipped);
+  // Per-user directories
+  await setupUserDirs(workspace, undefined, c, s);
+}
+
+/** Onboard command — creates workspace structure, config, and bootstrap files. */
+export async function runOnboard(dir?: string): Promise<void> {
+  const workspace = resolve(dir ?? '.');
+
+  console.log(chalk.bold('\nJanus — Workspace Setup\n'));
+
+  const created: string[] = [];
+  const skipped: string[] = [];
+
+  await ensureBootstrapFiles(workspace, created, skipped);
 
   // Report
   console.log(chalk.green('Created:'));
