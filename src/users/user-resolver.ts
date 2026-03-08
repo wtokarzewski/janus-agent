@@ -1,7 +1,11 @@
 import { readFile } from 'node:fs/promises';
+import { mkdir, writeFile, access } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { JanusConfig, UserProfile } from '../config/schema.js';
 import * as log from '../utils/logger.js';
+
+/** Track which user dirs we've already ensured this process lifetime. */
+const ensuredUsers = new Set<string>();
 
 export interface ResolvedUser {
   userId: string;
@@ -28,6 +32,7 @@ export function resolveUser(
         i => i.channel === channel && i.channelUserId === channelUserId,
       );
       if (identity) {
+        ensureUserDir(user.id, user.name, config.workspace.dir);
         return { userId: user.id, name: user.name, identity };
       }
     }
@@ -43,6 +48,7 @@ export function resolveUser(
         log.warn(
           `User "${user.id}" matched by username "${channelUsername}" — configure channelUserId for stability`,
         );
+        ensureUserDir(user.id, user.name, config.workspace.dir);
         return { userId: user.id, name: user.name, identity };
       }
     }
@@ -60,12 +66,15 @@ export function autoIdentifyUser(
   channelUserId: string | undefined,
   channelUsername: string | undefined,
   displayName: string | undefined,
+  workspaceDir?: string,
 ): ResolvedUser | null {
   if (!channelUserId) return null;
   const userId = `${channel}:${channelUserId}`;
+  const name = displayName || channelUsername || channelUserId;
+  if (workspaceDir) ensureUserDir(userId, name, workspaceDir);
   return {
     userId,
-    name: displayName || channelUsername || channelUserId,
+    name,
     identity: { channel, channelUserId, channelUsername },
   };
 }
@@ -103,4 +112,26 @@ export function deriveChannelAllowlist(channel: string, config: JanusConfig): st
  */
 export function findUserProfile(userId: string, config: JanusConfig): UserProfile | undefined {
   return config.users.find(u => u.id === userId);
+}
+
+/**
+ * Ensure per-user directory exists with default PROFILE.md.
+ * Non-destructive — never overwrites existing files.
+ * Cached per-process so it only runs once per user.
+ */
+export function ensureUserDir(userId: string, name: string, workspaceDir: string): void {
+  const key = `${workspaceDir}:${userId}`;
+  if (ensuredUsers.has(key)) return;
+  ensuredUsers.add(key);
+
+  const userDir = resolve(workspaceDir, '.janus', 'users', userId);
+  const profilePath = resolve(userDir, 'PROFILE.md');
+
+  mkdir(userDir, { recursive: true })
+    .then(() => access(profilePath).catch(() =>
+      writeFile(profilePath, `# ${name}\n\n## Preferences\n<!-- Auto-updated by Janus when learning your preferences -->\n`, 'utf-8'),
+    ))
+    .catch(err => {
+      log.warn(`Failed to ensure user dir for ${userId}: ${err instanceof Error ? err.message : String(err)}`);
+    });
 }
