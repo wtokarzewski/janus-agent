@@ -142,6 +142,15 @@ program
     await runSetup();
   });
 
+program
+  .command('update')
+  .description('Pull latest changes, install deps, run tests')
+  .option('--skip-tests', 'Skip running tests after update')
+  .action(async (opts: { skipTests?: boolean }) => {
+    const { runUpdate } = await import('./commands/update.js');
+    await runUpdate(opts);
+  });
+
 program.parseAsync().catch((err) => {
   console.error('Fatal:', err instanceof Error ? err.message : String(err));
   process.exit(1);
