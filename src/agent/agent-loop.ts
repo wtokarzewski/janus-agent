@@ -132,23 +132,63 @@ export class AgentLoop {
   async run(signal: AbortSignal): Promise<void> {
     log.info('Agent loop started');
 
-    const lanes: Lane[] = ['user', 'cron', 'heartbeat'];
+    const lanes = this.deps.config.agent.lanes;
     const promises: Promise<void>[] = [];
 
-    for (const lane of lanes) {
-      promises.push(this.runLane(lane, signal));
+    for (const [lane, concurrency] of Object.entries(lanes)) {
+      promises.push(this.runLane(lane as Lane, concurrency, signal));
     }
 
     await Promise.all(promises);
     log.info('Agent loop stopped');
   }
 
-  private async runLane(lane: Lane, signal: AbortSignal): Promise<void> {
+  private async runLane(lane: Lane, concurrency: number, signal: AbortSignal): Promise<void> {
+    let active = 0;
+    const waiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
+
+    const acquire = (signal: AbortSignal): Promise<void> => {
+      if (active < concurrency) {
+        active++;
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve, reject) => {
+        const entry = { resolve, reject };
+        waiters.push(entry);
+        // If abort fires while waiting for a slot, reject so the loop can break
+        signal.addEventListener('abort', () => {
+          const idx = waiters.indexOf(entry);
+          if (idx !== -1) {
+            waiters.splice(idx, 1);
+            reject(new Error('Aborted'));
+          }
+        }, { once: true });
+      });
+    };
+
+    const release = () => {
+      active--;
+      const next = waiters.shift();
+      if (next) {
+        active++;
+        next.resolve();
+      }
+    };
+
     while (!signal.aborted) {
       try {
         const msg = await this.deps.bus.consumeInbound(signal, lane);
-        log.debug(`Lane "${lane}": processing message from ${msg.channel}:${msg.chatId}`);
-        await this.processLaneMessage(msg, signal);
+        log.debug(`Lane "${lane}": processing message from ${msg.channel}:${msg.chatId} (active=${active}/${concurrency})`);
+        await acquire(signal);
+
+        // Fire-and-forget: process message concurrently, release slot when done
+        this.processLaneMessage(msg, signal)
+          .catch(err => {
+            if (!signal.aborted) {
+              log.error(`Lane "${lane}" message error: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          })
+          .finally(() => release());
       } catch (err) {
         if (signal.aborted) break;
         log.error(`Lane "${lane}" error: ${err instanceof Error ? err.message : String(err)}`);

@@ -370,13 +370,19 @@ export class TelegramChannel {
 
       try {
         log.info(`Telegram: starting bot (attempt ${attempt}/${START_MAX_RETRIES})...`);
-        bot.start({
+        // bot.start() returns a promise that resolves when the bot stops.
+        // We run it in background but catch errors so they're not silently lost.
+        const startPromise = bot.start({
           drop_pending_updates: true,
           onStart: (info) => {
-            log.info(`Telegram: connected as @${info.username}`);
+            log.info(`Telegram: connected as @${info.username} — polling active`);
           },
         });
-        return; // bot.start() doesn't await — it starts polling in background
+        // Handle background errors (e.g., deleteWebhook failure, getUpdates 409 conflict)
+        startPromise?.catch((err: unknown) => {
+          log.error(`Telegram: bot.start() background error: ${err instanceof Error ? err.message : err}`);
+        });
+        return;
       } catch (err) {
         log.error(`Telegram: start failed (attempt ${attempt}/${START_MAX_RETRIES}): ${err instanceof Error ? err.message : err}`);
 

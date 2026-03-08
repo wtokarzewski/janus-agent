@@ -131,12 +131,15 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
     const memoryIndex = new MemoryIndex(db);
     memory.setIndex(memoryIndex);
     await memory.reindex();
-    // Vector embeddings — reindex with embeddings in background (non-blocking)
+    // Vector embeddings — reindex with embeddings in background (non-blocking).
+    // Delayed to let Grammy bot.start() and event loop settle first.
     if (config.memory?.vectorSearch) {
-      memory.reindexWithEmbeddings().catch(err => {
-        // Non-fatal — FTS still works without embeddings
-        console.warn(`Vector embedding indexing failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      setTimeout(() => {
+        memory.reindexWithEmbeddings().catch(err => {
+          // Non-fatal — FTS still works without embeddings
+          console.warn(`Vector embedding indexing failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }, 5_000);
     }
   }
 
