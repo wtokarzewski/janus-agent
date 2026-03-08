@@ -7,6 +7,10 @@ services:
       - janus-data:/home/node/app/.janus
       - janus-memory:/home/node/app/memory
       - janus-sessions:/home/node/app/sessions
+      - ${GOG_CONFIG:-./gog-config}:/home/node/.config/gogcli:ro
+    environment:
+      - GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD:-}
+      - GOG_ACCOUNT=${GOG_ACCOUNT:-}
     restart: unless-stopped
 
   janus-cli:
@@ -17,6 +21,10 @@ services:
       - janus-data:/home/node/app/.janus
       - janus-memory:/home/node/app/memory
       - janus-sessions:/home/node/app/sessions
+      - ${GOG_CONFIG:-./gog-config}:/home/node/.config/gogcli:ro
+    environment:
+      - GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD:-}
+      - GOG_ACCOUNT=${GOG_ACCOUNT:-}
     stdin_open: true
     tty: true
     profiles:

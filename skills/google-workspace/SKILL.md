@@ -19,7 +19,7 @@ Use `gog` CLI for all Google Workspace operations. Run commands via `exec`.
 - **Linux**: `curl -L https://github.com/steipete/gog/releases/latest/download/gog_Linux_x86_64.tar.gz | tar -xz -C /usr/local/bin`
 - **Docker**: Pre-installed in Janus Docker image
 
-### Configure OAuth
+### Configure OAuth (native install)
 
 1. Import credentials: `gog auth credentials /path/to/client_secret.json`
 2. Add account: `gog auth add user@gmail.com --services gmail,calendar,drive,contacts,docs,sheets`
@@ -29,6 +29,32 @@ Set default account to avoid `--account` on every command:
 ```bash
 export GOG_ACCOUNT=user@gmail.com
 ```
+
+### Configure OAuth (Docker)
+
+Auth requires a browser, so run it on the host first, then mount credentials into the container.
+
+1. Install gog on host (macOS/Linux/Windows — see above)
+2. Switch to file-based keyring:
+   ```bash
+   gog auth keyring file
+   export GOG_KEYRING_PASSWORD="your-password"
+   ```
+3. Import credentials and add account:
+   ```bash
+   gog auth credentials /path/to/client_secret.json
+   gog auth add user@gmail.com --services gmail,calendar,drive,contacts,docs,sheets
+   ```
+4. Copy config to project:
+   ```bash
+   cp -r ~/.config/gogcli ./gog-config
+   ```
+5. Set env vars in `.env`:
+   ```
+   GOG_KEYRING_PASSWORD=your-password
+   GOG_ACCOUNT=user@gmail.com
+   ```
+6. `docker compose up` — credentials are mounted read-only via volume
 
 ## Gmail
 
