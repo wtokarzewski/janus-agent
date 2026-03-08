@@ -8,7 +8,7 @@ import type { SubagentRegistry } from '../agent/subagent-registry.js';
 import { resolveUser, autoIdentifyUser, deriveChannelAllowlist } from '../users/user-resolver.js';
 import type { InviteStore } from '../invites/invite-store.js';
 import { saveConfig } from '../config/config.js';
-import { setupUserDirs } from '../commands/onboard.js';
+import { ensureUserDir } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 
 const MAX_TELEGRAM_MSG = 4096;
@@ -163,9 +163,7 @@ export class TelegramChannel {
               });
 
               // Create per-user directory + default PROFILE.md (non-destructive)
-              setupUserDirs(config.workspace.dir, [newUser as typeof existingUsers[0]]).catch(err => {
-                log.warn(`Failed to setup user dir for ${newUser.id}: ${err instanceof Error ? err.message : String(err)}`);
-              });
+              ensureUserDir(newUser.id, firstName, config.workspace.dir);
             }
 
             log.info(`Telegram: user ${firstName} (${userId}) joined via invite from ${invitedBy}`);
@@ -191,7 +189,7 @@ export class TelegramChannel {
       const channelUserId = ctx.from ? String(ctx.from.id) : undefined;
       const channelUsername = ctx.from?.username ?? undefined;
       const resolved = resolveUser('telegram', channelUserId, channelUsername, config)
-        ?? autoIdentifyUser('telegram', channelUserId, channelUsername, ctx.from?.first_name);
+        ?? autoIdentifyUser('telegram', channelUserId, channelUsername, ctx.from?.first_name, config.workspace.dir);
 
       // Determine scope
       let scope: InboundMessage['scope'];
