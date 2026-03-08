@@ -11,25 +11,39 @@ describe('stop command', () => {
       expect(result).toEqual({ cancelled: false });
     });
 
-    it('aborts the iteration controller when running', () => {
+    it('aborts all iteration controllers when running', () => {
       const agent = new AgentLoop({} as any);
 
-      // Simulate _iterationController being set (as run() would do)
+      // Simulate _iterationControllers being set (as run() would do)
       const controller = new AbortController();
-      (agent as any)._iterationController = controller;
+      (agent as any)._iterationControllers.set('chat-1', controller);
 
       expect(controller.signal.aborted).toBe(false);
       const result = agent.stop();
       expect(result).toEqual({ cancelled: true });
       expect(controller.signal.aborted).toBe(true);
-      // Controller should be cleared
-      expect((agent as any)._iterationController).toBeNull();
+      // Controllers should be cleared
+      expect((agent as any)._iterationControllers.size).toBe(0);
+    });
+
+    it('stops only the specified chatId', () => {
+      const agent = new AgentLoop({} as any);
+      const c1 = new AbortController();
+      const c2 = new AbortController();
+      (agent as any)._iterationControllers.set('chat-1', c1);
+      (agent as any)._iterationControllers.set('chat-2', c2);
+
+      const result = agent.stop('chat-1');
+      expect(result).toEqual({ cancelled: true });
+      expect(c1.signal.aborted).toBe(true);
+      expect(c2.signal.aborted).toBe(false);
+      expect((agent as any)._iterationControllers.size).toBe(1);
     });
 
     it('can be called multiple times safely', () => {
       const agent = new AgentLoop({} as any);
       const controller = new AbortController();
-      (agent as any)._iterationController = controller;
+      (agent as any)._iterationControllers.set('chat-1', controller);
 
       agent.stop();
       // Second call when already stopped

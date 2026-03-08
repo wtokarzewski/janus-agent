@@ -1,32 +1,41 @@
 import { AsyncQueue } from './async-queue.js';
-import type { InboundMessage, OutboundMessage } from './types.js';
+import type { InboundMessage, OutboundMessage, Lane } from './types.js';
 
 export type OutboundHandler = (msg: OutboundMessage) => Promise<void>;
+
+const ALL_LANES: Lane[] = ['user', 'cron', 'heartbeat'];
 
 /**
  * MessageBus — decouples channels from agent loop.
  *
+ * Inbound messages are routed to per-lane queues based on msg.lane.
  * Channels register handlers via registerHandler(channelName, handler).
  * startDispatcher() runs a background loop that routes OutboundMessages to the right handler.
  */
 export class MessageBus {
-  private inbound: AsyncQueue<InboundMessage>;
+  private inboundLanes: Map<Lane, AsyncQueue<InboundMessage>>;
   private outbound: AsyncQueue<OutboundMessage>;
   private handlers = new Map<string, OutboundHandler>();
   private steering = new Map<string, InboundMessage[]>();
   private processingChats = new Set<string>();
 
   constructor(maxSize = 100) {
-    this.inbound = new AsyncQueue<InboundMessage>(maxSize);
+    this.inboundLanes = new Map();
+    for (const lane of ALL_LANES) {
+      this.inboundLanes.set(lane, new AsyncQueue<InboundMessage>(maxSize));
+    }
     this.outbound = new AsyncQueue<OutboundMessage>(maxSize);
   }
 
   publishInbound(msg: InboundMessage, signal?: AbortSignal): Promise<void> {
-    return this.inbound.publish(msg, signal);
+    const lane = msg.lane ?? 'user';
+    const queue = this.inboundLanes.get(lane) ?? this.inboundLanes.get('user')!;
+    return queue.publish(msg, signal);
   }
 
-  consumeInbound(signal?: AbortSignal): Promise<InboundMessage> {
-    return this.inbound.consume(signal);
+  consumeInbound(signal?: AbortSignal, lane: Lane = 'user'): Promise<InboundMessage> {
+    const queue = this.inboundLanes.get(lane) ?? this.inboundLanes.get('user')!;
+    return queue.consume(signal);
   }
 
   publishOutbound(msg: OutboundMessage, signal?: AbortSignal): Promise<void> {
@@ -72,7 +81,9 @@ export class MessageBus {
     if (pending && pending.length > 0) {
       this.steering.delete(chatId);
       for (const msg of pending) {
-        this.inbound.publish(msg).catch(() => {});
+        const lane = msg.lane ?? 'user';
+        const queue = this.inboundLanes.get(lane) ?? this.inboundLanes.get('user')!;
+        queue.publish(msg).catch(() => {});
       }
     }
   }

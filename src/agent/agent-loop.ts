@@ -1,5 +1,5 @@
 import type { MessageBus } from '../bus/message-bus.js';
-import type { InboundMessage, OutboundMessage } from '../bus/types.js';
+import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
 import type { LLMMessage } from '../llm/types.js';
 import type { ProviderRegistry } from '../llm/provider-registry.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
@@ -62,7 +62,7 @@ interface IterateResult {
 export class AgentLoop {
   private deps: AgentDeps;
   private messageCounters = new Map<string, { count: number; userId?: string; scope?: InboundMessage['scope'] }>();
-  private _iterationController: AbortController | null = null;
+  private _iterationControllers = new Map<string, AbortController>();
 
   constructor(deps: AgentDeps) {
     this.deps = deps;
@@ -74,15 +74,22 @@ export class AgentLoop {
   }
 
   /**
-   * Stop the current iteration (if running) and cancel all subagents.
-   * Returns true if something was actually cancelled.
+   * Stop running iterations. If chatId provided, stops only that chat.
+   * Otherwise stops all active iterations.
    */
-  stop(): { cancelled: boolean } {
-    if (!this._iterationController) {
-      return { cancelled: false };
+  stop(chatId?: string): { cancelled: boolean } {
+    if (chatId) {
+      const ctrl = this._iterationControllers.get(chatId);
+      if (!ctrl) return { cancelled: false };
+      ctrl.abort();
+      this._iterationControllers.delete(chatId);
+      return { cancelled: true };
     }
-    this._iterationController.abort();
-    this._iterationController = null;
+    if (this._iterationControllers.size === 0) return { cancelled: false };
+    for (const [, ctrl] of this._iterationControllers) {
+      ctrl.abort();
+    }
+    this._iterationControllers.clear();
     return { cancelled: true };
   }
 
@@ -124,49 +131,91 @@ export class AgentLoop {
   async run(signal: AbortSignal): Promise<void> {
     log.info('Agent loop started');
 
-    while (!signal.aborted) {
-      let msg: InboundMessage | undefined;
-      try {
-        msg = await this.deps.bus.consumeInbound(signal);
+    const lanes = this.deps.config.agent.lanes;
+    const promises: Promise<void>[] = [];
 
-        // Route system messages differently (cron, heartbeat, subagents)
-        if (msg.channel === 'system') {
-          await this.processSystemMessage(msg);
-          continue;
-        }
-
-        this.deps.bus.markProcessing(msg.chatId);
-        this._iterationController = new AbortController();
-        let response;
-        try {
-          (msg as InboundMessage & { signal?: AbortSignal }).signal = this._iterationController.signal;
-          response = await this.processMessage(msg);
-        } finally {
-          this._iterationController = null;
-          this.deps.bus.clearProcessing(msg.chatId);
-        }
-        if (!response.streamed) {
-          await this.deps.bus.publishOutbound(response, signal);
-        }
-      } catch (err) {
-        if (signal.aborted) break;
-        const errorText = err instanceof Error ? err.message : String(err);
-        log.error(`Agent loop error: ${errorText}`);
-
-        // Send error to user so they know something went wrong
-        if (msg) {
-          const errorResponse: OutboundMessage = {
-            chatId: msg.chatId,
-            channel: msg.channel,
-            content: `Error: ${errorText}`,
-            timestamp: new Date(),
-          };
-          await this.deps.bus.publishOutbound(errorResponse, signal).catch(() => {});
-        }
-      }
+    for (const [lane, concurrency] of Object.entries(lanes)) {
+      promises.push(this.runLane(lane as Lane, concurrency, signal));
     }
 
+    await Promise.all(promises);
     log.info('Agent loop stopped');
+  }
+
+  private async runLane(lane: Lane, concurrency: number, signal: AbortSignal): Promise<void> {
+    let active = 0;
+    const waiters: Array<() => void> = [];
+
+    const acquire = (): Promise<void> => {
+      if (active < concurrency) {
+        active++;
+        return Promise.resolve();
+      }
+      return new Promise<void>(resolve => waiters.push(resolve));
+    };
+
+    const release = () => {
+      active--;
+      const next = waiters.shift();
+      if (next) {
+        active++;
+        next();
+      }
+    };
+
+    while (!signal.aborted) {
+      try {
+        const msg = await this.deps.bus.consumeInbound(signal, lane);
+        await acquire();
+
+        this.processLaneMessage(msg, signal)
+          .catch(err => {
+            if (!signal.aborted) {
+              log.error(`Lane "${lane}" error: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          })
+          .finally(() => release());
+      } catch {
+        if (signal.aborted) break;
+      }
+    }
+  }
+
+  private async processLaneMessage(msg: InboundMessage, signal: AbortSignal): Promise<void> {
+    try {
+      // Route system messages differently (cron, heartbeat, subagents)
+      if (msg.channel === 'system') {
+        await this.processSystemMessage(msg);
+        return;
+      }
+
+      this.deps.bus.markProcessing(msg.chatId);
+      const iterCtrl = new AbortController();
+      this._iterationControllers.set(msg.chatId, iterCtrl);
+      let response;
+      try {
+        (msg as InboundMessage & { signal?: AbortSignal }).signal = iterCtrl.signal;
+        response = await this.processMessage(msg);
+      } finally {
+        this._iterationControllers.delete(msg.chatId);
+        this.deps.bus.clearProcessing(msg.chatId);
+      }
+      if (!response.streamed) {
+        await this.deps.bus.publishOutbound(response, signal);
+      }
+    } catch (err) {
+      if (signal.aborted) return;
+      const errorText = err instanceof Error ? err.message : String(err);
+      log.error(`Agent loop error: ${errorText}`);
+
+      const errorResponse: OutboundMessage = {
+        chatId: msg.chatId,
+        channel: msg.channel,
+        content: `Error: ${errorText}`,
+        timestamp: new Date(),
+      };
+      await this.deps.bus.publishOutbound(errorResponse, signal).catch(() => {});
+    }
   }
 
   private async processMessage(msg: InboundMessage): Promise<OutboundMessage & { streamed?: boolean }> {
