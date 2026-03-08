@@ -12,6 +12,7 @@ export interface HeartbeatTask {
   lastRun: number;
   scheduleKind: 'every' | 'cron';
   scheduleValue: string;
+  userId?: string;
 }
 
 const UNIT_MS: Record<string, number> = {
@@ -37,6 +38,7 @@ const UNIT_MS: Record<string, number> = {
 export class HeartbeatService {
   private bus: MessageBus;
   private config: JanusConfig;
+  private workspaceDir: string;
   private heartbeatPath: string;
   private tasks: HeartbeatTask[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -45,6 +47,7 @@ export class HeartbeatService {
   constructor(opts: { bus: MessageBus; config: JanusConfig; workspaceDir: string; cronService?: CronService }) {
     this.bus = opts.bus;
     this.config = opts.config;
+    this.workspaceDir = opts.workspaceDir;
     this.heartbeatPath = resolve(opts.workspaceDir, 'HEARTBEAT.md');
     this.cronService = opts.cronService ?? null;
   }
@@ -53,22 +56,25 @@ export class HeartbeatService {
     await this.loadTasks();
 
     if (this.tasks.length === 0) {
-      log.info('Heartbeat: no tasks found in HEARTBEAT.md');
+      log.info('Heartbeat: no tasks found');
       return;
     }
 
     // If CronService is available, sync tasks there and let it handle scheduling
     if (this.cronService) {
       for (const task of this.tasks) {
+        const jobName = task.userId
+          ? `heartbeat:${task.userId}:${task.name}`
+          : `heartbeat:${task.name}`;
         this.cronService.upsertByName({
-          name: `heartbeat:${task.name}`,
+          name: jobName,
           scheduleKind: task.scheduleKind,
           scheduleValue: task.scheduleValue,
           task: task.description,
           enabled: true,
         });
       }
-      log.info(`Heartbeat: synced ${this.tasks.length} task(s) to CronService`);
+      log.info(`Heartbeat: synced ${this.tasks.length} task(s) to CronService (${this.tasks.filter(t => t.userId).length} per-user)`);
       return;
     }
 
@@ -98,15 +104,29 @@ export class HeartbeatService {
   }
 
   private async loadTasks(): Promise<void> {
-    let content: string;
+    // 1. Global HEARTBEAT.md
     try {
-      content = await readFile(this.heartbeatPath, 'utf-8');
+      const content = await readFile(this.heartbeatPath, 'utf-8');
+      this.tasks = parseHeartbeatMd(content);
     } catch {
-      log.debug('Heartbeat: HEARTBEAT.md not found');
-      return;
+      log.debug('Heartbeat: global HEARTBEAT.md not found');
     }
 
-    this.tasks = parseHeartbeatMd(content);
+    // 2. Per-user HEARTBEAT.md files
+    for (const user of this.config.users) {
+      const userPath = resolve(this.workspaceDir, '.janus', 'users', user.id, 'HEARTBEAT.md');
+      try {
+        const content = await readFile(userPath, 'utf-8');
+        const userTasks = parseHeartbeatMd(content);
+        for (const task of userTasks) {
+          task.userId = user.id;
+        }
+        this.tasks.push(...userTasks);
+        log.debug(`Heartbeat: loaded ${userTasks.length} task(s) for user ${user.id}`);
+      } catch {
+        // No per-user HEARTBEAT.md — fine
+      }
+    }
   }
 
   private async checkDueTasks(signal: AbortSignal): Promise<void> {
@@ -122,14 +142,18 @@ export class HeartbeatService {
         task.lastRun = now;
         log.info(`Heartbeat: firing task "${task.name}"`);
 
-        await this.bus.publishInbound({
+        const inbound: Parameters<typeof this.bus.publishInbound>[0] = {
           id: `heartbeat-${Date.now()}`,
           channel: 'system',
-          chatId: 'heartbeat',
+          chatId: task.userId ? `heartbeat:${task.userId}` : 'heartbeat',
           content: `[Heartbeat task: ${task.name}]\n\n${task.description}`,
           author: 'system',
           timestamp: new Date(),
-        }, signal).catch(err => {
+        };
+        if (task.userId) {
+          inbound.user = { userId: task.userId };
+        }
+        await this.bus.publishInbound(inbound, signal).catch(err => {
           log.warn(`Heartbeat: failed to publish task "${task.name}": ${err instanceof Error ? err.message : String(err)}`);
         });
       }

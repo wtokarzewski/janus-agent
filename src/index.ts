@@ -87,7 +87,10 @@ program
       app.cronService.start(signal);
     }
     const heartbeatFileExists = existsSync(resolve(config.workspace.dir, 'HEARTBEAT.md'));
-    if (config.heartbeat.enabled || heartbeatFileExists) {
+    const hasPerUserHeartbeat = config.users.some(u =>
+      existsSync(resolve(config.workspace.dir, '.janus', 'users', u.id, 'HEARTBEAT.md')),
+    );
+    if (config.heartbeat.enabled || heartbeatFileExists || hasPerUserHeartbeat) {
       log.info('Starting Heartbeat service...');
       const heartbeat = new HeartbeatService({
         bus: app.bus,

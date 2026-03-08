@@ -189,6 +189,9 @@ janus.json
 /JANUS.md
 /HEARTBEAT.md
 
+# Janus per-user data (profiles, overrides)
+/.janus/
+
 # Google Workspace (gogcli) credentials
 gog-config/
 

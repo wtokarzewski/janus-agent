@@ -12,7 +12,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
                                              + Vector
 ```
 
-**Status (Phase 8):** ~8,000 LOC, 323 tests across 34 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
+**Status (Phase 8):** ~8,000 LOC, 325 tests across 34 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
 
 ## Core Pipeline
 
@@ -48,8 +48,8 @@ Assembles system prompt from multiple sources:
 |---|---------|--------|-------------|
 | 1 | Identity | Built-in (time, workspace, tools) | ✅ |
 | 2 | Ego | `~/.janus/EGO.md` | ❌ skipped |
-| 3 | Agents | `./AGENTS.md` | ❌ skipped |
-| 4 | Heartbeat | `./HEARTBEAT.md` | ❌ skipped |
+| 3 | Agents | `./AGENTS.md` + per-user override | ❌ skipped |
+| 4 | Heartbeat | `./HEARTBEAT.md` + per-user override | ❌ skipped |
 | 5 | Project | `./JANUS.md` | ❌ skipped |
 | 6 | Skills | SKILL.md files (lazy stubs) | ✅ |
 | 7 | Memory | FTS5 + vector hybrid search | ❌ skipped |
@@ -123,7 +123,7 @@ Falls back to file-based storage when disabled.
 Persistent cron scheduler. 3 schedule kinds: `at` (one-shot), `every` (interval), `cron` (expression). SQLite-backed, run history, exponential backoff on errors.
 
 ### HeartbeatService (`src/services/heartbeat-service.ts`)
-Parses `HEARTBEAT.md` for periodic tasks. Syncs to CronService when available.
+Parses `HEARTBEAT.md` for periodic tasks. Supports per-user `HEARTBEAT.md` in `.janus/users/{userId}/` — per-user tasks are tagged with `userId` and routed to the correct Telegram chat. Syncs to CronService when available. See [PER-USER.md](PER-USER.md).
 
 ## MCP Server (`src/mcp/`)
 
@@ -147,7 +147,7 @@ Key sections: `llm`, `agent`, `workspace`, `tools`, `database`, `heartbeat`, `te
 
 ## Testing
 
-323 tests across 34 files. Vitest. Mock LLM provider for integration tests. In-memory SQLite for DB tests.
+325 tests across 34 files. Vitest. Mock LLM provider for integration tests. In-memory SQLite for DB tests.
 
 ```bash
 npm test           # Run all tests

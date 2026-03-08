@@ -70,12 +70,12 @@ export class ContextBuilder {
       const ego = await this.loadEgo();
       if (ego) parts.push(ego);
 
-      // 3. Agents (AGENTS.md from workspace)
-      const agents = await this.loadAgents();
+      // 3. Agents (AGENTS.md from workspace + per-user override)
+      const agents = await this.loadAgents(opts.user?.userId);
       if (agents) parts.push(agents);
 
-      // 4. Heartbeat (HEARTBEAT.md from workspace)
-      const heartbeat = await this.loadHeartbeat();
+      // 4. Heartbeat (HEARTBEAT.md from workspace + per-user)
+      const heartbeat = await this.loadHeartbeat(opts.user?.userId);
       if (heartbeat) parts.push(heartbeat);
 
       // 5. Project file (JANUS.md from workspace)
@@ -184,30 +184,54 @@ Tool usage rules:
     return null;
   }
 
-  private async loadAgents(): Promise<string | null> {
+  private async loadAgents(userId?: string): Promise<string | null> {
     const dir = resolve(this.deps.config.workspace.dir);
+    const parts: string[] = [];
+
+    // Global AGENTS.md
     try {
       const content = await readFile(resolve(dir, 'AGENTS.md'), 'utf-8');
-      if (content.trim()) {
-        return `<agents>\n${content.trim()}\n</agents>`;
-      }
+      if (content.trim()) parts.push(content.trim());
     } catch {
-      // No AGENTS.md in this workspace
+      // No global AGENTS.md
     }
-    return null;
+
+    // Per-user override
+    if (userId) {
+      try {
+        const content = await readFile(resolve(dir, '.janus', 'users', userId, 'AGENTS.md'), 'utf-8');
+        if (content.trim()) parts.push(`<!-- user-specific rules for ${userId} -->\n${content.trim()}`);
+      } catch {
+        // No per-user AGENTS.md
+      }
+    }
+
+    return parts.length > 0 ? `<agents>\n${parts.join('\n\n')}\n</agents>` : null;
   }
 
-  private async loadHeartbeat(): Promise<string | null> {
+  private async loadHeartbeat(userId?: string): Promise<string | null> {
     const dir = resolve(this.deps.config.workspace.dir);
+    const parts: string[] = [];
+
+    // Global HEARTBEAT.md
     try {
       const content = await readFile(resolve(dir, 'HEARTBEAT.md'), 'utf-8');
-      if (content.trim()) {
-        return `<heartbeat>\n${content.trim()}\n</heartbeat>`;
-      }
+      if (content.trim()) parts.push(content.trim());
     } catch {
-      // No HEARTBEAT.md in this workspace
+      // No global HEARTBEAT.md
     }
-    return null;
+
+    // Per-user HEARTBEAT.md
+    if (userId) {
+      try {
+        const content = await readFile(resolve(dir, '.janus', 'users', userId, 'HEARTBEAT.md'), 'utf-8');
+        if (content.trim()) parts.push(`<!-- heartbeat tasks for ${userId} -->\n${content.trim()}`);
+      } catch {
+        // No per-user HEARTBEAT.md
+      }
+    }
+
+    return parts.length > 0 ? `<heartbeat>\n${parts.join('\n\n')}\n</heartbeat>` : null;
   }
 
   private async loadProjectFile(): Promise<string | null> {

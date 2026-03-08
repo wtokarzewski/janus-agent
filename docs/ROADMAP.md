@@ -1,14 +1,14 @@
 # Roadmap
 
-## Current State (Phase 7 complete)
+## Current State (Phase 8 complete)
 
-- **Codebase:** ~6,000 LOC TypeScript, 176 tests across 21 files, CI
-- **Runtime deps:** 11 (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, croner, grammy, openai, yaml, zod)
-- **Providers:** 7 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex)
-- **Tools:** 8 (exec, read/write/edit-file, list-dir, message, spawn_agent, cron)
-- **Skills:** 1 (programmer)
-- **Channels:** 2 (CLI, Telegram) + MCP server
-- **DB:** SQLite (WAL, 4 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding)
+- **Codebase:** ~7,500 LOC TypeScript, 325 tests across 34 files, CI
+- **Runtime deps:** 12 (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod)
+- **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
+- **Tools:** 14 (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update, invite)
+- **Skills:** 6 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace)
+- **Channels:** 2 (CLI, Telegram) + MCP server + MCP client
+- **DB:** SQLite (WAL, 5 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user)
 
 See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 
@@ -62,8 +62,27 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Family groups: shared memory scope via groupChatIds
 - 176 tests
 
+### Phase 8: Reliability + Security + Tools + Skills
+- Native OAuth (PKCE S256) for Anthropic + Codex, token storage with auto-refresh
+- `/stop` command: cancel mid-task (AgentLoop.stop(), SubagentRegistry.cancelAll())
+- 6 new tools: web_fetch, web_search, append_file, heartbeat, self_update, invite
+- MCP client: connect to external MCP servers, auto-discover tools
+- Steering messages: mid-run user input injection via MessageBus
+- Extended thinking/reasoning support (Anthropic), prompt caching (cache_control: ephemeral)
+- 5xx failover, cross-provider tool ID normalization, duplicate tool call prevention
+- Orphan tool_use repair (repairToolMessages), history token budget trimming
+- PROFILE.md auto-update: agent learns preferences → writes to .janus/users/{userId}/PROFILE.md
+- Invite system: Telegram deep-link onboarding, InviteStore (24h TTL), runtime + persistent allowlist
+- Telegram hardening: drop pending updates on startup, markdown URL cleanup
+- Self-update: git pull + npm install + test + self-respawn, Docker detection, auto-revert
+- 5 new skills: meal-planner, home-assistant, stock-watcher, google-workspace, personal-travel
+- Per-user overrides: AGENTS.md + HEARTBEAT.md per user, heartbeat routing to user's Telegram chat
+- 325 tests across 34 files
+
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
+- Voice transcription (Groq Whisper, TG voice → text)
+- Q&A Loop (iterative requirements gathering)
 
 ---
 
@@ -91,4 +110,7 @@ Features that set Janus apart from other AI agents:
 - **Minimal subagent prompts** — Child agents get stripped context, saving tokens.
 - **Persistent cron scheduler** — SQLite-backed, survives restarts, exponential backoff.
 - **MCP server** — Editors can use Janus tools directly via reverse provider.
-- **Simplicity** — ~6K LOC. Minimal codebase, full capabilities.
+- **Simplicity** — ~7.5K LOC. Minimal codebase, full capabilities.
+- **Native OAuth** — PKCE flows for Anthropic + Codex. No CLI SDK dependency required.
+- **Steering messages** — Mid-run user injection. User can redirect agent during tool execution.
+- **Family skills** — Meal planner, Home Assistant, stock watcher, travel planner, Google Workspace.

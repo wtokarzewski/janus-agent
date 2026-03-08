@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ContextBuilder } from '../../src/context/context-builder.js';
 import { MemoryStore } from '../../src/memory/memory-store.js';
@@ -181,5 +181,104 @@ describe('ContextBuilder multi-user', () => {
     });
 
     expect(prompt).toContain('Scope: family:family_wt');
+  });
+});
+
+describe('ContextBuilder per-user overrides', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+  });
+
+  it('should merge global and per-user AGENTS.md', async () => {
+    writeFileSync(join(tempDir, 'AGENTS.md'), '# Global\nBe helpful.');
+    const userDir = join(tempDir, '.janus', 'users', 'wt');
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(join(userDir, 'AGENTS.md'), '# Wojtek\nAlways reply in Polish.');
+
+    const { builder } = createBuilder(tempDir);
+    const prompt = await builder.build({
+      channel: 'telegram',
+      chatId: '123',
+      tools: [],
+      user: { userId: 'wt', name: 'Wojtek' },
+    });
+
+    expect(prompt).toContain('<agents>');
+    expect(prompt).toContain('Be helpful');
+    expect(prompt).toContain('Always reply in Polish');
+    expect(prompt).toContain('user-specific rules for wt');
+  });
+
+  it('should load per-user AGENTS.md without global', async () => {
+    const userDir = join(tempDir, '.janus', 'users', 'wt');
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(join(userDir, 'AGENTS.md'), '# Wojtek\nBe concise.');
+
+    const { builder } = createBuilder(tempDir);
+    const prompt = await builder.build({
+      channel: 'telegram',
+      chatId: '123',
+      tools: [],
+      user: { userId: 'wt', name: 'Wojtek' },
+    });
+
+    expect(prompt).toContain('<agents>');
+    expect(prompt).toContain('Be concise');
+  });
+
+  it('should not load per-user AGENTS.md when no user provided', async () => {
+    writeFileSync(join(tempDir, 'AGENTS.md'), '# Global\nBe helpful.');
+    const userDir = join(tempDir, '.janus', 'users', 'wt');
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(join(userDir, 'AGENTS.md'), '# Wojtek\nSecret rules.');
+
+    const { builder } = createBuilder(tempDir);
+    const prompt = await builder.build({
+      channel: 'cli',
+      chatId: 'test',
+      tools: [],
+    });
+
+    expect(prompt).toContain('Be helpful');
+    expect(prompt).not.toContain('Secret rules');
+  });
+
+  it('should merge global and per-user HEARTBEAT.md', async () => {
+    writeFileSync(join(tempDir, 'HEARTBEAT.md'), '## Backup\n- schedule: every 1d\n- task: Run backup');
+    const userDir = join(tempDir, '.janus', 'users', 'wt');
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(join(userDir, 'HEARTBEAT.md'), '## Briefing\n- schedule: at 08:00\n- task: Morning news');
+
+    const { builder } = createBuilder(tempDir);
+    const prompt = await builder.build({
+      channel: 'telegram',
+      chatId: '123',
+      tools: [],
+      user: { userId: 'wt', name: 'Wojtek' },
+    });
+
+    expect(prompt).toContain('<heartbeat>');
+    expect(prompt).toContain('Run backup');
+    expect(prompt).toContain('Morning news');
+    expect(prompt).toContain('heartbeat tasks for wt');
+  });
+
+  it('should load per-user HEARTBEAT.md without global', async () => {
+    const userDir = join(tempDir, '.janus', 'users', 'wt');
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(join(userDir, 'HEARTBEAT.md'), '## Check\n- schedule: every 30m\n- task: Health check');
+
+    const { builder } = createBuilder(tempDir);
+    const prompt = await builder.build({
+      channel: 'telegram',
+      chatId: '123',
+      tools: [],
+      user: { userId: 'wt', name: 'Wojtek' },
+    });
+
+    expect(prompt).toContain('<heartbeat>');
+    expect(prompt).toContain('Health check');
   });
 });
