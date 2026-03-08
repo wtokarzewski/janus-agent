@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { parse as parseYAML } from 'yaml';
 import type { JanusConfig } from '../config/schema.js';
@@ -8,10 +8,12 @@ import * as log from '../utils/logger.js';
 /**
  * Load SKILL.md files with YAML frontmatter + markdown body.
  * Search order: workspace/skills → ~/.janus/skills → builtin/skills
+ * Cache is invalidated when any skills directory mtime changes.
  */
 export class SkillLoader {
   private dirs: string[];
   private cache = new Map<string, SkillDefinition>();
+  private dirMtimes = new Map<string, number>();
 
   constructor(config: JanusConfig) {
     this.dirs = [
@@ -22,12 +24,16 @@ export class SkillLoader {
   }
 
   async loadAll(): Promise<SkillDefinition[]> {
-    if (this.cache.size > 0) return Array.from(this.cache.values());
+    if (this.cache.size > 0 && !(await this.dirsChanged())) {
+      return Array.from(this.cache.values());
+    }
 
+    this.cache.clear();
     for (const dir of this.dirs) {
       await this.loadFromDir(dir);
     }
 
+    await this.snapshotMtimes();
     log.info(`Loaded ${this.cache.size} skills`);
     return Array.from(this.cache.values());
   }
@@ -75,6 +81,53 @@ export class SkillLoader {
       } catch {
         // Not a skill, skip
       }
+    }
+  }
+
+  /** Check if any skills directory (or subdirectory) has a newer mtime than last snapshot. */
+  private async dirsChanged(): Promise<boolean> {
+    for (const dir of this.dirs) {
+      try {
+        const dirStat = await stat(dir);
+        const prev = this.dirMtimes.get(dir) ?? 0;
+        if (dirStat.mtimeMs !== prev) return true;
+
+        // Also check subdirectory mtimes (skill edits change subdir mtime)
+        const entries = await readdir(dir);
+        for (const entry of entries) {
+          const subPath = join(dir, entry);
+          try {
+            const subStat = await stat(subPath);
+            if (subStat.isDirectory()) {
+              const subPrev = this.dirMtimes.get(subPath) ?? 0;
+              if (subStat.mtimeMs !== subPrev) return true;
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* dir doesn't exist */ }
+    }
+    return false;
+  }
+
+  /** Snapshot current mtimes for all skills directories and subdirectories. */
+  private async snapshotMtimes(): Promise<void> {
+    this.dirMtimes.clear();
+    for (const dir of this.dirs) {
+      try {
+        const dirStat = await stat(dir);
+        this.dirMtimes.set(dir, dirStat.mtimeMs);
+
+        const entries = await readdir(dir);
+        for (const entry of entries) {
+          const subPath = join(dir, entry);
+          try {
+            const subStat = await stat(subPath);
+            if (subStat.isDirectory()) {
+              this.dirMtimes.set(subPath, subStat.mtimeMs);
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* dir doesn't exist */ }
     }
   }
 
