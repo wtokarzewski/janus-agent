@@ -18,6 +18,12 @@ COPY skills/ skills/
 # Stage 2: Runtime (slim image, no build tools)
 FROM node:20-bookworm-slim
 
+# Install gogcli (Google Workspace CLI)
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+  && curl -L https://github.com/steipete/gog/releases/latest/download/gog_Linux_x86_64.tar.gz | tar -xz -C /usr/local/bin \
+  && chmod +x /usr/local/bin/gog \
+  && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /home/node/app
 
 COPY --from=builder --chown=node:node /app/node_modules node_modules/
