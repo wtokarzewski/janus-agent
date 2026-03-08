@@ -8,6 +8,7 @@ import type { SubagentRegistry } from '../agent/subagent-registry.js';
 import { resolveUser, autoIdentifyUser, deriveChannelAllowlist } from '../users/user-resolver.js';
 import type { InviteStore } from '../invites/invite-store.js';
 import { saveConfig } from '../config/config.js';
+import { setupUserDirs } from '../commands/onboard.js';
 import * as log from '../utils/logger.js';
 
 const MAX_TELEGRAM_MSG = 4096;
@@ -159,6 +160,11 @@ export class TelegramChannel {
                 ...(allowlist.length > 0 ? { telegram: { ...tg, allowlist } } : {}),
               }).catch(err => {
                 log.warn(`Failed to save invited user to config: ${err instanceof Error ? err.message : String(err)}`);
+              });
+
+              // Create per-user directory + default PROFILE.md (non-destructive)
+              setupUserDirs(config.workspace.dir, [newUser as typeof existingUsers[0]]).catch(err => {
+                log.warn(`Failed to setup user dir for ${newUser.id}: ${err instanceof Error ? err.message : String(err)}`);
               });
             }
 
