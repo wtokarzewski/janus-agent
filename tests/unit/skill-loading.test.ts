@@ -54,7 +54,7 @@ describe('Skill loading with location', () => {
 });
 
 describe('Skill cache invalidation', () => {
-  it('should pick up new skills after clearCache()', async () => {
+  it('should auto-detect new skills via mtime change', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'janus-skill-test-'));
     createSkillFile(tempDir, 'existing-skill');
 
@@ -67,18 +67,28 @@ describe('Skill cache invalidation', () => {
     expect(initial.find(s => s.name === 'new-skill')).toBeUndefined();
     const initialCount = initial.length;
 
-    // Create a new skill on disk
+    // Create a new skill on disk — directory mtime changes
     createSkillFile(tempDir, 'new-skill', { description: 'Dynamically created' });
 
-    // Without clearCache, still returns old data
-    const cached = await loader.loadAll();
-    expect(cached.find(s => s.name === 'new-skill')).toBeUndefined();
-
-    // After clearCache, picks up the new skill
-    loader.clearCache();
+    // loadAll() detects mtime change and reloads automatically
     const refreshed = await loader.loadAll();
     expect(refreshed).toHaveLength(initialCount + 1);
     expect(refreshed.find(s => s.name === 'new-skill')).toBeTruthy();
+  });
+
+  it('should still support manual clearCache()', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'janus-skill-test-'));
+    createSkillFile(tempDir, 'test-skill');
+
+    const config = createTestConfig({ workspace: { dir: tempDir, skillsDir: 'skills' } });
+    const loader = new SkillLoader(config);
+
+    const initial = await loader.loadAll();
+    expect(initial.find(s => s.name === 'test-skill')).toBeTruthy();
+
+    loader.clearCache();
+    const reloaded = await loader.loadAll();
+    expect(reloaded.find(s => s.name === 'test-skill')).toBeTruthy();
   });
 });
 

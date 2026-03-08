@@ -123,7 +123,6 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
     maxFileSize: config.tools.maxFileSize,
     webFetchTimeoutMs: config.tools.webFetchTimeoutMs,
     webFetchMaxBytes: config.tools.webFetchMaxBytes,
-    onSkillsChange: () => skills.clearCache(),
   });
 
   // 4. Memory
