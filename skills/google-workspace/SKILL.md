@@ -13,10 +13,17 @@ Use `gog` CLI for all Google Workspace operations. Run commands via `exec`.
 
 ## Setup (one-time)
 
-1. Install: `brew install steipete/tap/gogcli`
-2. Import OAuth credentials: `gog auth credentials /path/to/client_secret.json`
-3. Add account: `gog auth add user@gmail.com --services gmail,calendar,drive,contacts,docs,sheets`
-4. Verify: `gog auth list`
+### Install gog
+
+- **macOS**: `brew install steipete/tap/gogcli`
+- **Linux**: `curl -L https://github.com/steipete/gog/releases/latest/download/gog_Linux_x86_64.tar.gz | tar -xz -C /usr/local/bin`
+- **Docker**: Pre-installed in Janus Docker image
+
+### Configure OAuth
+
+1. Import credentials: `gog auth credentials /path/to/client_secret.json`
+2. Add account: `gog auth add user@gmail.com --services gmail,calendar,drive,contacts,docs,sheets`
+3. Verify: `gog auth list`
 
 Set default account to avoid `--account` on every command:
 ```bash
