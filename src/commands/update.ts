@@ -4,6 +4,8 @@
  */
 
 import { existsSync } from 'node:fs';
+import { cp, readdir, mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import chalk from 'chalk';
@@ -40,6 +42,70 @@ async function ensureWorkspace(cwd: string): Promise<void> {
   }
 }
 
+/**
+ * One-time migration: move files from ~/.janus/ to workspace .janus/.
+ * Copies files that don't exist in workspace yet, skips existing ones.
+ */
+async function migrateFromHome(cwd: string): Promise<void> {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (!home) return;
+
+  const homeJanus = resolve(home, '.janus');
+  const wsJanus = resolve(cwd, '.janus');
+
+  // Skip if no HOME .janus/ or if HOME IS the workspace (same dir)
+  if (!existsSync(homeJanus)) return;
+  if (resolve(homeJanus) === resolve(wsJanus)) return;
+
+  let migrated = 0;
+
+  // Single files to migrate
+  const files = ['auth.json', 'config.json', 'EGO.md', 'history'];
+  for (const file of files) {
+    const src = resolve(homeJanus, file);
+    const dest = resolve(wsJanus, file);
+    if (existsSync(src) && !existsSync(dest)) {
+      await mkdir(wsJanus, { recursive: true });
+      await cp(src, dest);
+      migrated++;
+      console.log(chalk.green(`  Migrated: ~/.janus/${file} → .janus/${file}`));
+    }
+  }
+
+  // Directories to migrate (users/, skills/)
+  const dirs = ['users', 'skills'];
+  for (const dir of dirs) {
+    const src = resolve(homeJanus, dir);
+    const dest = resolve(wsJanus, dir);
+    if (!existsSync(src)) continue;
+
+    let entries: string[];
+    try {
+      entries = await readdir(src);
+    } catch {
+      continue;
+    }
+    if (entries.length === 0) continue;
+
+    // Merge: copy entries that don't exist in dest
+    await mkdir(dest, { recursive: true });
+    for (const entry of entries) {
+      const srcEntry = resolve(src, entry);
+      const destEntry = resolve(dest, entry);
+      if (!existsSync(destEntry)) {
+        await cp(srcEntry, destEntry, { recursive: true });
+        migrated++;
+        console.log(chalk.green(`  Migrated: ~/.janus/${dir}/${entry} → .janus/${dir}/${entry}`));
+      }
+    }
+  }
+
+  if (migrated > 0) {
+    console.log(chalk.blue(`Migrated ${migrated} item(s) from ~/.janus/ to workspace .janus/`));
+    console.log(chalk.gray('  You can safely delete ~/.janus/ after verifying.'));
+  }
+}
+
 export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<void> {
   const cwd = process.cwd();
 
@@ -65,6 +131,7 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
 
   if (count === 0) {
     console.log(chalk.green('Already up to date.'));
+    await migrateFromHome(cwd);
     await ensureWorkspace(cwd);
     return;
   }
@@ -107,7 +174,10 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
     }
   }
 
-  // 5. Ensure per-user directories exist
+  // 5. Migrate files from ~/.janus/ to workspace .janus/ (one-time)
+  await migrateFromHome(cwd);
+
+  // 6. Ensure per-user directories exist
   await ensureWorkspace(cwd);
 
   console.log();
