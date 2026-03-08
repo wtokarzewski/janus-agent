@@ -189,6 +189,9 @@ janus.json
 /JANUS.md
 /HEARTBEAT.md
 
+# Google Workspace (gogcli) credentials
+gog-config/
+
 # Safety net — these should never be in the repo
 .claude/settings.local.json
 *.docx
