@@ -34,6 +34,11 @@ async function readExample(filename: string): Promise<string> {
  * Creates missing files from examples/ templates.
  * Called by both onboard and update commands.
  */
+/**
+ * Ensure workspace bootstrap files exist (non-destructive).
+ * Creates missing config/bootstrap files + per-user dirs.
+ * Called by the update command after pull/install.
+ */
 export async function ensureBootstrapFiles(
   workspace: string,
   created?: string[],
@@ -48,25 +53,16 @@ export async function ensureBootstrapFiles(
 
   if (globalDir) {
     await mkdir(globalDir, { recursive: true });
-    await mkdir(resolve(globalDir, 'skills'), { recursive: true });
-
     const egoContent = await readExample('EGO.md');
     await createIfMissing(resolve(globalDir, 'EGO.md'), egoContent, '~/.janus/EGO.md', c, s);
   }
 
-  // Workspace directories
-  for (const subdir of ['memory', 'sessions', 'skills']) {
-    const path = resolve(workspace, subdir);
-    await mkdir(path, { recursive: true });
-  }
-
-  // Workspace files — per-project (templates from examples/)
+  // Workspace bootstrap files (from examples/ templates)
   const [janusContent, agentsContent, heartbeatContent] = await Promise.all([
     readExample('JANUS.md'),
     readExample('AGENTS.md'),
     readExample('HEARTBEAT.md'),
   ]);
-  await createIfMissing(resolve(workspace, 'janus.json'), DEFAULT_CONFIG, 'janus.json', c, s);
   await createIfMissing(resolve(workspace, 'JANUS.md'), janusContent, 'JANUS.md', c, s);
   await createIfMissing(resolve(workspace, 'AGENTS.md'), agentsContent, 'AGENTS.md', c, s);
   await createIfMissing(resolve(workspace, 'HEARTBEAT.md'), heartbeatContent, 'HEARTBEAT.md', c, s);
@@ -84,6 +80,23 @@ export async function runOnboard(dir?: string): Promise<void> {
   const created: string[] = [];
   const skipped: string[] = [];
 
+  // Workspace directories (onboard-only, not needed for update)
+  for (const subdir of ['memory', 'sessions', 'skills']) {
+    const path = resolve(workspace, subdir);
+    await mkdir(path, { recursive: true });
+    created.push(`${subdir}/`);
+  }
+
+  // Global skills dir
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (home) {
+    await mkdir(resolve(home, '.janus', 'skills'), { recursive: true });
+  }
+
+  // janus.json (onboard-only — update shouldn't create config)
+  await createIfMissing(resolve(workspace, 'janus.json'), DEFAULT_CONFIG, 'janus.json', created, skipped);
+
+  // Bootstrap files + per-user dirs (shared with update)
   await ensureBootstrapFiles(workspace, created, skipped);
 
   // Report
