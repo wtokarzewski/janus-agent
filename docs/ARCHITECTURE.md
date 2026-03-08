@@ -12,7 +12,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
                                              + Vector
 ```
 
-**Status (Phase 8):** ~8,000 LOC, 325 tests across 34 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
+**Status (Phase 8):** ~9,900 LOC, 325 tests across 34 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
 
 ## Core Pipeline
 
@@ -46,15 +46,15 @@ Assembles system prompt from multiple sources:
 
 | # | Section | Source | Minimal mode |
 |---|---------|--------|-------------|
-| 1 | Identity | Built-in (time, workspace, tools) | ✅ |
-| 2 | Ego | `~/.janus/EGO.md` | ❌ skipped |
-| 3 | Agents | `./AGENTS.md` + per-user override | ❌ skipped |
-| 4 | Heartbeat | `./HEARTBEAT.md` + per-user override | ❌ skipped |
-| 5 | Project | `./JANUS.md` | ❌ skipped |
-| 6 | Skills | SKILL.md files (lazy stubs) | ✅ |
-| 7 | Memory | FTS5 + vector hybrid search | ❌ skipped |
-| 8 | Session | Channel + chat ID | ✅ |
-| 9 | Summary | Previous session summary | ✅ |
+| 1 | Identity | Built-in (timestamp, workspace, available tools) | ✅ |
+| 2 | User profile | Per-user PROFILE.md | ✅ |
+| 3 | Ego | `~/.janus/EGO.md` | ❌ skipped |
+| 4 | Agents | `./AGENTS.md` + per-user override | ❌ skipped |
+| 5 | Heartbeat | `./HEARTBEAT.md` + per-user override | ❌ skipped |
+| 6 | Project | `./JANUS.md` | ❌ skipped |
+| 7 | Skills | SKILL.md files (lazy stubs or full body) | ✅ |
+| 8 | Memory | FTS5 + vector hybrid search with scope filtering | ❌ skipped |
+| 9 | Learner | Recommendations from similar past executions | ❌ skipped |
 
 Subagents use **minimal mode** (identity + skills + session only) to save tokens.
 

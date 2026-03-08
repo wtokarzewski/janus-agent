@@ -44,7 +44,7 @@ Run `/config` during a session to reconfigure. See `examples/janus.json` for a c
 
 ## Key Features
 
-- **7 LLM providers** with multi-provider failover and streaming
+- **8 LLM providers** with multi-provider failover and streaming
 - **14 built-in tools** — exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update, invite
 - **Hybrid memory search** — FTS5 + vector (local embeddings, all-MiniLM-L6-v2) + temporal decay
 - **Safety gates** — Pattern-based confirmation before destructive commands
@@ -144,7 +144,7 @@ volumes:
 ## Testing
 
 ```bash
-npm test           # 323 tests across 34 files (vitest)
+npm test           # 325 tests across 34 files (vitest)
 npm run typecheck   # TypeScript type checking
 ```
 
