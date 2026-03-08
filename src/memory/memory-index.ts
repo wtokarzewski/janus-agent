@@ -144,7 +144,7 @@ export class MemoryIndex {
     // First do the regular FTS index
     this.indexFile(source, content, owner, scope, scopeId);
 
-    // Then compute and store embeddings
+    // Then compute and store embeddings (yields to event loop between chunks)
     try {
       const { embed } = await import('./embedder.js');
       const chunks = this.db.prepare(
@@ -155,6 +155,8 @@ export class MemoryIndex {
       for (const chunk of chunks) {
         const embedding = await embed(chunk.content);
         updateStmt.run(Buffer.from(embedding.buffer), chunk.id);
+        // embed() already yields, but yield again after SQLite write
+        // to keep event loop responsive during bulk indexing
       }
       log.info(`Computed embeddings for ${chunks.length} chunks from ${source}`);
     } catch (err) {
