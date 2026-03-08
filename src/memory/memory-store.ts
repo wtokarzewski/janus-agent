@@ -74,16 +74,13 @@ export class MemoryStore {
       }
     }
 
-    // Per-user files: scan ~/.janus/users/{userId}/memory/
+    // Per-user files: scan .janus/users/{userId}/memory/
     if (this.config.users.length > 0) {
-      const home = process.env.HOME || process.env.USERPROFILE || '';
-      if (home) {
-        for (const user of this.config.users) {
-          const userMemDir = resolve(home, '.janus', 'users', user.id, 'memory');
-          const userFiles = await this.collectDirMemoryFiles(userMemDir);
-          for (const f of userFiles) {
-            files.push({ ...f, owner: user.id, scope: 'user', scopeId: user.id });
-          }
+      for (const user of this.config.users) {
+        const userMemDir = resolve(this.config.workspace.dir, '.janus', 'users', user.id, 'memory');
+        const userFiles = await this.collectDirMemoryFiles(userMemDir);
+        for (const f of userFiles) {
+          files.push({ ...f, owner: user.id, scope: 'user', scopeId: user.id });
         }
       }
     }
@@ -125,12 +122,9 @@ export class MemoryStore {
   async appendDaily(entry: string, userId?: string, scope?: InboundMessage['scope']): Promise<void> {
     let dir = this.memoryDir;
 
-    // Per-user private memory goes to ~/.janus/users/{userId}/memory/
+    // Per-user private memory goes to .janus/users/{userId}/memory/
     if (scope?.kind === 'user' && userId) {
-      const home = process.env.HOME || process.env.USERPROFILE || '';
-      if (home) {
-        dir = resolve(home, '.janus', 'users', userId, 'memory');
-      }
+      dir = resolve(this.config.workspace.dir, '.janus', 'users', userId, 'memory');
     }
     // Family scope stays in workspace memory (owner='shared', scope='family')
     // No scope / global: workspace memory (existing behavior)

@@ -139,7 +139,7 @@ export async function runGateway(): Promise<void> {
   }
 
   // Post-update notification — if we just restarted after an update
-  const updateMsg = consumeUpdateMarker();
+  const updateMsg = consumeUpdateMarker(config.workspace.dir);
   if (updateMsg && telegramEnabled && telegramAllowlist.length > 0) {
     const targetChatId = telegramAllowlist[0];
     // Small delay so channels have time to initialize

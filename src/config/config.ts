@@ -9,9 +9,8 @@ export async function loadConfig(overrides?: Partial<JanusConfig>): Promise<Janu
   // 1. Try workspace config
   const workspaceConfig = await loadJSON(resolve('.', 'janus.json'));
 
-  // 2. Try user config
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  const userConfig = await loadJSON(resolve(home, '.janus', 'config.json'));
+  // 2. Try user config (.janus/config.json in workspace)
+  const userConfig = await loadJSON(resolve('.', '.janus', 'config.json'));
 
   // 3. Env vars
   const envConfig = loadEnvVars();
@@ -85,7 +84,7 @@ export async function saveConfig(
 ): Promise<void> {
   const path = scope === 'workspace'
     ? resolve('.', 'janus.json')
-    : resolve(process.env.HOME || process.env.USERPROFILE || '', '.janus', 'config.json');
+    : resolve('.', '.janus', 'config.json');
 
   const dir = resolve(path, '..');
   await mkdir(dir, { recursive: true });

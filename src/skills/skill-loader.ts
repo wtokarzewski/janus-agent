@@ -14,10 +14,9 @@ export class SkillLoader {
   private cache = new Map<string, SkillDefinition>();
 
   constructor(config: JanusConfig) {
-    const home = process.env.HOME || process.env.USERPROFILE || '';
     this.dirs = [
       resolve(config.workspace.dir, config.workspace.skillsDir),
-      resolve(home, '.janus', 'skills'),
+      resolve(config.workspace.dir, '.janus', 'skills'),
       resolve(import.meta.dirname ?? '.', '..', '..', 'skills'),
     ];
   }
