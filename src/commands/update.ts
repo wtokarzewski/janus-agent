@@ -87,6 +87,23 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
     }
   }
 
+  // 5. Ensure per-user directories exist
+  console.log(chalk.blue('Setting up user directories...'));
+  try {
+    const { setupUserDirs } = await import('./onboard.js');
+    const setupCreated: string[] = [];
+    await setupUserDirs(cwd, undefined, setupCreated);
+    if (setupCreated.length > 0) {
+      for (const f of setupCreated) {
+        console.log(chalk.green(`  + ${f}`));
+      }
+    } else {
+      console.log('  All user directories up to date.');
+    }
+  } catch {
+    // Config might not exist yet — skip silently
+  }
+
   console.log();
   console.log(chalk.green('Update complete. Restart Janus to use the new version.'));
 }

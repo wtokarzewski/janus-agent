@@ -2,6 +2,7 @@ import { mkdir, writeFile, readFile, access } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
+import type { UserProfile } from '../config/schema.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const EXAMPLES_DIR = resolve(__dirname, '..', '..', 'examples');
@@ -68,6 +69,9 @@ export async function runOnboard(dir?: string): Promise<void> {
   await createIfMissing(resolve(workspace, 'AGENTS.md'), agentsContent, 'AGENTS.md', created, skipped);
   await createIfMissing(resolve(workspace, 'HEARTBEAT.md'), heartbeatContent, 'HEARTBEAT.md', created, skipped);
 
+  // Per-user directories (from config)
+  await setupUserDirs(workspace, [], created, skipped);
+
   // Report
   console.log(chalk.green('Created:'));
   for (const f of created) {
@@ -83,6 +87,48 @@ export async function runOnboard(dir?: string): Promise<void> {
   console.log(chalk.bold('\nWorkspace ready!'));
   console.log(chalk.gray('Set your API key: export OPENROUTER_API_KEY=sk-...'));
   console.log(chalk.gray('Then run: npm start\n'));
+}
+
+const DEFAULT_PROFILE = `## Preferences
+<!-- Auto-updated by Janus when learning your preferences -->
+`;
+
+/**
+ * Create .janus/users/{id}/ directories and default PROFILE.md for each user.
+ * Called by both onboard and update commands.
+ */
+export async function setupUserDirs(
+  workspace: string,
+  users?: UserProfile[],
+  created?: string[],
+  skipped?: string[],
+): Promise<void> {
+  // Load users from config if not provided
+  let userList = users ?? [];
+  if (userList.length === 0) {
+    try {
+      const { loadConfig } = await import('../config/config.js');
+      const config = await loadConfig();
+      userList = config.users;
+    } catch {
+      return;
+    }
+  }
+
+  for (const user of userList) {
+    const userDir = resolve(workspace, '.janus', 'users', user.id);
+    await mkdir(userDir, { recursive: true });
+
+    const profilePath = resolve(userDir, 'PROFILE.md');
+    const profileContent = `# ${user.name}\n\n${DEFAULT_PROFILE}`;
+    await createIfMissing(
+      profilePath,
+      profileContent,
+      `.janus/users/${user.id}/PROFILE.md`,
+      created ?? [],
+      skipped ?? [],
+    );
+  }
 }
 
 async function createIfMissing(
