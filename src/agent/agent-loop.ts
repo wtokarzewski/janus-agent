@@ -132,67 +132,32 @@ export class AgentLoop {
   async run(signal: AbortSignal): Promise<void> {
     log.info('Agent loop started');
 
-    const lanes = this.deps.config.agent.lanes;
+    const lanes: Lane[] = ['user', 'cron', 'heartbeat'];
     const promises: Promise<void>[] = [];
 
-    for (const [lane, concurrency] of Object.entries(lanes)) {
-      promises.push(this.runLane(lane as Lane, concurrency, signal));
+    for (const lane of lanes) {
+      promises.push(this.runLane(lane, signal));
     }
 
     await Promise.all(promises);
     log.info('Agent loop stopped');
   }
 
-  private async runLane(lane: Lane, concurrency: number, signal: AbortSignal): Promise<void> {
-    let active = 0;
-    const waiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
-
-    const acquire = (): Promise<void> => {
-      if (active < concurrency) {
-        active++;
-        return Promise.resolve();
-      }
-      return new Promise<void>((resolve, reject) => {
-        const entry = { resolve, reject };
-        waiters.push(entry);
-        signal.addEventListener('abort', () => {
-          const idx = waiters.indexOf(entry);
-          if (idx !== -1) {
-            waiters.splice(idx, 1);
-            reject(new Error('Aborted'));
-          }
-        }, { once: true });
-      });
-    };
-
-    const release = () => {
-      active--;
-      const next = waiters.shift();
-      if (next) {
-        active++;
-        next.resolve();
-      }
-    };
-
+  private async runLane(lane: Lane, signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       try {
         const msg = await this.deps.bus.consumeInbound(signal, lane);
-        await acquire();
-
-        this.processLaneMessage(msg, signal)
-          .catch(err => {
-            if (!signal.aborted) {
-              log.error(`Lane "${lane}" error: ${err instanceof Error ? err.message : String(err)}`);
-            }
-          })
-          .finally(() => release());
-      } catch {
+        log.debug(`Lane "${lane}": processing message from ${msg.channel}:${msg.chatId}`);
+        await this.processLaneMessage(msg, signal);
+      } catch (err) {
         if (signal.aborted) break;
+        log.error(`Lane "${lane}" error: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }
 
   private async processLaneMessage(msg: InboundMessage, signal: AbortSignal): Promise<void> {
+    const tag = `${msg.channel}:${msg.chatId}`;
     try {
       // Route system messages differently (cron, heartbeat, subagents)
       if (msg.channel === 'system') {
@@ -200,6 +165,7 @@ export class AgentLoop {
         return;
       }
 
+      log.info(`[${tag}] Processing: "${msg.content.slice(0, 80)}"`);
       this.deps.bus.markProcessing(msg.chatId);
       const iterCtrl = new AbortController();
       this._iterationControllers.set(msg.chatId, iterCtrl);
@@ -214,10 +180,11 @@ export class AgentLoop {
       if (!response.streamed) {
         await this.deps.bus.publishOutbound(response, signal);
       }
+      log.info(`[${tag}] Done (streamed=${!!response.streamed})`);
     } catch (err) {
       if (signal.aborted) return;
       const errorText = err instanceof Error ? err.message : String(err);
-      log.error(`Agent loop error: ${errorText}`);
+      log.error(`[${tag}] Error: ${errorText}`);
 
       const errorResponse: OutboundMessage = {
         chatId: msg.chatId,

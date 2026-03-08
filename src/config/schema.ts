@@ -32,12 +32,6 @@ const LLMSchema = z.object({
   providers: z.array(ProviderSpecSchema).optional(),
 });
 
-const LanesSchema = z.object({
-  user: z.number().default(3),
-  cron: z.number().default(1),
-  heartbeat: z.number().default(1),
-});
-
 const AgentSchema = z.object({
   maxIterations: z.number().default(20),
   summarizationThreshold: z.number().default(20),
@@ -50,7 +44,6 @@ const AgentSchema = z.object({
   maxSkillsInPrompt: z.number().default(150),
   maxSkillsPromptChars: z.number().default(30_000),
   memoryFlushInterval: z.number().default(10),
-  lanes: LanesSchema.optional().transform(v => LanesSchema.parse(v ?? {})),
 });
 
 const WorkspaceSchema = z.object({
