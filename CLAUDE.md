@@ -4,7 +4,7 @@ Instructions for Claude Code when working with this repository.
 
 ## Project Overview
 
-Janus is a universal AI agent. CLI + Telegram, ~7,500 lines TypeScript.
+Janus is a universal AI agent. CLI + Telegram, ~9,900 lines TypeScript.
 
 **Name:** Janus — Roman god of beginnings, transitions, and duality. Two faces looking to the past and the future. Reflects the agent's dual nature: planning vs execution, analysis vs implementation, AI vs human control.
 
