@@ -21,18 +21,19 @@ function npm(args: string[], cwd: string, timeout = TIMEOUT) {
   return execAsync('npm', args, { cwd, timeout, shell: IS_WIN });
 }
 
-async function ensureUserDirs(cwd: string): Promise<void> {
-  console.log(chalk.blue('Setting up user directories...'));
+async function ensureWorkspace(cwd: string): Promise<void> {
+  console.log(chalk.blue('Ensuring workspace files...'));
   try {
-    const { setupUserDirs } = await import('./onboard.js');
+    const { ensureBootstrapFiles } = await import('./onboard.js');
     const created: string[] = [];
-    await setupUserDirs(cwd, undefined, created);
+    const skipped: string[] = [];
+    await ensureBootstrapFiles(cwd, created, skipped);
     if (created.length > 0) {
       for (const f of created) {
         console.log(chalk.green(`  + ${f}`));
       }
     } else {
-      console.log('  All user directories up to date.');
+      console.log('  All workspace files up to date.');
     }
   } catch {
     // Config might not exist yet — skip silently
@@ -64,7 +65,7 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
 
   if (count === 0) {
     console.log(chalk.green('Already up to date.'));
-    await ensureUserDirs(cwd);
+    await ensureWorkspace(cwd);
     return;
   }
 
@@ -107,7 +108,7 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
   }
 
   // 5. Ensure per-user directories exist
-  await ensureUserDirs(cwd);
+  await ensureWorkspace(cwd);
 
   console.log();
   console.log(chalk.green('Update complete. Restart Janus to use the new version.'));
