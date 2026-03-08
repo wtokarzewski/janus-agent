@@ -25,7 +25,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `auth/` — Native OAuth (PKCE S256, token storage, auto-refresh) for Anthropic + Codex
 - `bus/` — MessageBus + AsyncQueue (bounded, backpressure), steering messages (mid-run injection)
 - `channels/` — CLI (interactive REPL, persistent history, `/stop` + `/help` + `/config`), Telegram (grammy, typing indicators, start retry, `/stop` + `/whoami`, invite deep-link onboarding)
-- `commands/` — onboard (alias: init), gateway, mcp-server, setup (interactive wizard)
+- `commands/` — onboard (alias: init), gateway, mcp-server, setup (interactive wizard), update (pull + install + test)
 - `config/` — JSON config + Zod schema, `~/.janus/config.json` (user) + `janus.json` (workspace) + env
 - `context/` — System prompt builder (identity + tool guidelines + EGO + project + skills + memory + learner)
 - `db/` — SQLite database (better-sqlite3, WAL mode, 5 numbered migrations)
@@ -40,7 +40,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `invites/` — InviteStore (in-memory, 24h TTL) for Telegram deep-link onboarding
 - `tools/` — 14 built-in tools (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update, invite), path validation (symlink safety)
 - `utils/` — Logger, cross-platform shell config (`getShellConfig`, `killProcessTree`)
-- `users/` — User resolver (Telegram userId/username → Janus user), per-user profiles, tool/skill filtering
+- `users/` — User resolver (Telegram userId/username → Janus user), per-user profiles, tool/skill filtering, `ensureUserDir()` (auto-create `.janus/users/{id}/` on first resolution, channel-agnostic)
 
 ### Bootstrap files (unique to Janus)
 - `~/.janus/EGO.md` — Agent character (global, static)
@@ -61,7 +61,8 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 npm start                    # Interactive CLI
 npm start -- -m "message"   # Single message
 npm start -- gateway        # Headless (Telegram)
-npm start -- onboard        # Init workspace
+npm start -- onboard        # Init workspace + per-user dirs
+npm start -- update          # Pull + install + test + user dirs
 npm start -- mcp-server     # MCP server (stdin/stdout JSON-RPC)
 ```
 
