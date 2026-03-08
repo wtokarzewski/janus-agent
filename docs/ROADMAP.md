@@ -77,6 +77,8 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Self-update: git pull + npm install + test + self-respawn, Docker detection, auto-revert
 - 5 new skills: meal-planner, home-assistant, stock-watcher, google-workspace, personal-travel
 - Per-user overrides: AGENTS.md + HEARTBEAT.md per user, heartbeat routing to user's Telegram chat
+- `npm start -- update` CLI command: one-step project update (pull + install + test + user dirs), auto-revert on failure
+- Auto user dir setup: `ensureUserDir()` in user-resolver creates `.janus/users/{id}/` on first resolution (channel-agnostic)
 - 325 tests across 34 files
 
 **Remaining:**

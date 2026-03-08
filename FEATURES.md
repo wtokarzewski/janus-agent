@@ -114,7 +114,7 @@ Three auth modes (mutually exclusive):
 
 ## Multi-User
 
-- **UserResolver** — Resolves inbound message sender to user profile by channel + ID (stable) or username (fallback).
+- **UserResolver** — Resolves inbound message sender to user profile by channel + ID (stable) or username (fallback). Auto-creates `.janus/users/{id}/` with default PROFILE.md on first resolution (`ensureUserDir()`, channel-agnostic).
 - **Per-user profiles** — `.janus/users/{userId}/PROFILE.md` (workspace). Auto-updated by agent when learning user preferences.
 - **Per-user AGENTS.md** — `.janus/users/{userId}/AGENTS.md` overrides global agent behavior. Appended to global AGENTS.md in system prompt.
 - **Per-user HEARTBEAT.md** — `.janus/users/{userId}/HEARTBEAT.md` for personal scheduled tasks. Routed to user's Telegram chat.
@@ -126,7 +126,7 @@ Three auth modes (mutually exclusive):
 
 - **InviteStore** — In-memory token store with 24h TTL. Tokens are base64url (16 chars).
 - **Deep links** — `https://t.me/BOT?start=invite_TOKEN`. New user clicks → `/start invite_TOKEN` → auto-added to allowlist + config.users.
-- **Persistence** — Invited users saved to `janus.json` (both `config.users` and `telegram.allowlist`).
+- **Persistence** — Invited users saved to `janus.json` (both `config.users` and `telegram.allowlist`). Per-user directory auto-created.
 - **Non-blocking** — Fire-and-forget `ctx.reply()` prevents invite handler from blocking grammY pipeline.
 - **Markdown cleanup** — `cleanMarkdownUrls()` strips `**`/`*`/`__`/`_` from URLs before sending to Telegram.
 
@@ -233,7 +233,8 @@ Load priority: defaults < user config < workspace config < env vars.
 npm start                    # Interactive CLI
 npm start -- -m "message"   # Single message mode
 npm start -- gateway        # Headless mode (Telegram + services)
-npm start -- onboard        # Initialize workspace
+npm start -- onboard        # Initialize workspace + per-user dirs
+npm start -- update          # Pull + install + test + per-user dirs
 npm start -- mcp-server     # MCP server (stdin/stdout JSON-RPC)
 npm start -- setup          # Configure LLM provider
 ```

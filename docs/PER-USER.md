@@ -149,26 +149,35 @@ Heartbeat service starts automatically if any of these are true:
 }
 ```
 
-### 2. Create per-user files
+### 2. Per-user directories (automatic)
+
+Directories and default `PROFILE.md` files are created automatically — no manual setup needed:
+
+- **`npm start -- update`** — creates dirs for all users in `janus.json` after pulling updates
+- **`npm start -- onboard`** — same, during workspace initialization
+- **First message** — `ensureUserDir()` in user-resolver creates the dir on first user resolution (any channel)
+- **Invite link** — new user joining via Telegram invite gets a dir immediately
+
+All auto-creation is **non-destructive** — existing files are never overwritten.
+
+### 3. Customize per-user files (optional)
 
 ```bash
-mkdir -p .janus/users/wojtek
-mkdir -p .janus/users/asia
-
-# Profiles
-cat > .janus/users/wojtek/PROFILE.md << 'EOF'
-## Preferences
-- Language: Polish
-EOF
-
-# Personal heartbeat
+# Personal heartbeat (auto-routed to user's Telegram chat)
 cat > .janus/users/wojtek/HEARTBEAT.md << 'EOF'
 ## Morning Briefing
 - schedule: at 08:00
 - task: Weather forecast for Warsaw and top news from Poland
 EOF
+
+# Agent behavior override (appended to global AGENTS.md)
+cat > .janus/users/wojtek/AGENTS.md << 'EOF'
+# Wojtek
+- Always respond in Polish
+- Prefer technical details
+EOF
 ```
 
-### 3. `.janus/` is gitignored
+### 4. `.janus/` is gitignored
 
 The `.janus/` directory is in `.gitignore` — per-user data stays local and never goes into the repository.
