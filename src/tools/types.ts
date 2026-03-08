@@ -4,7 +4,7 @@ export interface Tool {
   name: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
-  execute(args: Record<string, unknown>): Promise<string>;
+  execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string>;
 }
 
 export interface ContextualTool extends Tool {
@@ -20,12 +20,14 @@ export interface ToolContext {
   webFetchTimeoutMs?: number;
   webFetchMaxBytes?: number;
   cronDepth?: number;
-  // Multi-user fields
+}
+
+/** Per-request context — passed to execute(), not shared across lanes. */
+export interface RequestContext {
   chatId?: string;
   userId?: string;
   userToolAllow?: string[];
   userToolDeny?: string[];
-  // Schema-only for now (no enforcement in this phase)
   toolPolicy?: {
     maxRecencyDays?: number;
     domainsAllow?: string[];
