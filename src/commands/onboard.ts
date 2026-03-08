@@ -47,15 +47,11 @@ export async function ensureBootstrapFiles(
   const c = created ?? [];
   const s = skipped ?? [];
 
-  // Global dir (~/.janus/)
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  const globalDir = home ? resolve(home, '.janus') : null;
-
-  if (globalDir) {
-    await mkdir(globalDir, { recursive: true });
-    const egoContent = await readExample('EGO.md');
-    await createIfMissing(resolve(globalDir, 'EGO.md'), egoContent, '~/.janus/EGO.md', c, s);
-  }
+  // Workspace .janus/ dir
+  const janusDir = resolve(workspace, '.janus');
+  await mkdir(janusDir, { recursive: true });
+  const egoContent = await readExample('EGO.md');
+  await createIfMissing(resolve(janusDir, 'EGO.md'), egoContent, '.janus/EGO.md', c, s);
 
   // Workspace bootstrap files (from examples/ templates)
   const [janusContent, agentsContent, heartbeatContent] = await Promise.all([
@@ -87,11 +83,8 @@ export async function runOnboard(dir?: string): Promise<void> {
     created.push(`${subdir}/`);
   }
 
-  // Global skills dir
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  if (home) {
-    await mkdir(resolve(home, '.janus', 'skills'), { recursive: true });
-  }
+  // Workspace .janus/skills dir
+  await mkdir(resolve(workspace, '.janus', 'skills'), { recursive: true });
 
   // janus.json (onboard-only — update shouldn't create config)
   await createIfMissing(resolve(workspace, 'janus.json'), DEFAULT_CONFIG, 'janus.json', created, skipped);

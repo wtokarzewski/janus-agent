@@ -19,7 +19,7 @@ interface ContextDeps {
  * Build system prompt from all context sources.
  * Assembly order:
  * 1. Identity (time, workspace, tools)
- * 2. Ego: ~/.janus/EGO.md (agent character, global)
+ * 2. Ego: .janus/EGO.md (agent character, per-workspace)
  * 3. Agents: ./AGENTS.md (agent behavior rules, per-workspace)
  * 4. Heartbeat: ./HEARTBEAT.md (autonomous tasks, per-workspace)
  * 5. Project: ./JANUS.md (per-repo instructions)
@@ -66,7 +66,7 @@ export class ContextBuilder {
     }
 
     if (!minimal) {
-      // 2. Ego (EGO.md from ~/.janus/)
+      // 2. Ego (EGO.md from .janus/)
       const ego = await this.loadEgo();
       if (ego) parts.push(ego);
 
@@ -170,11 +170,10 @@ Tool usage rules:
   }
 
   private async loadEgo(): Promise<string | null> {
-    const home = process.env.HOME || process.env.USERPROFILE || '';
-    if (!home) return null;
+    const dir = resolve(this.deps.config.workspace.dir, '.janus');
 
     try {
-      const content = await readFile(resolve(home, '.janus', 'EGO.md'), 'utf-8');
+      const content = await readFile(resolve(dir, 'EGO.md'), 'utf-8');
       if (content.trim()) {
         return `<ego>\n${content.trim()}\n</ego>`;
       }

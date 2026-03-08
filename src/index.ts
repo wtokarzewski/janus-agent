@@ -103,7 +103,7 @@ program
       });
     }
 
-    const cli = new CLIChannel();
+    const cli = new CLIChannel(config.workspace.dir);
     await cli.start(app.bus, signal, { agent: app.agent, subagentRegistry: app.subagentRegistry });
 
     await app.agent.flushAllSessions();

@@ -10,7 +10,6 @@ import { randomUUID } from 'node:crypto';
 import * as log from '../utils/logger.js';
 
 const EXIT_COMMANDS = new Set(['exit', 'quit', '/exit', '/quit', ':q']);
-const HISTORY_FILE = resolve(process.env.HOME || process.env.USERPROFILE || '.', '.janus', 'history');
 const MAX_HISTORY = 500;
 
 /**
@@ -20,10 +19,15 @@ const MAX_HISTORY = 500;
 export class CLIChannel {
   name = 'cli';
   private rl?: readline.Interface;
+  private historyFile: string;
+
+  constructor(workspaceDir = '.') {
+    this.historyFile = resolve(workspaceDir, '.janus', 'history');
+  }
 
   async start(bus: MessageBus, signal: AbortSignal, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry }): Promise<void> {
     // Load persistent history
-    const history = await loadHistory();
+    const history = await loadHistory(this.historyFile);
 
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -155,7 +159,7 @@ export class CLIChannel {
     });
 
     // Save history on exit
-    await saveHistory(sessionHistory).catch(() => {});
+    await saveHistory(this.historyFile, sessionHistory).catch(() => {});
   }
 
   stop(): void {
@@ -163,18 +167,18 @@ export class CLIChannel {
   }
 }
 
-async function loadHistory(): Promise<string[]> {
+async function loadHistory(historyFile: string): Promise<string[]> {
   try {
-    const content = await readFile(HISTORY_FILE, 'utf-8');
+    const content = await readFile(historyFile, 'utf-8');
     return content.split('\n').filter(Boolean).slice(-MAX_HISTORY);
   } catch {
     return [];
   }
 }
 
-async function saveHistory(lines: string[]): Promise<void> {
-  const dir = resolve(HISTORY_FILE, '..');
+async function saveHistory(historyFile: string, lines: string[]): Promise<void> {
+  const dir = resolve(historyFile, '..');
   await mkdir(dir, { recursive: true });
   const trimmed = lines.filter(Boolean).slice(-MAX_HISTORY);
-  await writeFile(HISTORY_FILE, trimmed.join('\n') + '\n', 'utf-8');
+  await writeFile(historyFile, trimmed.join('\n') + '\n', 'utf-8');
 }

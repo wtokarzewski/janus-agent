@@ -8,8 +8,6 @@ import * as log from '../../utils/logger.js';
 const IS_WIN = process.platform === 'win32';
 const execAsync = promisify(execFile);
 const GIT_TIMEOUT = 30_000;
-const UPDATE_MARKER = resolve(process.env.HOME || '.', '.janus', '.update-complete');
-
 export interface SelfUpdateOpts {
   workspaceDir: string;
   onBeforeRestart?: () => Promise<void>;
@@ -19,11 +17,12 @@ export interface SelfUpdateOpts {
  * Check and consume the post-update marker file.
  * Returns the update message if one exists, null otherwise.
  */
-export function consumeUpdateMarker(): string | null {
+export function consumeUpdateMarker(workspaceDir = '.'): string | null {
+  const marker = resolve(workspaceDir, '.janus', '.update-complete');
   try {
-    if (!existsSync(UPDATE_MARKER)) return null;
-    const content = readFileSync(UPDATE_MARKER, 'utf-8');
-    unlinkSync(UPDATE_MARKER);
+    if (!existsSync(marker)) return null;
+    const content = readFileSync(marker, 'utf-8');
+    unlinkSync(marker);
     return content;
   } catch {
     return null;
@@ -137,8 +136,9 @@ export class SelfUpdateTool implements Tool {
 
       // Write marker so the new process can notify the user
       const summary = pullOutput.trim();
+      const updateMarker = resolve(this.workspaceDir, '.janus', '.update-complete');
       try {
-        writeFileSync(UPDATE_MARKER, summary, 'utf-8');
+        writeFileSync(updateMarker, summary, 'utf-8');
       } catch (err) {
         log.warn(`self_update: failed to write update marker: ${err instanceof Error ? err.message : String(err)}`);
       }

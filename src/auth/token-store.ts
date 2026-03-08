@@ -3,8 +3,7 @@ import { join, dirname } from 'node:path';
 import type { OAuthTokens, TokenStore } from './types.js';
 
 function defaultPath(): string {
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  return join(home, '.janus', 'auth.json');
+  return join('.', '.janus', 'auth.json');
 }
 
 export class FileTokenStore implements TokenStore {
