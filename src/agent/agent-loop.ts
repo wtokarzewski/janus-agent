@@ -303,16 +303,31 @@ export class AgentLoop {
     }
 
     if (!response.streamed && msg.chatId !== 'internal') {
-      // Route cron/heartbeat responses to the last known user channel
-      if (msg.chatId.startsWith('cron:') || msg.chatId === 'heartbeat') {
+      // Route cron/heartbeat responses to the correct user channel
+      if (msg.chatId.startsWith('cron:') || msg.chatId.startsWith('heartbeat')) {
         const tgAllowlist = this.deps.config.telegram?.allowlist?.length
           ? this.deps.config.telegram.allowlist
           : deriveChannelAllowlist('telegram', this.deps.config);
         const tgEnabled = this.deps.config.telegram?.enabled || tgAllowlist.length > 0;
-        const targetChannel = tgEnabled ? 'telegram' : 'cli';
-        const targetChatId = tgAllowlist[0] ?? 'default';
-        response.channel = targetChannel;
-        response.chatId = targetChatId;
+
+        // Per-user routing: find the user's Telegram chatId
+        if (msg.user?.userId) {
+          const userProfile = findUserProfile(msg.user.userId, this.deps.config);
+          const tgIdentity = userProfile?.identities.find(
+            i => i.channel === 'telegram' && i.channelUserId,
+          );
+          if (tgIdentity?.channelUserId) {
+            response.channel = 'telegram';
+            response.chatId = tgIdentity.channelUserId;
+          } else {
+            response.channel = tgEnabled ? 'telegram' : 'cli';
+            response.chatId = tgAllowlist[0] ?? 'default';
+          }
+        } else {
+          // Global task: existing behavior
+          response.channel = tgEnabled ? 'telegram' : 'cli';
+          response.chatId = tgAllowlist[0] ?? 'default';
+        }
       }
 
       await this.deps.bus.publishOutbound(response, new AbortController().signal).catch(err => {

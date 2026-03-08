@@ -108,9 +108,12 @@ export async function runGateway(): Promise<void> {
     app.cronService.start(signal);
   }
 
-  // Start heartbeat service if enabled or HEARTBEAT.md exists
+  // Start heartbeat service if enabled, HEARTBEAT.md exists, or any per-user HEARTBEAT.md exists
   const heartbeatFileExists = existsSync(resolve(config.workspace.dir, 'HEARTBEAT.md'));
-  if (config.heartbeat.enabled || heartbeatFileExists) {
+  const hasPerUserHeartbeat = config.users.some(u =>
+    existsSync(resolve(config.workspace.dir, '.janus', 'users', u.id, 'HEARTBEAT.md')),
+  );
+  if (config.heartbeat.enabled || heartbeatFileExists || hasPerUserHeartbeat) {
     log.info('Gateway: starting Heartbeat service...');
     const heartbeat = new HeartbeatService({
       bus: app.bus,

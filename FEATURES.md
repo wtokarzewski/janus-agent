@@ -1,8 +1,8 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 319 passing tests.
+Canonical list of implemented, working features. Verified against source code and 325 passing tests.
 
-**Last updated:** 2026-03-07
+**Last updated:** 2026-03-08
 
 ---
 
@@ -15,9 +15,9 @@ Canonical list of implemented, working features. Verified against source code an
 - **Memory flush before compaction** — Before summarization discards old messages, LLM extracts key facts into daily notes. Preserves knowledge across compaction.
 - **No-op suppression** — Heartbeat/cron responses like "HEARTBEAT_OK" are not routed to the user.
 
-## LLM Providers (7)
+## LLM Providers (8)
 
-Two auth modes (mutually exclusive):
+Three auth modes (mutually exclusive):
 
 | Provider | Type | Protocol |
 |----------|------|----------|
@@ -28,7 +28,11 @@ Two auth modes (mutually exclusive):
 | `groq` | API key | OpenAI-compatible |
 | `claude-agent` | Subscription (Claude Code Max) | @anthropic-ai/claude-agent-sdk |
 | `codex` | Subscription (ChatGPT Plus/Pro) | @openai/codex-sdk |
+| `codex` (OAuth) | Subscription, native OAuth | Responses API (PKCE) |
 
+- **Native OAuth (PKCE)** — Browser-based login for Anthropic + Codex with auto-refresh. File-based token storage (`~/.janus/auth.json`, 0o600).
+- **Extended thinking** — `llm.thinking.enabled` + `budgetTokens`. Thinking levels: off/minimal/low/medium/high.
+- **Prompt caching** — `cache_control: ephemeral` on system prompt + last tool def. Timestamp in dynamic session tail for cache stability.
 - **Multi-provider failover** — Priority-ordered list, automatic failover on error. Purpose-based routing (chat, summarize, flush).
 - **Streaming** — `chatStream()` on Anthropic + OpenAI-compatible providers. Real-time chunk delivery via MessageBus to CLI and Telegram.
 - **Structured output** — Subscription providers use JSON schema enforcement via `sdk-utils.ts` (~99% reliability + fallback parsing).
@@ -80,6 +84,7 @@ Two auth modes (mutually exclusive):
 | **CLI** | Interactive REPL, single-message mode (`-m`), persistent history (~/.janus/history), `/help` and `/config` commands, inline streaming output, gate confirmation via readline. |
 | **Telegram** | Grammy bot, user allowlist, streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami` diagnostic, `/stop` command, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup. |
 | **MCP Server** | JSON-RPC 2.0 over stdio. Exposes tools and prompts to editors (VS Code, Cursor, Claude Code). Tool bridge maps ToolRegistry to MCP protocol. |
+| **MCP Client** | Connect to external MCP servers. Config-driven `mcp.servers[]`. Auto-discover tools, register as `mcp_{server}_{tool}`. |
 
 ## Gates (Safety)
 
@@ -88,6 +93,11 @@ Two auth modes (mutually exclusive):
 - **CLIGate** — Readline yes/no confirmation. 30s timeout (auto-deny).
 - **TelegramGate** — Inline keyboard (Approve / Deny) confirmation. 60s timeout (auto-deny).
 - **Wired into ToolRegistry** — Gate check runs before every tool execution.
+- **Path validation** — `realpathSync()` + workspace prefix check on all file tools. Symlink safety.
+- **Obfuscation detection** — 8 patterns (base64 pipe, xxd, eval, etc.) + whitelist in PatternGate.
+- **Gate on file writes** — 11 sensitive path patterns (/etc, .ssh, .env, .git/config, etc.).
+- **Gate on spawn_agent** — Always gated with task preview.
+- **Process group kill** — `spawn({detached:true})` + `kill(-pid)` on exec timeout.
 
 ## Scheduling
 
@@ -98,12 +108,16 @@ Two auth modes (mutually exclusive):
   - CRUD: addJob, updateJob, removeJob, listJobs, getRuns.
 - **HeartbeatService** — Parses `HEARTBEAT.md` for periodic tasks.
   - Supports `every Xm/h/d` and cron expressions.
+  - Per-user `HEARTBEAT.md` in `.janus/users/{userId}/` — tasks tagged with userId, routed to user's Telegram chat.
+  - Auto-starts when any HEARTBEAT.md exists (global or per-user).
   - Syncs to CronService when available, falls back to in-memory timers.
 
 ## Multi-User
 
 - **UserResolver** — Resolves inbound message sender to user profile by channel + ID (stable) or username (fallback).
-- **Per-user profiles** — `~/.janus/users/{userId}/PROFILE.md` with name, identities, tool/skill allow/deny lists.
+- **Per-user profiles** — `.janus/users/{userId}/PROFILE.md` (workspace). Auto-updated by agent when learning user preferences.
+- **Per-user AGENTS.md** — `.janus/users/{userId}/AGENTS.md` overrides global agent behavior. Appended to global AGENTS.md in system prompt.
+- **Per-user HEARTBEAT.md** — `.janus/users/{userId}/HEARTBEAT.md` for personal scheduled tasks. Routed to user's Telegram chat.
 - **Per-user memory** — Scoped memory chunks (owner + scope filtering in MemoryIndex).
 - **Family groups** — Shared memory scope via `family.groupChatIds` config.
 - **Wired into AgentLoop** — User profile passed to context builder, tool context, learner.
@@ -123,13 +137,23 @@ Two auth modes (mutually exclusive):
 - **Keyword similarity** — Finds similar past tasks by keyword overlap.
 - **Recommendations** — Returns avgDuration, avgIterations, avgToolCalls, successRate from similar executions. Wired into system prompt via context builder.
 
-## Skills
+## Skills (6)
 
 - **SKILL.md format** — YAML frontmatter (name, description, version, always, requires) + markdown body.
 - **3-source loading** — workspace/skills → ~/.janus/skills → builtin/skills.
 - **Lazy loading** — Skills emit XML stubs with `location` attribute. Agent reads full content on demand via `read_file`. `always: true` skills inlined in system prompt.
 - **Per-user filtering** — Skills filtered by user allow/deny lists.
 - **Config limits** — `maxSkillsInPrompt`, `maxSkillsPromptChars`.
+- **Skill self-creation** — System prompt instructs agent to create SKILL.md for repeated patterns.
+
+| Skill | Description |
+|-------|-------------|
+| `programmer` | Software development, debugging, code review. Always loaded. |
+| `meal-planner` | Weekly meal planning, dietary restrictions, shopping lists. |
+| `home-assistant` | Home Assistant REST API control (lights, climate, scenes, scripts). |
+| `stock-watcher` | Google Finance watchlist, Python scripts, multi-exchange. |
+| `google-workspace` | Gmail, Calendar, Drive, Contacts, Sheets, Docs via `gog` CLI. |
+| `personal-travel` | Travel planning, documents, wishlists, budgets. |
 
 ## Sessions
 
@@ -147,8 +171,8 @@ Assembles system prompt from multiple sources:
 | 1 | Identity | Built-in (timestamp, workspace, available tools) | Yes |
 | 2 | User profile | Per-user PROFILE.md | Yes |
 | 3 | Ego | `~/.janus/EGO.md` | No |
-| 4 | Agents | `./AGENTS.md` | No |
-| 5 | Heartbeat | `./HEARTBEAT.md` | No |
+| 4 | Agents | `./AGENTS.md` + per-user override | No |
+| 5 | Heartbeat | `./HEARTBEAT.md` + per-user override | No |
 | 6 | Project | `./JANUS.md` | No |
 | 7 | Skills | SKILL.md files (lazy stubs or full body) | Yes |
 | 8 | Memory | FTS5 + vector hybrid search with scope filtering | No |
@@ -164,7 +188,9 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 | `./JANUS.md` | Per-repo | Project-specific instructions (like CLAUDE.md) |
 | `./AGENTS.md` | Per-workspace | Agent behavior rules |
 | `./HEARTBEAT.md` | Per-workspace | Autonomous periodic tasks |
-| `~/.janus/users/{id}/PROFILE.md` | Per-user | User preferences and identity |
+| `.janus/users/{id}/PROFILE.md` | Per-user | User preferences and identity |
+| `.janus/users/{id}/AGENTS.md` | Per-user | Agent behavior override (appended to global) |
+| `.janus/users/{id}/HEARTBEAT.md` | Per-user | Personal scheduled tasks (routed to user's chat) |
 
 ## Database
 
@@ -199,7 +225,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 323 tests across 34 files (vitest, mock LLM, in-memory SQLite).
+- **Tests** — 325 tests across 34 files (vitest, mock LLM, in-memory SQLite).
 
 ## Commands
 
