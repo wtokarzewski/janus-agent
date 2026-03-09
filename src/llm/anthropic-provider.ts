@@ -30,6 +30,7 @@ export class AnthropicProvider implements LLMProvider {
         baseURL: config.apiBase,
         defaultHeaders: config.defaultHeaders,
         maxRetries: 3,
+        timeout: 2 * 60 * 1000, // 2 min per request (default 10 min is too long)
       });
       this.useOAuth = true;
     } else {
@@ -37,6 +38,7 @@ export class AnthropicProvider implements LLMProvider {
         apiKey: config.apiKey,
         baseURL: config.apiBase,
         maxRetries: 3,
+        timeout: 2 * 60 * 1000,
       });
       this.useOAuth = false;
     }
@@ -56,6 +58,7 @@ export class AnthropicProvider implements LLMProvider {
         'x-app': 'cli',
       },
       maxRetries: 3,
+      timeout: 2 * 60 * 1000,
     });
   }
 

@@ -694,7 +694,7 @@ export class AgentLoop {
       ],
       temperature: 0.3,
       maxTokens: 512,
-    }, 'flush'), 30_000, 'Memory flush LLM call timed out');
+    }, 'flush'), 90_000, 'Memory flush LLM call timed out');
     log.info(`[${sessionKey}] Memory flush: LLM call done in ${Date.now() - flushStart}ms`);
 
     if (flushResponse.content.trim() !== 'NONE') {
@@ -756,7 +756,7 @@ export class AgentLoop {
       ],
       temperature: 0.3,
       maxTokens: 1024,
-    }, 'summarize'), 30_000, 'Summarization LLM call timed out');
+    }, 'summarize'), 90_000, 'Summarization LLM call timed out');
     log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
 
     await this.deps.sessions.summarize(sessionKey, summaryResponse.content);
