@@ -67,10 +67,17 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
 
   const llm = new ProviderRegistry();
   if (config.llm.providers && config.llm.providers.length > 0) {
+    const sharedTokenStore = new FileTokenStore();
     for (const spec of config.llm.providers) {
+      const isSubscription = ['claude-agent', 'codex'].includes(spec.provider);
+      const auth = spec.auth ?? (isSubscription ? 'cli' : 'api_key');
+      const isOAuth = auth === 'oauth';
       llm.register({
         name: spec.name,
-        provider: await createProvider({ provider: spec.provider, apiKey: spec.apiKey, model: spec.model, apiBase: spec.apiBase }),
+        provider: await createProvider({
+          provider: spec.provider, apiKey: spec.apiKey, model: spec.model,
+          apiBase: spec.apiBase, auth, tokenStore: isOAuth ? sharedTokenStore : undefined,
+        }),
         model: spec.model,
         purpose: spec.purpose ?? [],
         priority: spec.priority ?? 0,

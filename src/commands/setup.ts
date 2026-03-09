@@ -4,6 +4,9 @@
  * Two auth modes:
  * - API Key: existing providers (OpenRouter, Anthropic, OpenAI, DeepSeek, Groq)
  * - Subscription: Claude Code Max or ChatGPT Plus/Pro via official SDKs
+ *
+ * After primary provider setup, optionally configures a fallback provider.
+ * Model selection fetches available models from the provider API when possible.
  */
 
 import * as readline from 'node:readline';
@@ -46,10 +49,38 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
 
     const mode = await askChoice(rl, '  Select [1-2]: ', ['1', '2']);
 
+    let primary: ProviderSetupResult;
+
     if (mode === '1') {
-      await setupApiKey(rl);
+      primary = await setupApiKey(rl);
     } else {
-      await setupSubscription(rl);
+      primary = await setupSubscription(rl);
+    }
+
+    // Ask about fallback provider
+    console.log('\n  Add a fallback provider? (used when primary is overloaded)');
+    console.log('  1. Yes');
+    console.log('  2. No\n');
+
+    const fallbackChoice = await askChoice(rl, '  Select [1-2]: ', ['1', '2']);
+
+    if (fallbackChoice === '1') {
+      const fallback = await setupFallbackProvider(rl, primary);
+      // Save as multi-provider config
+      await saveConfig({
+        llm: {
+          providers: [
+            { name: 'primary', ...primary, priority: 0 },
+            { name: 'fallback', ...fallback, priority: 1 },
+          ],
+        },
+      });
+    } else {
+      // Save as single provider config
+      const config: Record<string, unknown> = { llm: { provider: primary.provider, model: primary.model } };
+      if (primary.apiKey) (config.llm as Record<string, unknown>).apiKey = primary.apiKey;
+      if (primary.auth) (config.llm as Record<string, unknown>).auth = primary.auth;
+      await saveConfig(config);
     }
 
     console.log(chalk.green('\n  ✓ Configuration saved to janus.json\n'));
@@ -58,7 +89,14 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
   }
 }
 
-async function setupApiKey(rl: ReadlineIO): Promise<void> {
+interface ProviderSetupResult {
+  provider: string;
+  model: string;
+  apiKey?: string;
+  auth?: string;
+}
+
+async function setupApiKey(rl: ReadlineIO): Promise<ProviderSetupResult> {
   console.log('\n  Provider?');
   console.log('  1. OpenRouter');
   console.log('  2. Anthropic');
@@ -79,13 +117,14 @@ async function setupApiKey(rl: ReadlineIO): Promise<void> {
   const { name: provider, defaultModel } = providerMap[providerChoice];
 
   const apiKey = await askNonEmpty(rl, '  API Key: ');
-  const modelInput = await rl.question(`  Model [${defaultModel}]: `);
-  const model = modelInput.trim() || defaultModel;
 
-  await saveConfig({ llm: { provider, apiKey, model } });
+  // Try fetching models from API
+  const model = await pickModelFromApi(rl, provider, apiKey, false, defaultModel);
+
+  return { provider, model, apiKey };
 }
 
-async function setupSubscription(rl: ReadlineIO): Promise<void> {
+async function setupSubscription(rl: ReadlineIO): Promise<ProviderSetupResult> {
   console.log('\n  Which subscription?');
   console.log('  1. Claude Code (Anthropic Max plan)');
   console.log('  2. ChatGPT (OpenAI Plus/Pro)\n');
@@ -100,20 +139,44 @@ async function setupSubscription(rl: ReadlineIO): Promise<void> {
 
   if (authChoice === '1') {
     if (subChoice === '1') {
-      await setupAnthropicOAuth(rl);
+      return await setupAnthropicOAuth(rl);
     } else {
-      await setupCodexOAuth(rl);
+      return await setupCodexOAuth(rl);
     }
   } else {
     if (subChoice === '1') {
-      await setupClaudeAgent(rl);
+      return await setupClaudeAgent(rl);
     } else {
-      await setupCodex(rl);
+      return await setupCodex(rl);
     }
   }
 }
 
-async function setupClaudeAgent(rl: ReadlineIO): Promise<void> {
+async function setupFallbackProvider(rl: ReadlineIO, primary: ProviderSetupResult): Promise<ProviderSetupResult> {
+  const options: { label: string; setup: () => Promise<ProviderSetupResult> }[] = [];
+
+  // Don't offer the same provider type as fallback
+  if (primary.provider !== 'anthropic') {
+    options.push({ label: 'Anthropic OAuth', setup: () => setupAnthropicOAuth(rl) });
+  }
+  if (primary.provider !== 'codex') {
+    options.push({ label: 'OpenAI (Codex) OAuth', setup: () => setupCodexOAuth(rl) });
+  }
+  options.push({ label: 'API Key', setup: () => setupApiKey(rl) });
+
+  console.log('\n  Fallback provider type?');
+  for (let i = 0; i < options.length; i++) {
+    console.log(`  ${i + 1}. ${options[i].label}`);
+  }
+  console.log('');
+
+  const valid = options.map((_, i) => String(i + 1));
+  const choice = await askChoice(rl, `  Select [1-${options.length}]: `, valid);
+
+  return await options[parseInt(choice, 10) - 1].setup();
+}
+
+async function setupClaudeAgent(rl: ReadlineIO): Promise<ProviderSetupResult> {
   console.log('\n  Checking Claude Code authentication...');
 
   let authenticated = await checkClaudeAuth();
@@ -132,6 +195,7 @@ async function setupClaudeAgent(rl: ReadlineIO): Promise<void> {
 
   console.log(chalk.green('  ✓ Authenticated'));
 
+  // CLI subscription uses short names
   console.log('\n  Model?');
   console.log('  1. sonnet (recommended)');
   console.log('  2. opus');
@@ -141,10 +205,10 @@ async function setupClaudeAgent(rl: ReadlineIO): Promise<void> {
   const modelMap: Record<string, string> = { '1': 'claude-sonnet-4-6', '2': 'claude-opus-4-6', '3': 'claude-haiku-4-5-20251001' };
   const model = modelMap[modelChoice];
 
-  await saveConfig({ llm: { provider: 'claude-agent', model } });
+  return { provider: 'claude-agent', model };
 }
 
-async function setupCodex(rl: ReadlineIO): Promise<void> {
+async function setupCodex(rl: ReadlineIO): Promise<ProviderSetupResult> {
   console.log('\n  Checking Codex authentication...');
 
   let authenticated = await checkCodexAuth();
@@ -163,6 +227,7 @@ async function setupCodex(rl: ReadlineIO): Promise<void> {
 
   console.log(chalk.green('  ✓ Authenticated'));
 
+  // Codex CLI uses specific model names
   console.log('\n  Model?');
   console.log('  1. gpt-5.3-codex (recommended)');
   console.log('  2. gpt-5.2-codex');
@@ -172,49 +237,110 @@ async function setupCodex(rl: ReadlineIO): Promise<void> {
   const modelMap: Record<string, string> = { '1': 'gpt-5.3-codex', '2': 'gpt-5.2-codex', '3': 'gpt-5-codex-mini' };
   const model = modelMap[modelChoice];
 
-  await saveConfig({ llm: { provider: 'codex', model } });
+  return { provider: 'codex', model };
 }
 
-async function setupAnthropicOAuth(rl: ReadlineIO): Promise<void> {
+async function setupAnthropicOAuth(rl: ReadlineIO): Promise<ProviderSetupResult> {
   const { FileTokenStore } = await import('../auth/token-store.js');
-  const { anthropicLogin } = await import('../auth/anthropic-oauth.js');
+  const { anthropicLogin, getAnthropicToken } = await import('../auth/anthropic-oauth.js');
 
   const store = new FileTokenStore();
   await anthropicLogin(store, rl);
 
   console.log(chalk.green('  ✓ Authenticated via OAuth'));
 
-  console.log('\n  Model?');
-  console.log('  1. sonnet (recommended)');
-  console.log('  2. opus');
-  console.log('  3. haiku\n');
+  // Fetch models from API using the new token
+  let token: string;
+  try {
+    token = await getAnthropicToken(store);
+  } catch {
+    token = '';
+  }
 
-  const modelChoice = await askChoice(rl, '  Select [1-3]: ', ['1', '2', '3']);
-  const modelMap: Record<string, string> = { '1': 'claude-sonnet-4-6', '2': 'claude-opus-4-6', '3': 'claude-haiku-4-5-20251001' };
-  const model = modelMap[modelChoice];
-
-  await saveConfig({ llm: { provider: 'anthropic', auth: 'oauth', model } });
+  const model = await pickModelFromApi(rl, 'anthropic', token, true, 'claude-sonnet-4-6');
+  return { provider: 'anthropic', auth: 'oauth', model };
 }
 
-async function setupCodexOAuth(rl: ReadlineIO): Promise<void> {
+async function setupCodexOAuth(rl: ReadlineIO): Promise<ProviderSetupResult> {
   const { FileTokenStore } = await import('../auth/token-store.js');
-  const { codexLogin } = await import('../auth/codex-oauth.js');
+  const { codexLogin, getCodexToken } = await import('../auth/codex-oauth.js');
 
   const store = new FileTokenStore();
   await codexLogin(store);
 
   console.log(chalk.green('  ✓ Authenticated via OAuth'));
 
-  console.log('\n  Model?');
-  console.log('  1. gpt-5.3-codex (recommended)');
-  console.log('  2. gpt-5.2-codex');
-  console.log('  3. gpt-5-codex-mini\n');
+  // Fetch models from API using the new token
+  let token = '';
+  try {
+    const result = await getCodexToken(store);
+    token = result.token;
+  } catch {
+    // token stays empty, will fall back to manual input
+  }
 
-  const modelChoice = await askChoice(rl, '  Select [1-3]: ', ['1', '2', '3']);
-  const modelMap: Record<string, string> = { '1': 'gpt-5.3-codex', '2': 'gpt-5.2-codex', '3': 'gpt-5-codex-mini' };
-  const model = modelMap[modelChoice];
+  const model = await pickModelFromApi(rl, 'openai', token, false, 'o3');
+  return { provider: 'codex', auth: 'oauth', model };
+}
 
-  await saveConfig({ llm: { provider: 'codex', auth: 'oauth', model } });
+/**
+ * Try to fetch models from provider API and let user pick.
+ * Falls back to manual input if fetch fails.
+ */
+async function pickModelFromApi(
+  rl: ReadlineIO,
+  provider: string,
+  token: string,
+  isOAuth: boolean,
+  defaultModel: string,
+): Promise<string> {
+  if (!token) {
+    const input = await rl.question(`  Model [${defaultModel}]: `);
+    return input.trim() || defaultModel;
+  }
+
+  console.log(chalk.gray('\n  Fetching available models...'));
+
+  try {
+    const { fetchAnthropicModels, fetchOpenAIModels } = await import('../llm/model-listing.js');
+
+    let models: { id: string; name: string }[];
+    if (provider === 'anthropic' || provider === 'openrouter') {
+      models = await fetchAnthropicModels(token, isOAuth);
+    } else {
+      models = await fetchOpenAIModels(token);
+    }
+
+    if (models.length === 0) {
+      console.log(chalk.yellow('  Could not fetch models.'));
+      const input = await rl.question(`  Model [${defaultModel}]: `);
+      return input.trim() || defaultModel;
+    }
+
+    console.log('\n  Available models:');
+    const display = models.slice(0, 15);
+    for (let i = 0; i < display.length; i++) {
+      const label = display[i].name !== display[i].id
+        ? `${display[i].name} (${display[i].id})`
+        : display[i].id;
+      console.log(`  ${i + 1}. ${label}`);
+    }
+    console.log(`  0. Enter manually\n`);
+
+    const valid = [...display.map((_, i) => String(i + 1)), '0'];
+    const choice = await askChoice(rl, '  Select: ', valid);
+
+    if (choice === '0') {
+      const input = await rl.question(`  Model [${defaultModel}]: `);
+      return input.trim() || defaultModel;
+    }
+
+    return display[parseInt(choice, 10) - 1].id;
+  } catch {
+    console.log(chalk.yellow('  Could not fetch models.'));
+    const input = await rl.question(`  Model [${defaultModel}]: `);
+    return input.trim() || defaultModel;
+  }
 }
 
 async function checkClaudeAuth(): Promise<boolean> {
