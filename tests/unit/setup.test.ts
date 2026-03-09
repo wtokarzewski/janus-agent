@@ -17,6 +17,12 @@ vi.mock('chalk', () => ({
   },
 }));
 
+// Mock model-listing to avoid HTTP requests in tests
+vi.mock('../../src/llm/model-listing.js', () => ({
+  fetchAnthropicModels: vi.fn().mockResolvedValue([]),
+  fetchOpenAIModels: vi.fn().mockResolvedValue([]),
+}));
+
 function createMockIO(answers: string[]) {
   let idx = 0;
   return {
@@ -34,13 +40,14 @@ describe('Setup Wizard', () => {
     vi.clearAllMocks();
   });
 
-  it('configures API key provider (OpenRouter)', async () => {
+  it('configures API key provider (OpenRouter) without fallback', async () => {
     const { saveConfig } = await import('../../src/config/config.js');
     const io = createMockIO([
       '1',           // API Key mode
       '1',           // OpenRouter
       'sk-test-key', // API key
-      '',            // Default model
+      '',            // Default model (fetch fails, falls back to manual)
+      '2',           // No fallback
     ]);
 
     await runSetup(undefined, io);
@@ -61,6 +68,7 @@ describe('Setup Wizard', () => {
       '2',                          // Anthropic
       'sk-ant-test',                // API key
       'claude-opus-4-5-20250929',   // Custom model
+      '2',                          // No fallback
     ]);
 
     await runSetup(undefined, io);
@@ -81,6 +89,7 @@ describe('Setup Wizard', () => {
       '4',         // DeepSeek
       'ds-key',    // API key
       '',          // Default model
+      '2',         // No fallback
     ]);
 
     await runSetup(undefined, io);
@@ -100,6 +109,7 @@ describe('Setup Wizard', () => {
       '5',      // Groq
       'g-key',  // API key
       '',       // Default model
+      '2',      // No fallback
     ]);
 
     await runSetup(undefined, io);
@@ -116,6 +126,7 @@ describe('Setup Wizard', () => {
       '3',       // OpenAI
       'sk-oai',  // API key
       '',        // Default model
+      '2',       // No fallback
     ]);
 
     await runSetup(undefined, io);
@@ -127,8 +138,8 @@ describe('Setup Wizard', () => {
         model: 'gpt-4o',
       },
     });
-    // question called 5 times (invalid + mode + provider + key + model)
-    expect(io.question).toHaveBeenCalledTimes(5);
+    // question called 6 times (invalid + mode + provider + key + model + fallback)
+    expect(io.question).toHaveBeenCalledTimes(6);
   });
 
   it('retries on empty API key', async () => {
@@ -139,6 +150,7 @@ describe('Setup Wizard', () => {
       '',          // Empty key — retried
       'sk-valid',  // Valid key
       '',          // Default model
+      '2',         // No fallback
     ]);
 
     await runSetup(undefined, io);
@@ -150,14 +162,10 @@ describe('Setup Wizard', () => {
         model: 'anthropic/claude-sonnet-4-5-20250929',
       },
     });
-    expect(io.question).toHaveBeenCalledTimes(5);
+    expect(io.question).toHaveBeenCalledTimes(6);
   });
 
   it('offers OAuth and CLI auth methods for subscription', async () => {
-    // Test that subscription flow now asks for auth method
-    // Choose subscription (2) → Claude Code (1) → CLI (2) to reach setupClaudeAgent
-    // This will fail at checkClaudeAuth since claude-agent SDK isn't installed in test,
-    // so we mock it
     vi.doMock('@anthropic-ai/claude-agent-sdk', () => ({
       query: () => ({
         async *[Symbol.asyncIterator]() {
@@ -173,6 +181,7 @@ describe('Setup Wizard', () => {
       '2',  // CLI auth method
       '',   // Press Enter for auth check
       '1',  // sonnet model
+      '2',  // No fallback
     ]);
 
     try {
@@ -193,6 +202,7 @@ describe('Setup Wizard', () => {
       '1',         // OpenRouter
       'sk-reconf', // API key
       '',          // Default model
+      '2',         // No fallback
     ]);
 
     // Should not throw

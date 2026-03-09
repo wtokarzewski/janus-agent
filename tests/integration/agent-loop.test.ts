@@ -176,7 +176,7 @@ describe('AgentLoop integration', () => {
     const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner });
     const result = await agent.processDirect('hello');
 
-    expect(result).toContain('error');
+    expect(result).toContain('API error');
   });
 
   it('should use streaming and deliver chunks via bus', async () => {

@@ -512,7 +512,7 @@ export class AgentLoop {
             this.deps.bus.publishOutbound({
               chatId: streamCtx.chatId,
               channel: streamCtx.channel,
-              content: '⏳ API jest chwilowo przeciążone, ponawiam...',
+              content: '⏳ API is temporarily overloaded, retrying...',
               timestamp: new Date(),
               type: 'message',
             }).catch(() => {});
@@ -520,10 +520,20 @@ export class AgentLoop {
           await sleep(delay, signal);
           continue;
         }
-        const errorContent = lastContent || `LLM error: ${errorText}`;
+        const isOverloaded = /overloaded/i.test(errorText);
+        const userMessage = isOverloaded
+          ? 'API is overloaded — could not get a response. Please try again shortly.'
+          : 'API error — could not get a response. Please try again.';
+        const errorContent = lastContent || userMessage;
         if (streamCtx) {
-          this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'chunk', errorContent);
-          this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
+          // Send as standalone message, not stream chunk (stream state may be stale)
+          this.deps.bus.publishOutbound({
+            chatId: streamCtx.chatId,
+            channel: streamCtx.channel,
+            content: errorContent,
+            timestamp: new Date(),
+            type: 'message',
+          }).catch(() => {});
         }
         return { content: errorContent, iterations: i + 1, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
       }

@@ -6,6 +6,7 @@ const ProviderSpecSchema = z.object({
   model: z.string(),
   apiKey: z.string().default(''),
   apiBase: z.string().optional(),
+  auth: z.enum(['api_key', 'oauth', 'cli']).optional(),
   purpose: z.array(z.string()).optional(),
   priority: z.number().optional(),
 });
