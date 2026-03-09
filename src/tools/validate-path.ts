@@ -1,5 +1,5 @@
 import { realpathSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, sep } from 'node:path';
 
 /**
  * Resolve and validate that a path stays within the workspace.
@@ -15,7 +15,7 @@ export function validatePath(workspaceDir: string, filePath: string): string {
   // For existing paths, resolve symlinks and check
   if (existsSync(resolved)) {
     const real = realpathSync(resolved);
-    if (!real.startsWith(realWorkspace + '/') && real !== realWorkspace) {
+    if (!real.startsWith(realWorkspace + sep) && real !== realWorkspace) {
       throw new Error(`Path escapes workspace: ${filePath}`);
     }
     return real;
@@ -31,7 +31,7 @@ export function validatePath(workspaceDir: string, filePath: string): string {
 
   if (existsSync(current)) {
     const realAncestor = realpathSync(current);
-    if (!realAncestor.startsWith(realWorkspace + '/') && realAncestor !== realWorkspace) {
+    if (!realAncestor.startsWith(realWorkspace + sep) && realAncestor !== realWorkspace) {
       throw new Error(`Path escapes workspace: ${filePath}`);
     }
   }

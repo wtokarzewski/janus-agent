@@ -44,7 +44,8 @@ describe('ExecTool', () => {
 
   it('times out and kills process group', async () => {
     const tool = makeTool({ timeout: 500 });
-    const result = await tool.execute({ command: 'sleep 60' });
+    const cmd = process.platform === 'win32' ? 'ping -n 60 127.0.0.1' : 'sleep 60';
+    const result = await tool.execute({ command: cmd });
     expect(result).toContain('timed out');
   }, 10_000);
 
