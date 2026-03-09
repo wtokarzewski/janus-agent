@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { validatePath } from '../../src/tools/validate-path.js';
 
+const isWindows = process.platform === 'win32';
+
 describe('validatePath', () => {
   let workspace: string;
   let outside: string;
@@ -48,12 +50,12 @@ describe('validatePath', () => {
     expect(() => validatePath(workspace, outside + '/secret.txt')).toThrow('Path escapes workspace');
   });
 
-  it('blocks symlink pointing outside workspace', () => {
+  it.skipIf(isWindows)('blocks symlink pointing outside workspace', () => {
     symlinkSync(outside, join(workspace, 'evil-link'));
     expect(() => validatePath(workspace, 'evil-link/secret.txt')).toThrow('Path escapes workspace');
   });
 
-  it('allows symlink pointing inside workspace', () => {
+  it.skipIf(isWindows)('allows symlink pointing inside workspace', () => {
     symlinkSync(join(workspace, 'subdir'), join(workspace, 'good-link'));
     const result = validatePath(workspace, 'good-link');
     expect(result).toBe(realpathSync(join(workspace, 'subdir')));
@@ -73,7 +75,7 @@ describe('validatePath', () => {
     expect(() => validatePath(workspace, '../outside/newfile.txt')).toThrow('Path escapes workspace');
   });
 
-  it('handles workspace that is itself a symlink', () => {
+  it.skipIf(isWindows)('handles workspace that is itself a symlink', () => {
     const base = join(workspace, '..');
     const wsLink = join(base, 'ws-link');
     symlinkSync(workspace, wsLink);

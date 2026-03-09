@@ -54,7 +54,7 @@ describe('FileTokenStore', () => {
     expect(() => store.clear('anthropic')).not.toThrow();
   });
 
-  it('file has 0o600 permissions', () => {
+  it.skipIf(process.platform === 'win32')('file has 0o600 permissions', () => {
     store.save('anthropic', tokens);
     const stat = statSync(join(dir, 'auth.json'));
     // 0o600 = owner read+write only

@@ -2,7 +2,7 @@
 
 ## Current State (Phase 8 complete)
 
-- **Codebase:** ~9,900 LOC TypeScript, 325 tests across 34 files, CI
+- **Codebase:** ~10,200 LOC TypeScript, 327 tests across 34 files, CI
 - **Runtime deps:** 12 (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 14 (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update, invite)
@@ -79,7 +79,7 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Per-user overrides: AGENTS.md + HEARTBEAT.md per user, heartbeat routing to user's Telegram chat
 - `npm start -- update` CLI command: one-step project update (pull + install + test + user dirs), auto-revert on failure
 - Auto user dir setup: `ensureUserDir()` in user-resolver creates `.janus/users/{id}/` on first resolution (channel-agnostic)
-- 325 tests across 34 files
+- 327 tests across 34 files
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
@@ -112,7 +112,7 @@ Features that set Janus apart from other AI agents:
 - **Minimal subagent prompts** — Child agents get stripped context, saving tokens.
 - **Persistent cron scheduler** — SQLite-backed, survives restarts, exponential backoff.
 - **MCP server** — Editors can use Janus tools directly via reverse provider.
-- **Simplicity** — ~9.9K LOC. Minimal codebase, full capabilities.
+- **Simplicity** — ~10.2K LOC. Minimal codebase, full capabilities.
 - **Native OAuth** — PKCE flows for Anthropic + Codex. No CLI SDK dependency required.
 - **Steering messages** — Mid-run user injection. User can redirect agent during tool execution.
 - **Family skills** — Meal planner, Home Assistant, stock watcher, travel planner, Google Workspace.

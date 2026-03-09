@@ -1,6 +1,6 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 325 passing tests.
+Canonical list of implemented, working features. Verified against source code and 327 passing tests.
 
 **Last updated:** 2026-03-08
 
@@ -75,14 +75,14 @@ Three auth modes (mutually exclusive):
 - **Temporal decay** — 30-day half-life. Recent content ranks higher. MEMORY.md chunks exempt (evergreen).
 - **Scope filtering** — Memory chunks tagged with owner/scope for multi-user isolation.
 - **Markdown chunking** — Split by `##` headings. Further split at paragraph boundaries when chunk exceeds 2000 chars.
-- **Async reindex** — Embedding computation is non-blocking.
+- **Async reindex** — Embedding computation is non-blocking. Delayed 5s on startup with setImmediate yield points between inference calls to prevent event loop blocking.
 
 ## Channels (2 + MCP)
 
 | Channel | Features |
 |---------|----------|
 | **CLI** | Interactive REPL, single-message mode (`-m`), persistent history (~/.janus/history), `/help` and `/config` commands, inline streaming output, gate confirmation via readline. |
-| **Telegram** | Grammy bot, user allowlist, streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami` diagnostic, `/stop` command, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup. |
+| **Telegram** | Grammy bot, user allowlist, streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami` diagnostic, `/stop` command, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup, bot.start() background error catch. |
 | **MCP Server** | JSON-RPC 2.0 over stdio. Exposes tools and prompts to editors (VS Code, Cursor, Claude Code). Tool bridge maps ToolRegistry to MCP protocol. |
 | **MCP Client** | Connect to external MCP servers. Config-driven `mcp.servers[]`. Auto-discover tools, register as `mcp_{server}_{tool}`. |
 
@@ -205,7 +205,7 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 | Section | Key settings |
 |---------|-------------|
 | `llm` | provider, model, apiKey, apiBase, maxTokens, temperature, providers[] |
-| `agent` | maxIterations, tokenBudget, contextWindow, toolRetries, maxSubagentIterations, maxSkillsInPrompt |
+| `agent` | maxIterations, tokenBudget, contextWindow, toolRetries, maxSubagentIterations, maxSkillsInPrompt, lanes (user/cron/heartbeat concurrency) |
 | `workspace` | dir, memoryDir, sessionsDir, skillsDir |
 | `tools` | execTimeout, execDenyPatterns[], maxFileSize |
 | `database` | enabled, path |
@@ -221,11 +221,11 @@ Load priority: defaults < user config < workspace config < env vars.
 
 ## Infrastructure
 
-- **MessageBus** — AsyncQueue with bounded capacity (100) and backpressure.
+- **MessageBus** — AsyncQueue with bounded capacity (100) and backpressure. Multi-lane concurrent processing (user:3, cron:1, heartbeat:1) with semaphore-based concurrency control and AbortSignal support.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 325 tests across 34 files (vitest, mock LLM, in-memory SQLite).
+- **Tests** — 327 tests across 34 files (vitest, mock LLM, in-memory SQLite).
 
 ## Commands
 
