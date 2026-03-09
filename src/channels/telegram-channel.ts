@@ -224,10 +224,12 @@ export class TelegramChannel {
       }
 
       // Show "typing..." indicator while agent processes the message
+      log.info(`Telegram: incoming from ${author} (chat=${chatId}, processing=${bus.isProcessing(chatId)})`);
       await this.startTyping(bot, chatId);
 
       try {
         await bus.publishInbound(inbound, signal);
+        log.info(`Telegram: published to inbound queue (chat=${chatId})`);
       } catch {
         this.stopTyping(chatId);
       }
