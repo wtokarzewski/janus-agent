@@ -686,7 +686,7 @@ export class AgentLoop {
 
     log.info(`[${sessionKey}] Memory flush: LLM call start`);
     const flushStart = Date.now();
-    const flushResponse = await this.deps.llm.chat({
+    const flushResponse = await withTimeout(this.deps.llm.chat({
       model: this.deps.config.llm.model,
       messages: [
         { role: 'system', content: 'Extract important facts, decisions, and learnings from this conversation that should be remembered long-term. Output as bullet points. If nothing is worth remembering, respond with "NONE".' },
@@ -694,7 +694,7 @@ export class AgentLoop {
       ],
       temperature: 0.3,
       maxTokens: 512,
-    }, 'flush');
+    }, 'flush'), 30_000, 'Memory flush LLM call timed out');
     log.info(`[${sessionKey}] Memory flush: LLM call done in ${Date.now() - flushStart}ms`);
 
     if (flushResponse.content.trim() !== 'NONE') {
@@ -748,7 +748,7 @@ export class AgentLoop {
 
     log.info(`[${sessionKey}] Summarization: LLM call start`);
     const llmStart = Date.now();
-    const summaryResponse = await this.deps.llm.chat({
+    const summaryResponse = await withTimeout(this.deps.llm.chat({
       model: this.deps.config.llm.model,
       messages: [
         { role: 'system', content: 'Summarize this conversation concisely. Focus on: decisions made, key context, and current state. Be brief.' },
@@ -756,7 +756,7 @@ export class AgentLoop {
       ],
       temperature: 0.3,
       maxTokens: 1024,
-    }, 'summarize');
+    }, 'summarize'), 30_000, 'Summarization LLM call timed out');
     log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
 
     await this.deps.sessions.summarize(sessionKey, summaryResponse.content);
@@ -888,6 +888,13 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     const timer = setTimeout(resolve, ms);
     signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
   });
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
 }
 
 function summarizeArgs(args: Record<string, unknown>): string {
