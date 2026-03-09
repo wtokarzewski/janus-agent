@@ -2,7 +2,7 @@
 
 Canonical list of implemented, working features. Verified against source code and 327 passing tests.
 
-**Last updated:** 2026-03-08
+**Last updated:** 2026-03-09
 
 ---
 
@@ -14,6 +14,9 @@ Canonical list of implemented, working features. Verified against source code an
 - **Token-based summarization** — When session tokens exceed 75% of budget, triggers async summarization.
 - **Memory flush before compaction** — Before summarization discards old messages, LLM extracts key facts into daily notes. Preserves knowledge across compaction.
 - **No-op suppression** — Heartbeat/cron responses like "HEARTBEAT_OK" are not routed to the user.
+- **LLM overload resilience** — 5-retry exponential backoff (1s→2s→4s→8s→16s), user notification on first retry, abort-aware sleep, clean error message after exhaustion.
+- **SDK timeout hardening** — Anthropic/OpenAI SDK timeout reduced from 10 min to 2 min per request. Background LLM calls (flush, summarization) have 90s hard cap via `Promise.race`.
+- **Diagnostic timing logs** — Full pipeline observability: Telegram incoming → lane semaphore → context build → LLM call → tool execution → flush → summarization, with durations.
 
 ## LLM Providers (8)
 
@@ -34,9 +37,11 @@ Three auth modes (mutually exclusive):
 - **Extended thinking** — `llm.thinking.enabled` + `budgetTokens`. Thinking levels: off/minimal/low/medium/high.
 - **Prompt caching** — `cache_control: ephemeral` on system prompt + last tool def. Timestamp in dynamic session tail for cache stability.
 - **Multi-provider failover** — Priority-ordered list, automatic failover on error. Purpose-based routing (chat, summarize, flush).
+- **Multi-provider OAuth** — `providers[]` array with per-provider `auth` field (api_key/oauth/cli). Shared `FileTokenStore` across providers. Supports mixed auth (e.g., Anthropic OAuth primary + Codex OAuth fallback).
+- **Dynamic model listing** — Setup wizard fetches models from provider APIs (Anthropic `/v1/models`, OpenAI `/v1/models`). Filters non-chat models from OpenAI. Falls back to manual input on fetch failure.
 - **Streaming** — `chatStream()` on Anthropic + OpenAI-compatible providers. Real-time chunk delivery via MessageBus to CLI and Telegram.
 - **Structured output** — Subscription providers use JSON schema enforcement via `sdk-utils.ts` (~99% reliability + fallback parsing).
-- **Setup wizard** — Interactive first-run config. Detects API key vs subscription. `/config` command for reconfiguration.
+- **Setup wizard** — Interactive first-run config. Detects API key vs subscription. Fallback provider selection. `/config` command for reconfiguration.
 
 ## Tools (14)
 
@@ -93,7 +98,7 @@ Three auth modes (mutually exclusive):
 - **CLIGate** — Readline yes/no confirmation. 30s timeout (auto-deny).
 - **TelegramGate** — Inline keyboard (Approve / Deny) confirmation. 60s timeout (auto-deny).
 - **Wired into ToolRegistry** — Gate check runs before every tool execution.
-- **Path validation** — `realpathSync()` + workspace prefix check on all file tools. Symlink safety.
+- **Path validation** — `realpathSync()` + workspace prefix check on all file tools. Symlink safety. Cross-platform (`path.sep`).
 - **Obfuscation detection** — 8 patterns (base64 pipe, xxd, eval, etc.) + whitelist in PatternGate.
 - **Gate on file writes** — 11 sensitive path patterns (/etc, .ssh, .env, .git/config, etc.).
 - **Gate on spawn_agent** — Always gated with task preview.
@@ -144,7 +149,8 @@ Three auth modes (mutually exclusive):
 - **Lazy loading** — Skills emit XML stubs with `location` attribute. Agent reads full content on demand via `read_file`. `always: true` skills inlined in system prompt.
 - **Per-user filtering** — Skills filtered by user allow/deny lists.
 - **Config limits** — `maxSkillsInPrompt`, `maxSkillsPromptChars`.
-- **Skill self-creation** — System prompt instructs agent to create SKILL.md for repeated patterns.
+- **Skill self-creation** — System prompt instructs agent to create SKILL.md for repeated patterns. Meta-skill `skill-creator` with `always: true`.
+- **Mtime-based cache invalidation** — Skills reloaded when source file mtime changes. Avoids stale cache after skill edits.
 
 | Skill | Description |
 |-------|-------------|
@@ -221,11 +227,11 @@ Load priority: defaults < user config < workspace config < env vars.
 
 ## Infrastructure
 
-- **MessageBus** — AsyncQueue with bounded capacity (100) and backpressure. Multi-lane concurrent processing (user:3, cron:1, heartbeat:1) with semaphore-based concurrency control and AbortSignal support.
+- **MessageBus** — AsyncQueue with bounded capacity (100) and backpressure. Multi-lane concurrent processing (user:3, cron:1, heartbeat:1) with semaphore-based concurrency control and AbortSignal support. Steering message buffering during processing.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 327 tests across 34 files (vitest, mock LLM, in-memory SQLite).
+- **Tests** — 327 tests across 34 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 
 ## Commands
 
