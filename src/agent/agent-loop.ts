@@ -427,6 +427,7 @@ export class AgentLoop {
     let totalToolCalls = 0;
     let totalTokens = 0;
     let contextRetries = 0;
+    let llmRetries = 0;
     const seenToolCalls = new Set<string>();
 
     for (let i = 0; i < maxIterations; i++) {
@@ -503,9 +504,20 @@ export class AgentLoop {
         // Don't retry client errors (400) — they never self-heal
         const isClientError = /^4\d\d\s|"status":\s*4\d\d|invalid_request|malformed/i.test(errorText);
 
-        if (this.deps.config.agent.onLLMError === 'retry' && !isClientError) {
-          log.info('LLM error recovery: retrying iteration...');
-          await sleep(1000);
+        if (this.deps.config.agent.onLLMError === 'retry' && !isClientError && llmRetries < 5) {
+          llmRetries++;
+          const delay = Math.min(1000 * 2 ** (llmRetries - 1), 30_000);
+          log.info(`LLM error recovery: retry ${llmRetries}/5 in ${delay}ms...`);
+          if (llmRetries === 1 && streamCtx) {
+            this.deps.bus.publishOutbound({
+              chatId: streamCtx.chatId,
+              channel: streamCtx.channel,
+              content: '⏳ API jest chwilowo przeciążone, ponawiam...',
+              timestamp: new Date(),
+              type: 'message',
+            }).catch(() => {});
+          }
+          await sleep(delay, signal);
           continue;
         }
         const errorContent = lastContent || `LLM error: ${errorText}`;
@@ -577,7 +589,7 @@ export class AgentLoop {
 
         for (let attempt = 1; attempt < maxRetries && rawResult.startsWith('Error:'); attempt++) {
           log.warn(`Tool "${tc.function.name}" failed (attempt ${attempt}/${maxRetries}), retrying...`);
-          await sleep(500 * attempt);
+          await sleep(500 * attempt, signal);
           rawResult = await this.deps.tools.execute(tc.function.name, args, reqCtx);
         }
 
@@ -843,8 +855,12 @@ function truncateToolResult(result: string): string {
   return `${result.slice(0, half)}\n\n[... truncated ${trimmed} characters ...]\n\n${result.slice(-half)}`;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    if (signal?.aborted) { resolve(); return; }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
 }
 
 function summarizeArgs(args: Record<string, unknown>): string {
