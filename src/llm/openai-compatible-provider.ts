@@ -44,6 +44,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       baseURL: config.apiBase,
       defaultHeaders: config.extraHeaders,
       maxRetries: 3,
+      timeout: 2 * 60 * 1000, // 2 min per request (default 10 min is too long)
     });
     this.defaultModel = config.defaultModel;
     this.name = config.name;
