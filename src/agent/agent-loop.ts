@@ -177,9 +177,11 @@ export class AgentLoop {
 
     while (!signal.aborted) {
       try {
+        log.debug(`Lane "${lane}": waiting for message (active=${active}/${concurrency})`);
         const msg = await this.deps.bus.consumeInbound(signal, lane);
-        log.debug(`Lane "${lane}": processing message from ${msg.channel}:${msg.chatId} (active=${active}/${concurrency})`);
+        log.info(`Lane "${lane}": received ${msg.channel}:${msg.chatId} (active=${active}/${concurrency})`);
         await acquire(signal);
+        log.info(`Lane "${lane}": slot acquired (active=${active}/${concurrency})`);
 
         // Fire-and-forget: process message concurrently, release slot when done
         this.processLaneMessage(msg, signal)
@@ -206,6 +208,7 @@ export class AgentLoop {
       }
 
       log.info(`[${tag}] Processing: "${msg.content.slice(0, 80)}"`);
+      const processStart = Date.now();
       this.deps.bus.markProcessing(msg.chatId);
       const iterCtrl = new AbortController();
       this._iterationControllers.set(msg.chatId, iterCtrl);
@@ -220,7 +223,7 @@ export class AgentLoop {
       if (!response.streamed) {
         await this.deps.bus.publishOutbound(response, signal);
       }
-      log.info(`[${tag}] Done (streamed=${!!response.streamed})`);
+      log.info(`[${tag}] Done in ${Date.now() - processStart}ms (streamed=${!!response.streamed})`);
     } catch (err) {
       if (signal.aborted) return;
       const errorText = err instanceof Error ? err.message : String(err);
@@ -265,6 +268,7 @@ export class AgentLoop {
     };
 
     // 3. Get session + build system prompt
+    const t0 = Date.now();
     const session = await this.deps.sessions.getOrCreate(sessionKey);
     const systemPrompt = await this.deps.context.build({
       channel: msg.channel,
@@ -288,6 +292,8 @@ export class AgentLoop {
       ...trimmedHistory,
       { role: 'user', content: msg.content },
     ];
+
+    log.info(`[${sessionKey}] Context built in ${Date.now() - t0}ms`);
 
     // 4. Save user message to session BEFORE iteration
     await this.deps.sessions.append(sessionKey, [
@@ -467,6 +473,8 @@ export class AgentLoop {
       };
 
       try {
+        const llmStart = Date.now();
+        log.info(`[${sessionKey}] LLM call start (iteration ${i + 1}/${maxIterations})`);
         const streamingEnabled = this.deps.config.streaming?.enabled ?? true;
         if (streamingEnabled && streamCtx) {
           // Use streaming — chunks go to the channel in real-time
@@ -477,6 +485,7 @@ export class AgentLoop {
         } else {
           response = await this.deps.llm.chat(chatRequest, 'chat');
         }
+        log.info(`[${sessionKey}] LLM call done in ${Date.now() - llmStart}ms (tokens=${response.usage.totalTokens})`);
       } catch (err) {
         const errorText = err instanceof Error ? err.message : String(err);
         const isContextError = /token|context|length|too long/i.test(errorText);
@@ -675,6 +684,8 @@ export class AgentLoop {
     const recentMessages = session.messages.slice(-flushInterval);
     if (recentMessages.length === 0) return;
 
+    log.info(`[${sessionKey}] Memory flush: LLM call start`);
+    const flushStart = Date.now();
     const flushResponse = await this.deps.llm.chat({
       model: this.deps.config.llm.model,
       messages: [
@@ -684,6 +695,7 @@ export class AgentLoop {
       temperature: 0.3,
       maxTokens: 512,
     }, 'flush');
+    log.info(`[${sessionKey}] Memory flush: LLM call done in ${Date.now() - flushStart}ms`);
 
     if (flushResponse.content.trim() !== 'NONE') {
       await this.deps.memory.appendDaily(`## Session notes\n${flushResponse.content}`, userId, scope);
@@ -722,6 +734,8 @@ export class AgentLoop {
     userId?: string,
     scope?: InboundMessage['scope'],
   ): Promise<void> {
+    log.info(`[${sessionKey}] Summarization: start`);
+    const sumStart = Date.now();
     const halfIdx = Math.floor(messages.length / 2);
     const toSummarize = messages.slice(0, halfIdx);
 
@@ -732,6 +746,8 @@ export class AgentLoop {
       log.warn(`Memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
+    log.info(`[${sessionKey}] Summarization: LLM call start`);
+    const llmStart = Date.now();
     const summaryResponse = await this.deps.llm.chat({
       model: this.deps.config.llm.model,
       messages: [
@@ -741,9 +757,10 @@ export class AgentLoop {
       temperature: 0.3,
       maxTokens: 1024,
     }, 'summarize');
+    log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
 
     await this.deps.sessions.summarize(sessionKey, summaryResponse.content);
-    log.info(`Session ${sessionKey} summarized`);
+    log.info(`[${sessionKey}] Summarization: complete in ${Date.now() - sumStart}ms`);
   }
 }
 
