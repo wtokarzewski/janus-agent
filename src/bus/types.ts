@@ -20,6 +20,8 @@ export interface InboundMessage {
     id: string;
   };
   lane?: Lane;
+  /** Telegram forum topic ID (message_thread_id). Only set for forum-enabled supergroups. */
+  topicId?: number;
 }
 
 export interface OutboundMessage {

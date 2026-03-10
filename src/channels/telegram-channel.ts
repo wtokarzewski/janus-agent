@@ -66,6 +66,9 @@ export class TelegramChannel {
 
     // Register outbound handler — sends responses back to Telegram
     bus.registerHandler('telegram', async (msg: OutboundMessage) => {
+      const { chatId: tgChatId, topicId: tgTopicId } = parseTelegramChatId(msg.chatId);
+      const topicOpts = tgTopicId ? { message_thread_id: tgTopicId } : {};
+
       if (msg.type === 'chunk') {
         // Serialize via promise chain — prevents race condition where
         // concurrent fire-and-forget calls from streamTo() each trigger
@@ -73,7 +76,7 @@ export class TelegramChannel {
         // Only the initial sendMessage blocks the chain; subsequent chunks
         // are instant (just buffer text). Edits are timer-driven.
         const prev = this.chunkQueues.get(msg.chatId) ?? Promise.resolve();
-        const next = prev.then(() => this.handleChunk(bot, msg.chatId, msg.content));
+        const next = prev.then(() => this.handleChunk(bot, msg.chatId, msg.content, topicOpts));
         this.chunkQueues.set(msg.chatId, next.catch(() => {}));
         return;
       }
@@ -91,7 +94,7 @@ export class TelegramChannel {
       const chunks = chunkMessage(cleanMarkdownUrls(msg.content), MAX_TELEGRAM_MSG);
       for (const chunk of chunks) {
         try {
-          await bot.api.sendMessage(msg.chatId, chunk);
+          await bot.api.sendMessage(tgChatId, chunk, topicOpts);
         } catch (err) {
           log.error(`Telegram: failed to send message to ${msg.chatId}: ${err instanceof Error ? err.message : err}`);
         }
@@ -100,9 +103,13 @@ export class TelegramChannel {
 
     // Inbound messages
     bot.on('message:text', async (ctx) => {
-      const chatId = String(ctx.chat.id);
+      const baseChatId = String(ctx.chat.id);
+      // Forum topics: only isolate sessions for forum-enabled supergroups (not regular reply threads)
+      const isForum = ctx.chat.type === 'supergroup' && (ctx.chat as unknown as { is_forum?: boolean }).is_forum === true;
+      const topicId = isForum && ctx.message.message_thread_id ? ctx.message.message_thread_id : undefined;
+      const chatId = topicId ? `${baseChatId}/${topicId}` : baseChatId;
       const author = ctx.from?.username || String(ctx.from?.id || 'unknown');
-      log.info(`Telegram: incoming from ${author} (chat ${chatId}): ${ctx.message.text?.substring(0, 80)}`);
+      log.info(`Telegram: incoming from ${author} (chat ${chatId}${topicId ? `, topic ${topicId}` : ''}): ${ctx.message.text?.substring(0, 80)}`);
 
       // /whoami — simple diagnostic command (no agent loop)
       if (ctx.message?.text?.trim() === '/whoami') {
@@ -179,10 +186,21 @@ export class TelegramChannel {
       }
 
       // Allowlist check — explicit allowlist, users-derived, or runtime (invite)
+      // Use baseChatId for allowlist check (topic variant shouldn't bypass allowlist)
       const effectiveAllowlist = tg.allowlist.length > 0 ? tg.allowlist : deriveChannelAllowlist('telegram', config);
-      if (effectiveAllowlist.length > 0 && !effectiveAllowlist.includes(chatId) && !effectiveAllowlist.includes(author) && !runtimeAllowlist.has(chatId)) {
-        log.debug(`Telegram: ignoring message from ${author} (chat ${chatId}, not in allowlist)`);
+      if (effectiveAllowlist.length > 0 && !effectiveAllowlist.includes(baseChatId) && !effectiveAllowlist.includes(author) && !runtimeAllowlist.has(baseChatId)) {
+        log.debug(`Telegram: ignoring message from ${author} (chat ${baseChatId}, not in allowlist)`);
         return;
+      }
+
+      // Group mention policy — in 'mention' mode, only respond when bot is @mentioned
+      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      if (isGroup && tg.groupPolicy === 'mention') {
+        const botUsername = ctx.me.username;
+        if (botUsername && !ctx.message.text.includes(`@${botUsername}`)) {
+          log.debug(`Telegram: ignoring group message (mention policy, no @${botUsername})`);
+          return;
+        }
       }
 
       // Resolve user identity (explicit config first, then auto-identify from channel metadata)
@@ -195,7 +213,7 @@ export class TelegramChannel {
       let scope: InboundMessage['scope'];
       if (ctx.chat.type === 'private' && resolved) {
         scope = { kind: 'user', id: resolved.userId };
-      } else if (config.family && config.family.groupChatIds.includes(chatId)) {
+      } else if (config.family && config.family.groupChatIds.includes(baseChatId)) {
         scope = { kind: 'family', id: config.family.id };
       }
       // else: undefined (global/backward-compat)
@@ -214,6 +232,7 @@ export class TelegramChannel {
           channelUsername: resolved.identity.channelUsername,
         } : undefined,
         scope,
+        topicId,
       };
 
       // If the agent is already processing this chat, buffer as steering message
@@ -267,13 +286,15 @@ export class TelegramChannel {
     this.stopTyping(chatId);
     log.info(`Telegram: startTyping for ${chatId}`);
     this.typingStartedAt.set(chatId, Date.now());
+    const { chatId: tgChatId, topicId: tgTopicId } = parseTelegramChatId(chatId);
+    const topicOpts = tgTopicId ? { message_thread_id: tgTopicId } : {};
     try {
-      await bot.api.sendChatAction(chatId, 'typing');
+      await bot.api.sendChatAction(tgChatId, 'typing', topicOpts);
     } catch (err) {
       log.warn(`Telegram: sendChatAction failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
     }
     const timer = setInterval(() => {
-      bot.api.sendChatAction(chatId, 'typing').catch(() => {});
+      bot.api.sendChatAction(tgChatId, 'typing', topicOpts).catch(() => {});
     }, TYPING_REFRESH_MS);
     this.typingTimers.set(chatId, timer);
   }
@@ -304,7 +325,7 @@ export class TelegramChannel {
    * Subsequent chunks: instant text buffer — no API call, chain unblocked.
    * Edits are driven by a periodic flush timer, not by individual chunks.
    */
-  private async handleChunk(bot: Bot, chatId: string, content: string): Promise<void> {
+  private async handleChunk(bot: Bot, chatId: string, content: string, topicOpts: { message_thread_id?: number } = {}): Promise<void> {
     const state = this.streamStates.get(chatId);
 
     if (state) {
@@ -316,8 +337,9 @@ export class TelegramChannel {
 
     // First chunk — stop typing indicator and send initial message
     this.stopTyping(chatId);
+    const { chatId: tgChatId } = parseTelegramChatId(chatId);
     try {
-      const sent = await bot.api.sendMessage(chatId, content);
+      const sent = await bot.api.sendMessage(tgChatId, content, topicOpts);
       this.streamStates.set(chatId, {
         messageId: sent.message_id,
         text: content,
@@ -341,8 +363,9 @@ export class TelegramChannel {
     state.flushing = true;
     state.dirty = false;
 
+    const { chatId: tgChatId } = parseTelegramChatId(chatId);
     try {
-      await bot.api.editMessageText(chatId, state.messageId, state.text);
+      await bot.api.editMessageText(tgChatId, state.messageId, state.text);
     } catch (err) {
       log.debug(`Telegram: stream flush failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
     }
@@ -357,8 +380,9 @@ export class TelegramChannel {
     if (state.flushTimer) clearInterval(state.flushTimer);
 
     // Final edit with complete text (clean markdown from URLs)
+    const { chatId: tgChatId } = parseTelegramChatId(chatId);
     try {
-      await bot.api.editMessageText(chatId, state.messageId, cleanMarkdownUrls(state.text));
+      await bot.api.editMessageText(tgChatId, state.messageId, cleanMarkdownUrls(state.text));
     } catch (err) {
       log.debug(`Telegram: stream final edit failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
     }
@@ -409,6 +433,14 @@ export function cleanMarkdownUrls(text: string): string {
   return text.replace(/(\*{1,2}|_{1,2})(https?:\/\/\S+?)\1/g, '$2')
     // Also handle trailing-only ** or * stuck to URLs (LLM sometimes only closes)
     .replace(/(https?:\/\/\S+?)(\*{1,2}|_{1,2})(?=\s|$)/g, '$1');
+}
+
+/** Parse composite chatId "12345/67" into baseChatId and optional topicId. */
+export function parseTelegramChatId(chatId: string): { chatId: string; topicId?: number } {
+  const idx = chatId.indexOf('/');
+  if (idx === -1) return { chatId };
+  const topicId = parseInt(chatId.slice(idx + 1), 10);
+  return { chatId: chatId.slice(0, idx), topicId: isNaN(topicId) ? undefined : topicId };
 }
 
 /** Split long messages into chunks at newline or space boundaries. */

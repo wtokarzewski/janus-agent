@@ -37,6 +37,7 @@ import { WebFetchTool } from './tools/builtin/web-fetch.js';
 import { WebSearchTool } from './tools/builtin/web-search.js';
 import { WebSearchDDGTool } from './tools/builtin/web-search-ddg.js';
 import { SelfUpdateTool } from './tools/builtin/self-update.js';
+import { BrowserTool } from './tools/builtin/browser.js';
 import { MCPClient, createMCPProxyTool } from './mcp/client.js';
 import * as log from './utils/logger.js';
 
@@ -116,6 +117,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   tools.register(new HeartbeatTool());
   // Web tools
   tools.register(new WebFetchTool());
+  tools.register(new BrowserTool());
   const webSearchApiKey = config.tools.webSearchApiKey ?? process.env.BRAVE_API_KEY;
   if (webSearchApiKey) {
     tools.register(new WebSearchTool(webSearchApiKey));
