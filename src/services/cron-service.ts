@@ -176,14 +176,20 @@ export class CronService {
     }, 60_000); // check every 60s
   }
 
+  /** Stagger interval for missed jobs (ms between each missed job execution). */
+  private static STAGGER_INTERVAL_MS = 30_000;
+  /** Threshold (ms) above which a late job is considered "missed" vs merely "due". */
+  private static MISSED_THRESHOLD_MS = 60_000;
+
   private async onTimer(): Promise<void> {
     const now = new Date();
     const jobs = this.listJobs();
 
+    const dueJobs: CronJob[] = [];
+    const missedJobs: CronJob[] = [];
+
     for (const job of jobs) {
       if (!job.nextRunAt) continue;
-
-      // Skip if this job is already running (concurrency guard)
       if (this.runningJobs.has(job.id)) continue;
 
       const nextRun = new Date(job.nextRunAt);
@@ -197,7 +203,35 @@ export class CronService {
           }
         }
 
+        const lateMs = now.getTime() - nextRun.getTime();
+        if (lateMs > CronService.MISSED_THRESHOLD_MS) {
+          missedJobs.push(job);
+        } else {
+          dueJobs.push(job);
+        }
+      }
+    }
+
+    // Execute due jobs immediately
+    for (const job of dueJobs) {
+      await this.executeJob(job);
+    }
+
+    // Stagger missed jobs to prevent LLM overload after restart
+    for (let i = 0; i < missedJobs.length; i++) {
+      const job = missedJobs[i];
+      const delayMs = CronService.STAGGER_INTERVAL_MS * i;
+      if (delayMs === 0) {
         await this.executeJob(job);
+      } else {
+        log.info(`Cron: staggering missed job "${job.name}" — will fire in ${delayMs / 1000}s`);
+        setTimeout(() => {
+          if (this.running && !this.runningJobs.has(job.id)) {
+            this.executeJob(job).catch(err => {
+              log.warn(`Cron: staggered job "${job.name}" failed: ${err instanceof Error ? err.message : String(err)}`);
+            });
+          }
+        }, delayMs);
       }
     }
   }

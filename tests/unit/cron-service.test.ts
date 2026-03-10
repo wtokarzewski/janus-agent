@@ -136,6 +136,31 @@ describe('CronService start/stop', () => {
   });
 });
 
+describe('CronService missed job staggering', () => {
+  it('should stagger missed jobs instead of firing all at once', async () => {
+    // Track executeJob calls via spy on bus.publishInbound
+    const publishedIds: string[] = [];
+    bus.publishInbound = async (msg) => {
+      publishedIds.push(msg.id);
+    };
+
+    // Create 3 jobs with nextRunAt well in the past (missed)
+    const pastTime = new Date(Date.now() - 300_000).toISOString(); // 5 min ago
+    for (let i = 0; i < 3; i++) {
+      service.addJob({ name: `missed-${i}`, scheduleKind: 'every', scheduleValue: '3600000', task: `Task ${i}` });
+      const job = service.listJobs().find(j => j.name === `missed-${i}`)!;
+      db.db.prepare('UPDATE cron_jobs SET next_run_at = ? WHERE id = ?').run(pastTime, job.id);
+    }
+
+    // Call onTimer directly
+    await (service as unknown as { onTimer(): Promise<void> }).onTimer();
+
+    // First missed job fires immediately, rest are staggered via setTimeout
+    // Only 1 should have fired synchronously
+    expect(publishedIds.length).toBe(1);
+  });
+});
+
 describe('HeartbeatService → CronService sync', () => {
   it('should sync HEARTBEAT.md tasks to cron_jobs', async () => {
     const heartbeatContent = `# Heartbeat

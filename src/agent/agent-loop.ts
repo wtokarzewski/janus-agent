@@ -12,6 +12,7 @@ import type { MemoryStore } from '../memory/memory-store.js';
 import type { GateService } from '../gates/types.js';
 import { findUserProfile, deriveChannelAllowlist } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
+import { stripControlTokens } from '../utils/sanitize.js';
 
 const THINKING_LEVEL_BUDGETS: Record<string, number> = {
   off: 0, minimal: 2000, low: 5000, medium: 10000, high: 20000,
@@ -547,7 +548,7 @@ export class AgentLoop {
         return { content: errorContent, iterations: i + 1, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
       }
 
-      lastContent = response.content;
+      lastContent = stripControlTokens(response.content);
       totalTokens += response.usage.totalTokens;
 
       // Normalize tool call IDs (Anthropic max 64 chars, OpenAI can generate 400+)
@@ -562,7 +563,7 @@ export class AgentLoop {
         if (streamCtx && (this.deps.config.streaming?.enabled ?? true)) {
           this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
         }
-        return { content: response.content, iterations: i + 1, toolCalls: totalToolCalls, totalTokens, outcome: 'success' };
+        return { content: lastContent, iterations: i + 1, toolCalls: totalToolCalls, totalTokens, outcome: 'success' };
       }
 
       // Add assistant message with tool_calls to context

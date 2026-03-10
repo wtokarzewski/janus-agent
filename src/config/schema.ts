@@ -87,6 +87,8 @@ const TelegramSchema = z.object({
   enabled: z.boolean().default(false),
   token: z.string().optional(),
   allowlist: z.array(z.string()).default([]),
+  /** How the bot responds in group chats: 'all' = every message, 'mention' = only when @mentioned. */
+  groupPolicy: z.enum(['all', 'mention']).default('all'),
 });
 
 const StreamingSchema = z.object({
