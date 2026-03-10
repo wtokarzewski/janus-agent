@@ -8,7 +8,7 @@ Janus is a universal AI agent. CLI + Telegram, ~10,400 lines TypeScript.
 
 **Name:** Janus — Roman god of beginnings, transitions, and duality. Two faces looking to the past and the future. Reflects the agent's dual nature: planning vs execution, analysis vs implementation, AI vs human control.
 
-**Status:** Phase 8 — LLM overload resilience (5-retry exponential backoff 1s→16s, user notification, abort-aware sleep, clean error after exhaustion), SDK timeout hardening (2 min per request vs default 10 min, 90s hard cap on background flush/summarization calls), multi-provider OAuth (shared FileTokenStore, `providers[]` with auth/priority/purpose), dynamic model listing from APIs (Anthropic `/v1/models` + OpenAI `/v1/models` with filtering), setup wizard with fallback provider selection, Windows compatibility (`path.sep` in validatePath, conditional test skipping), diagnostic timing logs (Telegram→lane→context→LLM→flush→summarization), multi-lane concurrent message queue (semaphore-based, user:3/cron:1/heartbeat:1, AbortSignal), skill-creator meta-skill (mtime-based cache invalidation), non-blocking embedder (setImmediate yield points, delayed startup reindex). Prior: per-user overrides, community skills, PROFILE.md auto-update, invite links, Telegram hardening, orphaned tool_use repair, `/stop` command, `self_update` tool, auto-update cron, native OAuth (PKCE), security hardening, reliability, tools (web_fetch, web_search, append_file, heartbeat, self_update, invite), MCP client, steering messages, extended thinking, SubagentRegistry with cancel, prompt caching, 5xx failover, cross-platform shell, cron/heartbeat in CLI mode, web_fetch hardening, web search cache. Prior: multi-user, subscription providers, setup wizard, MCP server, vector search, temporal decay, memory flush, lazy skills, token management, cron scheduler, streaming, gates, hybrid memory search (FTS5), SQLite storage, tests (327), CI pipeline.
+**Status:** Phase 8 — Leaked control token stripping (sanitize `<|endoftext|>`, `[INST]`, etc.), Telegram forum/topic session isolation (per-topic sessions in forum supergroups), group mention policy (`telegram.groupPolicy: all|mention`), cron missed job staggering (30s apart on restart), browser tool (Playwright headless Chromium, optional dep, 3rd escalation tier: search→fetch→browser). Prior: LLM overload resilience (5-retry exponential backoff 1s→16s, user notification, abort-aware sleep, clean error after exhaustion), SDK timeout hardening (2 min per request vs default 10 min, 90s hard cap on background flush/summarization calls), multi-provider OAuth (shared FileTokenStore, `providers[]` with auth/priority/purpose), dynamic model listing from APIs (Anthropic `/v1/models` + OpenAI `/v1/models` with filtering), setup wizard with fallback provider selection, Windows compatibility (`path.sep` in validatePath, conditional test skipping), diagnostic timing logs (Telegram→lane→context→LLM→flush→summarization), multi-lane concurrent message queue (semaphore-based, user:3/cron:1/heartbeat:1, AbortSignal), skill-creator meta-skill (mtime-based cache invalidation), non-blocking embedder (setImmediate yield points, delayed startup reindex). Prior: per-user overrides, community skills, PROFILE.md auto-update, invite links, Telegram hardening, orphaned tool_use repair, `/stop` command, `self_update` tool, auto-update cron, native OAuth (PKCE), security hardening, reliability, tools (web_fetch, web_search, append_file, heartbeat, self_update, invite), MCP client, steering messages, extended thinking, SubagentRegistry with cancel, prompt caching, 5xx failover, cross-platform shell, cron/heartbeat in CLI mode, web_fetch hardening, web search cache. Prior: multi-user, subscription providers, setup wizard, MCP server, vector search, temporal decay, memory flush, lazy skills, token management, cron scheduler, streaming, gates, hybrid memory search (FTS5), SQLite storage, tests (347), CI pipeline.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `agent/` — Agent loop (LLM iteration with tool calls, `stop()` for mid-task cancellation), subagent spawning, SubagentRegistry (cancel/cancelAll)
 - `auth/` — Native OAuth (PKCE S256, token storage, auto-refresh) for Anthropic + Codex
 - `bus/` — MessageBus + AsyncQueue (bounded, backpressure), multi-lane concurrent queue (semaphore, per-lane concurrency config, AbortSignal), steering messages (mid-run injection)
-- `channels/` — CLI (interactive REPL, persistent history, `/stop` + `/help` + `/config`), Telegram (grammy, typing indicators, start retry, `/stop` + `/whoami`, invite deep-link onboarding)
+- `channels/` — CLI (interactive REPL, persistent history, `/stop` + `/help` + `/config`), Telegram (grammy, typing indicators, start retry, `/stop` + `/whoami`, invite deep-link onboarding, forum/topic session isolation, group mention policy)
 - `commands/` — onboard (alias: init), gateway, mcp-server, setup (interactive wizard), update (pull + install + test)
 - `config/` — JSON config + Zod schema, `~/.janus/config.json` (user) + `janus.json` (workspace) + env
 - `context/` — System prompt builder (identity + tool guidelines + EGO + project + skills + memory + learner)
@@ -34,12 +34,12 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `llm/` — Anthropic native + OpenAI-compatible + ClaudeAgent + Codex + Codex OAuth providers, ProviderRegistry (multi-provider with failover + 5xx), streaming, extended thinking, prompt caching, SDK utils (structured output), model listing from APIs, SDK timeout (2 min)
 - `mcp/` — MCP server (JSON-RPC, stdio, tool bridge) + MCP client (connect to external servers, auto-discover tools)
 - `memory/` — MEMORY.md + HISTORY.md + daily notes + MemoryIndex (FTS5 + vector hybrid search with temporal decay), embedder (local @xenova/transformers, setImmediate yield points for non-blocking inference)
-- `services/` — CronService (persistent cron scheduler, SQLite, recursion guard), HeartbeatService (HEARTBEAT.md → CronService sync, per-user HEARTBEAT.md with userId routing)
+- `services/` — CronService (persistent cron scheduler, SQLite, recursion guard, missed job staggering on restart), HeartbeatService (HEARTBEAT.md → CronService sync, per-user HEARTBEAT.md with userId routing)
 - `session/` — JSONL persistence, atomic writes, summarization, per-key mutex locking
 - `skills/` — SKILL.md loader (YAML frontmatter + markdown), lazy loading (stubs + read on demand), mtime-based cache invalidation on skill file writes
 - `invites/` — InviteStore (in-memory, 24h TTL) for Telegram deep-link onboarding
-- `tools/` — 14 built-in tools (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update, invite), path validation (symlink safety)
-- `utils/` — Logger, cross-platform shell config (`getShellConfig`, `killProcessTree`)
+- `tools/` — 15 built-in tools (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite), path validation (symlink safety)
+- `utils/` — Logger, cross-platform shell config (`getShellConfig`, `killProcessTree`), sanitize (strip leaked LLM control tokens)
 - `users/` — User resolver (Telegram userId/username → Janus user), per-user profiles, tool/skill filtering, `ensureUserDir()` (auto-create `.janus/users/{id}/` on first resolution, channel-agnostic)
 
 ### Bootstrap files (unique to Janus)
@@ -75,11 +75,12 @@ Three auth modes (mutually exclusive):
 - **Subscription** — `claude-agent` (Claude Code Max via `claude login`), `codex` (ChatGPT Plus/Pro via `codex login`)
 - **OAuth** — `anthropic` or `codex` with native PKCE flow (browser-based login, auto-refresh)
 
-Key sections: `llm` (provider, model, multi-provider, thinking, reasoningEffort, toolTemperature), `agent` (iterations, tokenBudget, contextWindow, skillLimits, memoryFlushInterval, onLLMError, lanes), `workspace`, `tools` (exec deny patterns, execDenyPatternsExtra), `database`, `heartbeat`, `telegram`, `streaming`, `gates`, `memory` (vectorSearch, vectorWeight, textWeight, recentDays), `autoUpdate` (enabled, schedule cron expression), `users` (profiles, tool/skill allow/deny), `family` (groupChatIds, shared scope), `mcp` (servers).
+Key sections: `llm` (provider, model, multi-provider, thinking, reasoningEffort, toolTemperature), `agent` (iterations, tokenBudget, contextWindow, skillLimits, memoryFlushInterval, onLLMError, lanes), `workspace`, `tools` (exec deny patterns, execDenyPatternsExtra), `database`, `heartbeat`, `telegram` (token, allowlist, groupPolicy), `streaming`, `gates`, `memory` (vectorSearch, vectorWeight, textWeight, recentDays), `autoUpdate` (enabled, schedule cron expression), `users` (profiles, tool/skill allow/deny), `family` (groupChatIds, shared scope), `mcp` (servers).
 
 ## Dependencies
 
 12 runtime: @anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod
+1 optional: playwright (for browser tool)
 4 dev: @types/better-sqlite3, tsx, typescript, vitest
 
 ## Testing
@@ -89,7 +90,7 @@ npm test           # Run all tests (vitest)
 npm run typecheck   # TypeScript type checking
 ```
 
-327 tests across 34 test files: unit (anthropic-oauth, async-queue, codex-oauth, config-schema, context-builder, cron-service, cron-tool, exec-tool, gate-routing, heartbeat-parser, invite, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sdk-utils, self-update-tool, session-lock, setup, shell, skill-loading, stop-command, streaming, system-message, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search, web-tools) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
+347 tests across 37 test files: unit (anthropic-oauth, async-queue, browser-tool, codex-oauth, config-schema, context-builder, cron-service, cron-tool, exec-tool, gate-routing, heartbeat-parser, invite, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sanitize, sdk-utils, self-update-tool, session-lock, setup, shell, skill-loading, stop-command, streaming, system-message, telegram-channel, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search, web-tools) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
 
 ## Conventions
 

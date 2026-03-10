@@ -2,10 +2,10 @@
 
 ## Current State (Phase 8 complete)
 
-- **Codebase:** ~10,400 LOC TypeScript (80 src files), 327 tests across 34 files, CI
-- **Runtime deps:** 12 (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod)
+- **Codebase:** ~10,800 LOC TypeScript (82 src files), 347 tests across 37 files, CI
+- **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
-- **Tools:** 14 (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update, invite)
+- **Tools:** 15 (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
 - **Skills:** 6 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace)
 - **Channels:** 2 (CLI, Telegram) + MCP server + MCP client
 - **DB:** SQLite (WAL, 5 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user)
@@ -88,7 +88,12 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Setup wizard with fallback provider selection
 - Windows compatibility (path separator, conditional test skipping)
 - Diagnostic timing logs throughout message processing pipeline
-- 327 tests across 34 files
+- Leaked control token stripping (sanitize LLM artifacts from user-facing output)
+- Telegram forum/topic session isolation (per-topic sessions in forum supergroups)
+- Group mention policy (`telegram.groupPolicy: all|mention`)
+- Cron missed job staggering (spread missed jobs 30s apart on restart)
+- Browser tool (Playwright headless Chromium, optional dep, 3rd escalation: search→fetch→browser)
+- 347 tests across 37 files
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
