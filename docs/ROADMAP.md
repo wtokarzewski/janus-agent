@@ -93,6 +93,7 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Group mention policy (`telegram.groupPolicy: all|mention`)
 - Cron missed job staggering (spread missed jobs 30s apart on restart)
 - Browser tool (Playwright headless Chromium, optional dep, 3rd escalation: search→fetch→browser)
+- Graceful shutdown flush (flush sessions before SIGTERM/SIGINT abort, memoryFlushInterval 10→5)
 - 347 tests across 37 files
 
 **Remaining:**

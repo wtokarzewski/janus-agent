@@ -16,6 +16,7 @@ Canonical list of implemented, working features. Verified against source code an
 - **No-op suppression** — Heartbeat/cron responses like "HEARTBEAT_OK" are not routed to the user.
 - **LLM overload resilience** — 5-retry exponential backoff (1s→2s→4s→8s→16s), user notification on first retry, abort-aware sleep, clean error message after exhaustion.
 - **SDK timeout hardening** — Anthropic/OpenAI SDK timeout reduced from 10 min to 2 min per request. Background LLM calls (flush, summarization) have 90s hard cap via `Promise.race`.
+- **Graceful shutdown flush** — SIGTERM/SIGINT triggers session flush before abort (double-signal = force exit). `memoryFlushInterval` default lowered from 10 to 5 messages for more frequent persistence.
 - **Diagnostic timing logs** — Full pipeline observability: Telegram incoming → lane semaphore → context build → LLM call → tool execution → flush → summarization, with durations.
 - **Leaked control token stripping** — Sanitizes LLM control tokens (`<|endoftext|>`, `[INST]`, `<<SYS>>`, `<s>`) from user-facing output before delivery.
 
