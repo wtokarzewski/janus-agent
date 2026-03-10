@@ -39,11 +39,17 @@ export async function runGateway(): Promise<void> {
   const ac = new AbortController();
   const { signal } = ac;
 
-  process.on('SIGINT', () => {
+  let shuttingDown = false;
+  const gracefulShutdown = () => {
+    if (shuttingDown) { process.exit(1); return; }
+    shuttingDown = true;
     console.log('\nShutting down gateway...');
-    ac.abort();
-  });
-  process.on('SIGTERM', () => ac.abort());
+    app.agent.flushAllSessions()
+      .catch(err => log.warn(`Shutdown flush failed: ${err instanceof Error ? err.message : String(err)}`))
+      .finally(() => ac.abort());
+  };
+  process.on('SIGINT', gracefulShutdown);
+  process.on('SIGTERM', gracefulShutdown);
 
   // Start agent loop + dispatcher
   const agentPromise = app.agent.run(signal);
