@@ -1,8 +1,8 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 327 passing tests.
+Canonical list of implemented, working features. Verified against source code and 347 passing tests.
 
-**Last updated:** 2026-03-09
+**Last updated:** 2026-03-10
 
 ---
 
@@ -17,6 +17,7 @@ Canonical list of implemented, working features. Verified against source code an
 - **LLM overload resilience** — 5-retry exponential backoff (1s→2s→4s→8s→16s), user notification on first retry, abort-aware sleep, clean error message after exhaustion.
 - **SDK timeout hardening** — Anthropic/OpenAI SDK timeout reduced from 10 min to 2 min per request. Background LLM calls (flush, summarization) have 90s hard cap via `Promise.race`.
 - **Diagnostic timing logs** — Full pipeline observability: Telegram incoming → lane semaphore → context build → LLM call → tool execution → flush → summarization, with durations.
+- **Leaked control token stripping** — Sanitizes LLM control tokens (`<|endoftext|>`, `[INST]`, `<<SYS>>`, `<s>`) from user-facing output before delivery.
 
 ## LLM Providers (8)
 
@@ -43,7 +44,7 @@ Three auth modes (mutually exclusive):
 - **Structured output** — Subscription providers use JSON schema enforcement via `sdk-utils.ts` (~99% reliability + fallback parsing).
 - **Setup wizard** — Interactive first-run config. Detects API key vs subscription. Fallback provider selection. `/config` command for reconfiguration.
 
-## Tools (14)
+## Tools (15)
 
 | Tool | Description |
 |------|-------------|
@@ -58,6 +59,7 @@ Three auth modes (mutually exclusive):
 | `cron` | Create, list, update, delete persistent cron jobs. |
 | `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards, browser User-Agent). |
 | `web_search` | Web search (Brave API or DuckDuckGo fallback, in-memory cache 15min TTL). |
+| `browser` | Headless Chromium via Playwright (optional dep). 3rd tier: search→fetch→browser. Supports wait_for, click, fill, extract. |
 | `heartbeat` | Manage periodic heartbeat tasks. |
 | `self_update` | Check/apply updates (git pull, npm install, test, self-respawn, auto-revert). |
 | `invite` | Generate Telegram invite links for new user onboarding. |
@@ -87,7 +89,7 @@ Three auth modes (mutually exclusive):
 | Channel | Features |
 |---------|----------|
 | **CLI** | Interactive REPL, single-message mode (`-m`), persistent history (~/.janus/history), `/help` and `/config` commands, inline streaming output, gate confirmation via readline. |
-| **Telegram** | Grammy bot, user allowlist, streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami` diagnostic, `/stop` command, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup, bot.start() background error catch. |
+| **Telegram** | Grammy bot, user allowlist, streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami` diagnostic, `/stop` command, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup, bot.start() background error catch, forum/topic session isolation (per-topic sessions in forum supergroups), group mention policy (`groupPolicy: all\|mention`). |
 | **MCP Server** | JSON-RPC 2.0 over stdio. Exposes tools and prompts to editors (VS Code, Cursor, Claude Code). Tool bridge maps ToolRegistry to MCP protocol. |
 | **MCP Client** | Connect to external MCP servers. Config-driven `mcp.servers[]`. Auto-discover tools, register as `mcp_{server}_{tool}`. |
 
@@ -110,6 +112,7 @@ Three auth modes (mutually exclusive):
   - 3 schedule kinds: `at` (one-shot), `every` (interval), `cron` (expression via croner).
   - Timezone support for cron expressions.
   - Run history tracking, exponential backoff on consecutive errors (30s → 60s → 5m → 15m → 1h).
+  - Missed job staggering: jobs >1 min late after restart spread 30s apart to prevent LLM overload.
   - CRUD: addJob, updateJob, removeJob, listJobs, getRuns.
 - **HeartbeatService** — Parses `HEARTBEAT.md` for periodic tasks.
   - Supports `every Xm/h/d` and cron expressions.
@@ -216,7 +219,7 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 | `tools` | execTimeout, execDenyPatterns[], maxFileSize |
 | `database` | enabled, path |
 | `heartbeat` | enabled, checkIntervalMs |
-| `telegram` | enabled, token, allowlist[] |
+| `telegram` | enabled, token, allowlist[], groupPolicy (all\|mention) |
 | `streaming` | enabled, telegramThrottleMs |
 | `gates` | enabled, execPatterns[] |
 | `memory` | vectorSearch |
@@ -231,7 +234,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 327 tests across 34 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 347 tests across 37 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 
 ## Commands
 
