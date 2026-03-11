@@ -115,6 +115,14 @@ const MemorySchema = z.object({
   recentDays: z.number().default(3),
 });
 
+const VoiceSchema = z.object({
+  enabled: z.boolean().default(false),
+  provider: z.enum(['groq']).default('groq'),
+  apiKey: z.string().optional(),
+  language: z.string().optional(),
+  maxDurationSec: z.number().default(300),
+});
+
 const MCPServerSpecSchema = z.object({
   name: z.string(),
   command: z.string(),
@@ -192,6 +200,7 @@ export const JanusConfigSchema = z.object({
   streaming: StreamingSchema.optional().transform(v => StreamingSchema.parse(v ?? {})),
   gates: GatesSchema.optional().transform(v => GatesSchema.parse(v ?? {})),
   memory: MemorySchema.optional().transform(v => MemorySchema.parse(v ?? {})),
+  voice: VoiceSchema.optional().transform(v => VoiceSchema.parse(v ?? {})),
   mcp: MCPSchema.optional().transform(v => MCPSchema.parse(v ?? {})),
   autoUpdate: AutoUpdateSchema.optional().transform(v => AutoUpdateSchema.parse(v ?? {})),
   users: z.array(UserProfileSchema).default([]),

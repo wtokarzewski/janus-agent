@@ -95,11 +95,12 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Browser tool (Playwright headless Chromium, optional dep, 3rd escalation: search→fetch→browser)
 - Graceful shutdown flush (flush sessions before SIGTERM/SIGINT abort, memoryFlushInterval 10→5)
 - Memory flush v2: pointer-based tracking (lastFlushed), context-aware extraction (session summary + MEMORY.md), triple output (HISTORY.md + daily notes + MEMORY.md holistic update), 5 triggers (count/token/pre-summarization/idle/shutdown)
-- 347 tests across 37 files
+- Voice transcription: Groq Whisper auto-transcribe for Telegram voice/audio messages, configurable language/duration limit
+- GitHub skill: `gh` CLI wrapper — repos, issues, PRs, CI, releases, gists, search
+- 352 tests across 38 files
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
-- Voice transcription (Groq Whisper, TG voice → text)
 - Q&A Loop (iterative requirements gathering)
 
 ---
@@ -128,7 +129,7 @@ Features that set Janus apart from other AI agents:
 - **Minimal subagent prompts** — Child agents get stripped context, saving tokens.
 - **Persistent cron scheduler** — SQLite-backed, survives restarts, exponential backoff.
 - **MCP server** — Editors can use Janus tools directly via reverse provider.
-- **Simplicity** — ~10.4K LOC. Minimal codebase, full capabilities.
+- **Simplicity** — ~10.8K LOC. Minimal codebase, full capabilities.
 - **Native OAuth** — PKCE flows for Anthropic + Codex. No CLI SDK dependency required.
 - **Steering messages** — Mid-run user injection. User can redirect agent during tool execution.
 - **Family skills** — Meal planner, Home Assistant, stock watcher, travel planner, Google Workspace.

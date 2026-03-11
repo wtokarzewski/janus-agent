@@ -12,7 +12,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
                                              + Vector
 ```
 
-**Status (Phase 8):** ~9,900 LOC, 325 tests across 34 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
+**Status (Phase 8):** ~10,800 LOC, 347 tests across 37 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
 
 ## Core Pipeline
 
@@ -70,7 +70,7 @@ Providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Groq (OpenAI-compatible API)
 
 ### 5. Tools (`src/tools/`)
 
-14 built-in tools:
+15 built-in tools:
 
 | Tool | Description |
 |------|-------------|
@@ -85,6 +85,7 @@ Providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Groq (OpenAI-compatible API)
 | `cron` | Manage persistent cron jobs |
 | `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards) |
 | `web_search` | Web search (Brave API or DuckDuckGo fallback) |
+| `browser` | Headless Chromium via Playwright (optional dep, 3rd tier) |
 | `heartbeat` | Manage periodic heartbeat tasks |
 | `self_update` | Check/apply updates (git pull, test, restart) |
 | `invite` | Generate Telegram invite links for new users |
@@ -143,11 +144,11 @@ Configure in editor (e.g. Claude Code):
 
 `janus.json` (all config including API keys and tokens). Env vars supported as overrides. Zod-validated.
 
-Key sections: `llm`, `agent`, `workspace`, `tools`, `database`, `heartbeat`, `telegram`, `streaming`, `gates`, `memory`.
+Key sections: `llm`, `agent`, `workspace`, `tools`, `database`, `heartbeat`, `telegram`, `streaming`, `gates`, `memory`, `voice`, `users`, `family`, `mcp`, `autoUpdate`.
 
 ## Testing
 
-325 tests across 34 files. Vitest. Mock LLM provider for integration tests. In-memory SQLite for DB tests.
+352 tests across 38 files. Vitest. Mock LLM provider for integration tests. In-memory SQLite for DB tests.
 
 ```bash
 npm test           # Run all tests
