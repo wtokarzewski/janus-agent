@@ -1,6 +1,6 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 352 passing tests.
+Canonical list of implemented, working features. Verified against source code and 373 passing tests.
 
 **Last updated:** 2026-03-11
 
@@ -105,7 +105,7 @@ Three auth modes (mutually exclusive):
 - **CLIGate** — Readline yes/no confirmation. 30s timeout (auto-deny).
 - **TelegramGate** — Inline keyboard (Approve / Deny) confirmation. 60s timeout (auto-deny).
 - **Wired into ToolRegistry** — Gate check runs before every tool execution.
-- **Path validation** — `realpathSync()` + workspace prefix check on all file tools. Symlink safety. Cross-platform (`path.sep`).
+- **Path validation** — `realpathSync()` + workspace prefix check on all file tools. Symlink safety. Cross-platform (`path.sep`). User-scoped access enforcement in family chats (users can only access their own `.janus/users/{id}/` directory).
 - **Obfuscation detection** — 8 patterns (base64 pipe, xxd, eval, etc.) + whitelist in PatternGate.
 - **Gate on file writes** — 11 sensitive path patterns (/etc, .ssh, .env, .git/config, etc.).
 - **Gate on spawn_agent** — Always gated with task preview.
@@ -118,6 +118,7 @@ Three auth modes (mutually exclusive):
   - Timezone support for cron expressions.
   - Run history tracking, exponential backoff on consecutive errors (30s → 60s → 5m → 15m → 1h).
   - Missed job staggering: jobs >1 min late after restart spread 30s apart to prevent LLM overload.
+  - Per-user job ownership: userId column (migration 6), ownership enforcement on update/delete/list.
   - CRUD: addJob, updateJob, removeJob, listJobs, getRuns.
 - **HeartbeatService** — Parses `HEARTBEAT.md` for periodic tasks.
   - Supports `every Xm/h/d` and cron expressions.
@@ -133,6 +134,11 @@ Three auth modes (mutually exclusive):
 - **Per-user HEARTBEAT.md** — `.janus/users/{userId}/HEARTBEAT.md` for personal scheduled tasks. Routed to user's Telegram chat.
 - **Per-user memory** — Scoped memory chunks (owner + scope filtering in MemoryIndex).
 - **Family groups** — Shared memory scope via `family.groupChatIds` config.
+- **Per-user cron jobs** — Cron jobs scoped to owner (userId column, migration 6). Ownership enforcement on update/delete/list operations.
+- **File access control** — validatePath enforces user-scoped access in family chats. Users can only access their own `.janus/users/{id}/` directory, preventing cross-user file access.
+- **Chat directories** — `ensureChatDir()` creates per-chat dirs (`.janus/chats/{chatId}/`) for chat-scoped storage.
+- **Context isolation** — System prompt scoped per-user in family chats to prevent information leakage between users.
+- **DB hardening** — Exec deny patterns block direct `sqlite3` CLI access to prevent database tampering.
 - **Wired into AgentLoop** — User profile passed to context builder, tool context, learner.
 
 ## Invite Links
@@ -206,11 +212,12 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 | `.janus/users/{id}/PROFILE.md` | Per-user | User preferences and identity |
 | `.janus/users/{id}/AGENTS.md` | Per-user | Agent behavior override (appended to global) |
 | `.janus/users/{id}/HEARTBEAT.md` | Per-user | Personal scheduled tasks (routed to user's chat) |
+| `.janus/chats/{chatId}/` | Per-chat | Chat-scoped directory (auto-created) |
 
 ## Database
 
 - **SQLite** (better-sqlite3), WAL mode, numbered migrations.
-- **5 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id).
+- **6 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id), per-user cron (user_id column).
 - **Graceful fallback** — File-based storage when database disabled.
 
 ## Configuration
@@ -241,7 +248,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 347 tests across 37 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 373 tests across 38 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 
 ## Commands
 
