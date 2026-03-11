@@ -2,7 +2,7 @@
 
 Canonical list of implemented, working features. Verified against source code and 347 passing tests.
 
-**Last updated:** 2026-03-10
+**Last updated:** 2026-03-11
 
 ---
 
@@ -12,7 +12,7 @@ Canonical list of implemented, working features. Verified against source code an
 - **Subagent spawning** — `spawn_agent` tool creates child AgentLoop with isolated session. Minimal prompt mode (identity + skills + session only) saves tokens.
 - **Emergency compression** — On context overflow, drops oldest 50% of messages and retries (up to 2x).
 - **Token-based summarization** — When session tokens exceed 75% of budget, triggers async summarization.
-- **Memory flush before compaction** — Before summarization discards old messages, LLM extracts key facts into daily notes. Preserves knowledge across compaction.
+- **Memory flush before compaction** — Before summarization discards old messages, pointer-based flush extracts ALL discarded messages (lastFlushed..discardUpTo) with context-aware LLM extraction. Triple output: HISTORY.md + daily notes + MEMORY.md holistic update. Preserves knowledge across compaction.
 - **No-op suppression** — Heartbeat/cron responses like "HEARTBEAT_OK" are not routed to the user.
 - **LLM overload resilience** — 5-retry exponential backoff (1s→2s→4s→8s→16s), user notification on first retry, abort-aware sleep, clean error message after exhaustion.
 - **SDK timeout hardening** — Anthropic/OpenAI SDK timeout reduced from 10 min to 2 min per request. Background LLM calls (flush, summarization) have 90s hard cap via `Promise.race`.
@@ -75,8 +75,12 @@ Three auth modes (mutually exclusive):
 
 ## Memory System
 
-- **MEMORY.md** — Persistent knowledge file. Agent reads/writes via tools. Evergreen in search ranking.
-- **Daily notes** — `memory/YYYY-MM-DD.md`. Auto-populated by memory flush before compaction.
+- **MEMORY.md** — Persistent knowledge file. Agent reads/writes via tools. Evergreen in search ranking. Holistically updated by memory flush (not just appended — rewritten with full context).
+- **HISTORY.md** — Append-only conversation log. Memory flush appends session extracts chronologically.
+- **Daily notes** — `memory/YYYY-MM-DD.md`. Auto-populated by memory flush. Part of triple output (HISTORY.md + daily notes + MEMORY.md).
+- **Pointer-based flush tracking** — `lastFlushed` index per session, persisted in JSONL metadata. Ensures every message is flushed exactly once, no gaps or duplicates.
+- **Context-aware extraction** — Flush prompt includes session summary + current MEMORY.md for informed extraction. LLM produces triple output: HISTORY.md entries, daily note entries, and holistic MEMORY.md update.
+- **5 flush triggers** — Count-based (every `memoryFlushInterval` messages), token-aware (60% budget), pre-summarization (all discarded messages), idle (2 min, configurable `memoryIdleFlushMs`), shutdown.
 - **FTS5 search** — SQLite full-text search with BM25 ranking.
 - **Vector search** — Local embeddings via `@xenova/transformers` (all-MiniLM-L6-v2, 384-dim, ONNX). Zero API cost. Opt-in via `memory.vectorSearch` config.
 - **Hybrid search (RRF)** — Reciprocal Rank Fusion combining FTS5 + vector results.
