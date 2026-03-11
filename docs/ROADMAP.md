@@ -1,14 +1,14 @@
 # Roadmap
 
-## Current State (Phase 8 complete)
+## Current State (Phase 9 complete)
 
-- **Codebase:** ~10,800 LOC TypeScript (82 src files), 347 tests across 37 files, CI
+- **Codebase:** ~11,200 LOC TypeScript (83 src files), 373 tests across 38 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 15 (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
 - **Skills:** 6 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace)
 - **Channels:** 2 (CLI, Telegram) + MCP server + MCP client
-- **DB:** SQLite (WAL, 5 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user)
+- **DB:** SQLite (WAL, 6 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron)
 
 See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 
@@ -99,6 +99,14 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - GitHub skill: `gh` CLI wrapper — repos, issues, PRs, CI, releases, gists, search
 - 352 tests across 38 files
 
+### Phase 9: Multi-User Privacy
+- Per-user cron jobs: userId column (migration 6), ownership enforcement in CronService + cron tool
+- File access control: validatePath enforces user-scoped access in family chats (users can only access their own `.janus/users/{id}/` directory)
+- Chat directories: `ensureChatDir()` creates per-chat dirs (`.janus/chats/{chatId}/`)
+- DB hardening: exec deny patterns block direct `sqlite3` access
+- Context isolation: system prompt scoped per-user in family chats
+- 373 tests across 38 files
+
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
 - Q&A Loop (iterative requirements gathering)
@@ -129,7 +137,7 @@ Features that set Janus apart from other AI agents:
 - **Minimal subagent prompts** — Child agents get stripped context, saving tokens.
 - **Persistent cron scheduler** — SQLite-backed, survives restarts, exponential backoff.
 - **MCP server** — Editors can use Janus tools directly via reverse provider.
-- **Simplicity** — ~10.8K LOC. Minimal codebase, full capabilities.
+- **Simplicity** — ~11.2K LOC. Minimal codebase, full capabilities.
 - **Native OAuth** — PKCE flows for Anthropic + Codex. No CLI SDK dependency required.
 - **Steering messages** — Mid-run user injection. User can redirect agent during tool execution.
 - **Family skills** — Meal planner, Home Assistant, stock watcher, travel planner, Google Workspace.
