@@ -94,6 +94,7 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Cron missed job staggering (spread missed jobs 30s apart on restart)
 - Browser tool (Playwright headless Chromium, optional dep, 3rd escalation: search→fetch→browser)
 - Graceful shutdown flush (flush sessions before SIGTERM/SIGINT abort, memoryFlushInterval 10→5)
+- Memory flush v2: pointer-based tracking (lastFlushed), context-aware extraction (session summary + MEMORY.md), triple output (HISTORY.md + daily notes + MEMORY.md holistic update), 5 triggers (count/token/pre-summarization/idle/shutdown)
 - 347 tests across 37 files
 
 **Remaining:**
