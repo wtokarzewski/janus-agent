@@ -13,6 +13,8 @@ const DEFAULT_DENY_PATTERNS = [
   ':\\(\\)\\{:|:&\\};:',
   '>\\s*/dev/sda',
   'dd\\s+if=/dev/zero',
+  'sqlite3\\s+.*\\.janus/',
+  'sqlite3\\s+.*janus\\.db',
 ];
 
 export class ExecTool implements ContextualTool {

@@ -4,8 +4,14 @@ import { resolve } from 'node:path';
 import type { JanusConfig, UserProfile } from '../config/schema.js';
 import * as log from '../utils/logger.js';
 
-/** Track which user dirs we've already ensured this process lifetime. */
+/** Track which user/chat dirs we've already ensured this process lifetime. */
 const ensuredUsers = new Set<string>();
+const ensuredChats = new Set<string>();
+
+/** Sanitize chatId for filesystem use (Telegram group IDs can be negative, forum topics use '/'). */
+export function sanitizeChatId(chatId: string): string {
+  return chatId.replace(/\//g, '_');
+}
 
 export interface ResolvedUser {
   userId: string;
@@ -126,12 +132,32 @@ export function ensureUserDir(userId: string, name: string, workspaceDir: string
 
   const userDir = resolve(workspaceDir, '.janus', 'users', userId);
   const profilePath = resolve(userDir, 'PROFILE.md');
+  const filesDir = resolve(userDir, 'files');
 
   mkdir(userDir, { recursive: true })
-    .then(() => access(profilePath).catch(() =>
-      writeFile(profilePath, `# ${name}\n\n## Preferences\n<!-- Auto-updated by Janus when learning your preferences -->\n`, 'utf-8'),
-    ))
+    .then(async () => {
+      await mkdir(filesDir, { recursive: true });
+      await access(profilePath).catch(() =>
+        writeFile(profilePath, `# ${name}\n\n## Preferences\n<!-- Auto-updated by Janus when learning your preferences -->\n`, 'utf-8'),
+      );
+    })
     .catch(err => {
       log.warn(`Failed to ensure user dir for ${userId}: ${err instanceof Error ? err.message : String(err)}`);
     });
+}
+
+/**
+ * Ensure per-chat directory exists for shared group files.
+ * Non-destructive, cached per-process.
+ */
+export function ensureChatDir(chatId: string, workspaceDir: string): void {
+  const safeChatId = sanitizeChatId(chatId);
+  const key = `${workspaceDir}:chat:${safeChatId}`;
+  if (ensuredChats.has(key)) return;
+  ensuredChats.add(key);
+
+  const chatDir = resolve(workspaceDir, '.janus', 'chats', safeChatId, 'files');
+  mkdir(chatDir, { recursive: true }).catch(err => {
+    log.warn(`Failed to ensure chat dir for ${safeChatId}: ${err instanceof Error ? err.message : String(err)}`);
+  });
 }

@@ -1,7 +1,7 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { ContextualTool, ToolContext } from '../types.js';
-import { validatePath } from '../validate-path.js';
+import type { ContextualTool, ToolContext, RequestContext } from '../types.js';
+import { validatePath, validateUserFileAccess } from '../validate-path.js';
 
 export class WriteFileTool implements ContextualTool {
   name = 'write_file';
@@ -21,7 +21,7 @@ export class WriteFileTool implements ContextualTool {
     this.workspaceDir = ctx.workspaceDir;
   }
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
     const filePath = String(args.path ?? '');
     const content = String(args.content ?? '');
     if (!filePath) return 'Error: No path provided';
@@ -29,6 +29,7 @@ export class WriteFileTool implements ContextualTool {
     let fullPath: string;
     try {
       fullPath = validatePath(this.workspaceDir, filePath);
+      validateUserFileAccess(this.workspaceDir, fullPath, reqCtx?.userId, reqCtx?.chatId, 'write');
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : String(err)}`;
     }

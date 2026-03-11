@@ -88,4 +88,10 @@ export const migrations: string[] = [
   CREATE INDEX IF NOT EXISTS idx_memory_chunks_scope ON memory_chunks(scope);
   CREATE INDEX IF NOT EXISTS idx_memory_chunks_scope_id ON memory_chunks(scope_id);
   `,
+
+  // Migration 6: per-user cron jobs — user_id column
+  `
+  ALTER TABLE cron_jobs ADD COLUMN user_id TEXT;
+  CREATE INDEX IF NOT EXISTS idx_cron_jobs_user_id ON cron_jobs(user_id);
+  `,
 ];

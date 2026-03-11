@@ -26,6 +26,8 @@ export interface ToolContext {
 export interface RequestContext {
   chatId?: string;
   userId?: string;
+  /** User IDs of family members (set when in a family group chat). */
+  familyUserIds?: string[];
   userToolAllow?: string[];
   userToolDeny?: string[];
   toolPolicy?: {

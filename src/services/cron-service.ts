@@ -24,11 +24,13 @@ export interface CronJobInput {
   scheduleTz?: string;
   task: string;
   enabled?: boolean;
+  userId?: string;
 }
 
 export interface CronJob {
   id: string;
   name: string;
+  userId: string | null;
   scheduleKind: ScheduleKind;
   scheduleValue: string;
   scheduleTz: string | null;
@@ -66,6 +68,7 @@ export class CronService {
   }
 
   start(signal: AbortSignal): void {
+    this.backfillHeartbeatUserIds();
     this.running = true;
     this.armTimer();
 
@@ -85,6 +88,24 @@ export class CronService {
     log.info('Cron service stopped');
   }
 
+  /** One-time backfill: extract userId from heartbeat job names (heartbeat:{userId}:{name}). */
+  private backfillHeartbeatUserIds(): void {
+    const rows = this.db.db.prepare(
+      "SELECT id, name FROM cron_jobs WHERE user_id IS NULL AND name LIKE 'heartbeat:%:%'"
+    ).all() as Array<{ id: string; name: string }>;
+
+    for (const row of rows) {
+      const parts = row.name.split(':');
+      if (parts.length >= 3) {
+        this.db.db.prepare('UPDATE cron_jobs SET user_id = ? WHERE id = ?').run(parts[1], row.id);
+      }
+    }
+
+    if (rows.length > 0) {
+      log.info(`Cron: backfilled user_id for ${rows.length} heartbeat job(s)`);
+    }
+  }
+
   // --- CRUD ---
 
   addJob(input: CronJobInput): CronJob {
@@ -97,9 +118,9 @@ export class CronService {
     });
 
     this.db.db.prepare(`
-      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt);
+      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at, user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt, input.userId ?? null);
 
     return this.getJob(id)!;
   }
@@ -117,6 +138,7 @@ export class CronService {
     if (patch.scheduleTz !== undefined) { updates.push('schedule_tz = ?'); values.push(patch.scheduleTz); }
     if (patch.task !== undefined) { updates.push('task = ?'); values.push(patch.task); }
     if (patch.enabled !== undefined) { updates.push('enabled = ?'); values.push(patch.enabled ? 1 : 0); }
+    if (patch.userId !== undefined) { updates.push('user_id = ?'); values.push(patch.userId); }
 
     if (updates.length > 0) {
       values.push(id);
@@ -140,6 +162,27 @@ export class CronService {
       ? 'SELECT * FROM cron_jobs ORDER BY created_at'
       : 'SELECT * FROM cron_jobs WHERE enabled = 1 ORDER BY created_at';
     return this.db.db.prepare(sql).all().map(rowToJob);
+  }
+
+  /**
+   * List jobs visible to a specific user.
+   * Returns: system/global jobs (user_id IS NULL) + user's own jobs.
+   * If familyUserIds is provided, also includes those users' jobs.
+   */
+  listJobsForUser(userId?: string, familyUserIds?: string[], includeDisabled = false): CronJob[] {
+    if (!userId) return this.listJobs(includeDisabled);
+
+    const enabledClause = includeDisabled ? '' : ' AND enabled = 1';
+
+    // Collect all user IDs whose jobs should be visible
+    const visibleIds = new Set<string>([userId]);
+    if (familyUserIds) {
+      for (const id of familyUserIds) visibleIds.add(id);
+    }
+
+    const placeholders = [...visibleIds].map(() => '?').join(', ');
+    const sql = `SELECT * FROM cron_jobs WHERE (user_id IS NULL OR user_id IN (${placeholders}))${enabledClause} ORDER BY created_at`;
+    return this.db.db.prepare(sql).all(...visibleIds).map(rowToJob);
   }
 
   getJob(id: string): CronJob | null {
@@ -251,6 +294,7 @@ export class CronService {
         timestamp: startedAt,
         cronDepth: 1,
         lane: job.name.startsWith('heartbeat:') ? 'heartbeat' : 'cron',
+        user: job.userId ? { userId: job.userId } : undefined,
       });
 
       const durationMs = Date.now() - startedAt.getTime();
@@ -328,6 +372,7 @@ function rowToJob(row: unknown): CronJob {
   return {
     id: String(r.id),
     name: String(r.name),
+    userId: r.user_id ? String(r.user_id) : null,
     scheduleKind: String(r.schedule_kind) as ScheduleKind,
     scheduleValue: String(r.schedule_value),
     scheduleTz: r.schedule_tz ? String(r.schedule_tz) : null,

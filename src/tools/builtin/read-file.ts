@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
-import type { ContextualTool, ToolContext } from '../types.js';
-import { validatePath } from '../validate-path.js';
+import type { ContextualTool, ToolContext, RequestContext } from '../types.js';
+import { validatePath, validateUserFileAccess } from '../validate-path.js';
 
 export class ReadFileTool implements ContextualTool {
   name = 'read_file';
@@ -21,13 +21,14 @@ export class ReadFileTool implements ContextualTool {
     if (ctx.maxFileSize) this.maxSize = ctx.maxFileSize;
   }
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
     const filePath = String(args.path ?? '');
     if (!filePath) return 'Error: No path provided';
 
     let fullPath: string;
     try {
       fullPath = validatePath(this.workspaceDir, filePath);
+      validateUserFileAccess(this.workspaceDir, fullPath, reqCtx?.userId, reqCtx?.chatId, 'read');
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : String(err)}`;
     }

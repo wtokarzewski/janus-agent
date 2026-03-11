@@ -1,5 +1,6 @@
 import { realpathSync, existsSync } from 'node:fs';
 import { resolve, dirname, sep } from 'node:path';
+import { sanitizeChatId } from '../users/user-resolver.js';
 
 /**
  * Resolve and validate that a path stays within the workspace.
@@ -37,4 +38,73 @@ export function validatePath(workspaceDir: string, filePath: string): string {
   }
 
   return resolved;
+}
+
+/**
+ * Validate per-user file access.
+ * Call AFTER validatePath() has confirmed the path is within the workspace.
+ *
+ * Rules:
+ * - No userId (system/cron) → allow everything
+ * - .janus/users/{X}/ → allow only if X === userId
+ * - .janus/chats/{X}/ → allow only if X matches chatId
+ * - .janus/ root (not in users/ or chats/) → read: allow, write: block
+ * - sessions/ → block (conversation history is private)
+ * - memory/ → block (shared memory may contain other users' data)
+ * - Everything else → allow (skills/, workspace files, etc.)
+ */
+export function validateUserFileAccess(
+  workspaceDir: string,
+  fullPath: string,
+  userId: string | undefined,
+  chatId: string | undefined,
+  mode: 'read' | 'write',
+): void {
+  // System/cron context (no userId) → allow everything
+  if (!userId) return;
+
+  const wsDir = resolve(workspaceDir);
+
+  // Protected directories outside .janus/
+  const sessionsDir = resolve(wsDir, 'sessions');
+  if (fullPath.startsWith(sessionsDir + sep) || fullPath === sessionsDir) {
+    throw new Error('Access denied: session files are private.');
+  }
+
+  const memoryDir = resolve(wsDir, 'memory');
+  if (fullPath.startsWith(memoryDir + sep) || fullPath === memoryDir) {
+    throw new Error('Access denied: shared memory files are private. Per-user memory is at .janus/users/' + userId + '/memory/');
+  }
+
+  const janusDir = resolve(wsDir, '.janus');
+
+  // Path outside .janus/ (and not sessions/memory) → allow (shared workspace files)
+  if (!fullPath.startsWith(janusDir + sep) && fullPath !== janusDir) return;
+
+  // Relative path within .janus/
+  const relPath = fullPath.slice(janusDir.length + 1);
+
+  // .janus/users/{X}/ → allow only if X === userId
+  if (relPath.startsWith('users' + sep)) {
+    const parts = relPath.split(sep);
+    if (parts.length >= 2 && parts[1] !== userId) {
+      throw new Error('Access denied: cannot access another user\'s directory.');
+    }
+    return;
+  }
+
+  // .janus/chats/{X}/ → allow only if X matches chatId
+  if (relPath.startsWith('chats' + sep)) {
+    const parts = relPath.split(sep);
+    const safeChatId = chatId ? sanitizeChatId(chatId) : undefined;
+    if (parts.length >= 2 && (!safeChatId || parts[1] !== safeChatId)) {
+      throw new Error('Access denied: cannot access another chat\'s directory.');
+    }
+    return;
+  }
+
+  // .janus/ root (not in users/ or chats/) — read: allow, write: block
+  if (mode === 'write') {
+    throw new Error(`Access denied: cannot write to .janus/ system directory. Use .janus/users/${userId}/files/ for personal files.`);
+  }
 }
