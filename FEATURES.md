@@ -1,6 +1,6 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 347 passing tests.
+Canonical list of implemented, working features. Verified against source code and 352 passing tests.
 
 **Last updated:** 2026-03-11
 
@@ -94,7 +94,7 @@ Three auth modes (mutually exclusive):
 | Channel | Features |
 |---------|----------|
 | **CLI** | Interactive REPL, single-message mode (`-m`), persistent history (~/.janus/history), `/help` and `/config` commands, inline streaming output, gate confirmation via readline. |
-| **Telegram** | Grammy bot, user allowlist, streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami` diagnostic, `/stop` command, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup, bot.start() background error catch, forum/topic session isolation (per-topic sessions in forum supergroups), group mention policy (`groupPolicy: all\|mention`). |
+| **Telegram** | Grammy bot, user allowlist, streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami` diagnostic, `/stop` command, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup, bot.start() background error catch, forum/topic session isolation (per-topic sessions in forum supergroups), group mention policy (`groupPolicy: all\|mention`), voice message transcription (Groq Whisper, auto-transcribe to text). |
 | **MCP Server** | JSON-RPC 2.0 over stdio. Exposes tools and prompts to editors (VS Code, Cursor, Claude Code). Tool bridge maps ToolRegistry to MCP protocol. |
 | **MCP Client** | Connect to external MCP servers. Config-driven `mcp.servers[]`. Auto-discover tools, register as `mcp_{server}_{tool}`. |
 
@@ -150,7 +150,7 @@ Three auth modes (mutually exclusive):
 - **Keyword similarity** — Finds similar past tasks by keyword overlap.
 - **Recommendations** — Returns avgDuration, avgIterations, avgToolCalls, successRate from similar executions. Wired into system prompt via context builder.
 
-## Skills (6)
+## Skills (7)
 
 - **SKILL.md format** — YAML frontmatter (name, description, version, always, requires) + markdown body.
 - **3-source loading** — workspace/skills → ~/.janus/skills → builtin/skills.
@@ -168,6 +168,7 @@ Three auth modes (mutually exclusive):
 | `stock-watcher` | Google Finance watchlist, Python scripts, multi-exchange. |
 | `google-workspace` | Gmail, Calendar, Drive, Contacts, Sheets, Docs via `gog` CLI. |
 | `personal-travel` | Travel planning, documents, wishlists, budgets. |
+| `github` | GitHub operations via `gh` CLI: repos, issues, PRs, CI, releases, gists, search. |
 
 ## Sessions
 
@@ -227,6 +228,7 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 | `telegram` | enabled, token, allowlist[], groupPolicy (all\|mention) |
 | `streaming` | enabled, telegramThrottleMs |
 | `gates` | enabled, execPatterns[] |
+| `voice` | enabled, provider (groq), apiKey, language, maxDurationSec |
 | `memory` | vectorSearch |
 | `users[]` | id, name, identities[], tools{allow,deny}, skills{allow,deny} |
 | `family` | id, name, groupChatIds[] |

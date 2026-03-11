@@ -46,7 +46,13 @@
     "maxSubagentIterations": 5,
     "maxSkillsInPrompt": 150,
     "maxSkillsPromptChars": 30000,
-    "memoryFlushInterval": 10
+    "memoryFlushInterval": 5,
+    "memoryIdleFlushMs": 120000,
+    "lanes": {
+      "user": 3,
+      "cron": 1,
+      "heartbeat": 1
+    }
   },
 
   "workspace": {
@@ -82,7 +88,16 @@
   "telegram": {
     "enabled": true,
     "token": "123456789:AABBccDDeeFFggHHiiJJkkLLmmNNoo",
-    "allowlist": ["123456789"]
+    "allowlist": ["123456789"],
+    "groupPolicy": "all"
+  },
+
+  "voice": {
+    "enabled": false,
+    "provider": "groq",
+    "apiKey": "gsk_...",
+    "language": "en",
+    "maxDurationSec": 300
   },
 
   "streaming": {

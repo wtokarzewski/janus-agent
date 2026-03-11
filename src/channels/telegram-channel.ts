@@ -9,6 +9,7 @@ import { resolveUser, autoIdentifyUser, deriveChannelAllowlist } from '../users/
 import type { InviteStore } from '../invites/invite-store.js';
 import { saveConfig } from '../config/config.js';
 import { ensureUserDir } from '../users/user-resolver.js';
+import { transcribeVoice } from './voice-transcribe.js';
 import * as log from '../utils/logger.js';
 
 const MAX_TELEGRAM_MSG = 4096;
@@ -254,6 +255,117 @@ export class TelegramChannel {
       }
     });
 
+    // Voice messages — auto-transcribe via Groq Whisper and process as text
+    bot.on(['message:voice', 'message:audio'], async (ctx) => {
+      if (!config.voice.enabled || !config.voice.apiKey) {
+        log.debug('Telegram: voice message received but voice transcription not configured');
+        return;
+      }
+
+      const voice = ctx.message.voice ?? ctx.message.audio;
+      if (!voice) return;
+
+      if (config.voice.maxDurationSec && voice.duration > config.voice.maxDurationSec) {
+        log.warn(`Telegram: voice message too long (${voice.duration}s > ${config.voice.maxDurationSec}s limit)`);
+        return;
+      }
+
+      const baseChatId = String(ctx.chat.id);
+      const isForum = ctx.chat.type === 'supergroup' && (ctx.chat as unknown as { is_forum?: boolean }).is_forum === true;
+      const topicId = isForum && ctx.message.message_thread_id ? ctx.message.message_thread_id : undefined;
+      const chatId = topicId ? `${baseChatId}/${topicId}` : baseChatId;
+      const author = ctx.from?.username || String(ctx.from?.id || 'unknown');
+
+      // Allowlist check
+      const effectiveAllowlist = tg.allowlist.length > 0 ? tg.allowlist : deriveChannelAllowlist('telegram', config);
+      if (effectiveAllowlist.length > 0 && !effectiveAllowlist.includes(baseChatId) && !effectiveAllowlist.includes(author) && !runtimeAllowlist.has(baseChatId)) {
+        log.debug(`Telegram: ignoring voice from ${author} (chat ${baseChatId}, not in allowlist)`);
+        return;
+      }
+
+      // Group mention policy — voice messages can't @mention, so skip in mention-only groups
+      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      if (isGroup && tg.groupPolicy === 'mention') {
+        log.debug('Telegram: ignoring voice in group (mention policy)');
+        return;
+      }
+
+      log.info(`Telegram: voice message from ${author} (chat ${chatId}, ${voice.duration}s)`);
+
+      // Download file from Telegram
+      let fileBuffer: Uint8Array;
+      try {
+        const file = await bot.api.getFile(voice.file_id);
+        fileBuffer = await downloadTelegramFile(bot, file);
+      } catch (err) {
+        log.error(`Telegram: failed to download voice file: ${err instanceof Error ? err.message : err}`);
+        return;
+      }
+
+      // Transcribe via Groq Whisper
+      await this.startTyping(bot, chatId);
+      let transcript: string;
+      try {
+        transcript = await transcribeVoice(fileBuffer, config.voice.apiKey, config.voice.language);
+      } catch (err) {
+        this.stopTyping(chatId);
+        log.error(`Telegram: voice transcription failed: ${err instanceof Error ? err.message : err}`);
+        return;
+      }
+
+      if (!transcript.trim()) {
+        this.stopTyping(chatId);
+        log.info('Telegram: voice transcription returned empty result');
+        return;
+      }
+
+      log.info(`Telegram: transcribed voice (${voice.duration}s → ${transcript.length} chars): ${transcript.substring(0, 80)}`);
+
+      // Resolve user (same logic as text messages)
+      const channelUserId = ctx.from ? String(ctx.from.id) : undefined;
+      const channelUsername = ctx.from?.username ?? undefined;
+      const resolved = resolveUser('telegram', channelUserId, channelUsername, config)
+        ?? autoIdentifyUser('telegram', channelUserId, channelUsername, ctx.from?.first_name, config.workspace.dir);
+
+      let scope: InboundMessage['scope'];
+      if (ctx.chat.type === 'private' && resolved) {
+        scope = { kind: 'user', id: resolved.userId };
+      } else if (config.family && config.family.groupChatIds.includes(baseChatId)) {
+        scope = { kind: 'family', id: config.family.id };
+      }
+
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const inbound: InboundMessage = {
+        id: randomUUID(),
+        channel: 'telegram',
+        chatId,
+        content: `[Voice message transcription]: ${transcript}${caption}`,
+        author,
+        timestamp: new Date(),
+        user: resolved ? {
+          userId: resolved.userId,
+          name: resolved.name,
+          channelUserId: resolved.identity.channelUserId,
+          channelUsername: resolved.identity.channelUsername,
+        } : undefined,
+        scope,
+        topicId,
+      };
+
+      if (bus.isProcessing(chatId)) {
+        bus.pushSteering(inbound);
+        log.info(`Telegram: voice steering message buffered for ${chatId}`);
+        return;
+      }
+
+      try {
+        await bus.publishInbound(inbound, signal);
+        log.info(`Telegram: voice published to inbound queue (chat=${chatId})`);
+      } catch {
+        this.stopTyping(chatId);
+      }
+    });
+
     // Start long polling with retry
     await this.startWithRetry(bot, signal);
 
@@ -441,6 +553,16 @@ export function parseTelegramChatId(chatId: string): { chatId: string; topicId?:
   if (idx === -1) return { chatId };
   const topicId = parseInt(chatId.slice(idx + 1), 10);
   return { chatId: chatId.slice(0, idx), topicId: isNaN(topicId) ? undefined : topicId };
+}
+
+/** Download a file from Telegram Bot API. */
+async function downloadTelegramFile(bot: Bot, file: { file_path?: string }): Promise<Uint8Array> {
+  if (!file.file_path) throw new Error('Telegram file has no file_path');
+  const token = bot.token;
+  const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Telegram file download failed: HTTP ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
 }
 
 /** Split long messages into chunks at newline or space boundaries. */
