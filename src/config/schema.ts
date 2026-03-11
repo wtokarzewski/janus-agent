@@ -180,6 +180,8 @@ const ToolsSchema = z.object({
     ':\\(\\)\\{:|:&\\};:',
     '>\\s*/dev/sda',
     'dd\\s+if=/dev/zero',
+    'sqlite3\\s+.*\\.janus/',
+    'sqlite3\\s+.*janus\\.db',
   ]),
   maxFileSize: z.number().default(1_048_576),
   webSearchApiKey: z.string().optional(),

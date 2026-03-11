@@ -8,7 +8,7 @@ import type { SubagentRegistry } from '../agent/subagent-registry.js';
 import { resolveUser, autoIdentifyUser, deriveChannelAllowlist } from '../users/user-resolver.js';
 import type { InviteStore } from '../invites/invite-store.js';
 import { saveConfig } from '../config/config.js';
-import { ensureUserDir } from '../users/user-resolver.js';
+import { ensureUserDir, ensureChatDir } from '../users/user-resolver.js';
 import { transcribeVoice } from './voice-transcribe.js';
 import * as log from '../utils/logger.js';
 
@@ -144,9 +144,9 @@ export class TelegramChannel {
             const firstName = ctx.from.first_name ?? 'User';
             runtimeAllowlist.add(chatId);
 
-            // Persist to config
+            // Persist to config — channel-agnostic short UUID
             const newUser = {
-              id: username ?? `user-${userId}`,
+              id: randomUUID().slice(0, 8),
               name: firstName,
               identities: [{ channel: 'telegram', channelUserId: userId, ...(username ? { channelUsername: username } : {}) }],
             };
@@ -196,6 +196,7 @@ export class TelegramChannel {
 
       // Group mention policy — in 'mention' mode, only respond when bot is @mentioned
       const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      if (isGroup) ensureChatDir(chatId, config.workspace.dir);
       if (isGroup && tg.groupPolicy === 'mention') {
         const botUsername = ctx.me.username;
         if (botUsername && !ctx.message.text.includes(`@${botUsername}`)) {

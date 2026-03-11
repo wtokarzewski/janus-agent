@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import type { ContextualTool, ToolContext } from '../types.js';
-import { validatePath } from '../validate-path.js';
+import type { ContextualTool, ToolContext, RequestContext } from '../types.js';
+import { validatePath, validateUserFileAccess } from '../validate-path.js';
 
 export class EditFileTool implements ContextualTool {
   name = 'edit_file';
@@ -21,7 +21,7 @@ export class EditFileTool implements ContextualTool {
     this.workspaceDir = ctx.workspaceDir;
   }
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
     const filePath = String(args.path ?? '');
     const oldString = String(args.old_string ?? '');
     const newString = String(args.new_string ?? '');
@@ -31,6 +31,7 @@ export class EditFileTool implements ContextualTool {
     let fullPath: string;
     try {
       fullPath = validatePath(this.workspaceDir, filePath);
+      validateUserFileAccess(this.workspaceDir, fullPath, reqCtx?.userId, reqCtx?.chatId, 'write');
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : String(err)}`;
     }

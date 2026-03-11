@@ -264,9 +264,16 @@ export class AgentLoop {
     });
 
     // Per-request context — passed to execute(), not shared across concurrent lanes
+    const family = this.deps.config.family;
+    const isFamilyChat = family && msg.chatId && family.groupChatIds.includes(msg.chatId);
+    const familyUserIds = isFamilyChat
+      ? this.deps.config.users.map(u => u.id)
+      : undefined;
+
     const reqCtx: RequestContext = {
       chatId: msg.chatId,
       userId: msg.user?.userId,
+      familyUserIds,
       userToolAllow: userProfile?.tools?.allow,
       userToolDeny: userProfile?.tools?.deny,
       toolPolicy: userProfile?.tools?.policy,
