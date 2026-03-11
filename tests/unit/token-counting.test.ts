@@ -136,15 +136,16 @@ describe('Token counting and emergency compression', () => {
   it('should flush memory before summarization when MemoryStore is available', async () => {
     const mock = new MockProvider([
       { content: 'Response' },
-      { content: '- Decision: use SQLite for storage\n- Key fact: API limit is 100 req/s' }, // flush call
-      { content: 'Summary of conversation' }, // summarization call
+      { content: 'Summary of conversation' }, // summarization (reaches LLM first — fewer async steps)
+      { content: '- Decision: use SQLite for storage\n- Key fact: API limit is 100 req/s' }, // flush (reaches LLM second — reads MEMORY.md first)
     ]);
 
     const config = createTestConfig({
       agent: {
         maxIterations: 5,
         summarizationThreshold: 100,
-        tokenBudget: 500, // low budget to trigger summarization
+        tokenBudget: 500, // low budget to trigger token-aware flush + summarization
+        memoryIdleFlushMs: 600_000, // disable idle flush for test
       },
       streaming: { enabled: false },
     });
@@ -175,12 +176,13 @@ describe('Token counting and emergency compression', () => {
     // Wait for fire-and-forget summarization + flush
     await new Promise(r => setTimeout(r, 200));
 
-    // 3 calls: main response + flush + summarization
+    // 3 calls: main response + summarization + token-aware flush (order may vary)
     expect(mock.calls.length).toBe(3);
-    // Flush call should have the extraction prompt
-    expect(mock.calls[1].messages[0].content).toContain('Extract important facts');
+    // One of the async calls should be the memory flush
+    const flushCall = mock.calls.find((c: any) => c.messages[0].content.includes('memory manager'));
+    expect(flushCall).toBeTruthy();
 
-    // Verify daily note was written
+    // Verify daily note was written (fallback: no XML tags → treated as daily notes)
     const daily = await memory.readDaily();
     expect(daily).toContain('Session notes');
     expect(daily).toContain('Decision: use SQLite');

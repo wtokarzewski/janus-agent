@@ -63,7 +63,7 @@ interface IterateResult {
  */
 export class AgentLoop {
   private deps: AgentDeps;
-  private messageCounters = new Map<string, { count: number; userId?: string; scope?: InboundMessage['scope'] }>();
+  private flushState = new Map<string, { lastFlushed: number; userId?: string; scope?: InboundMessage['scope']; idleTimer?: ReturnType<typeof setTimeout>; flushing?: boolean }>();
   private _iterationControllers = new Map<string, AbortController>();
 
   constructor(deps: AgentDeps) {
@@ -92,6 +92,10 @@ export class AgentLoop {
       ctrl.abort();
     }
     this._iterationControllers.clear();
+    // Clear idle flush timers
+    for (const state of this.flushState.values()) {
+      if (state.idleTimer) clearTimeout(state.idleTimer);
+    }
     return { cancelled: true };
   }
 
@@ -332,24 +336,50 @@ export class AgentLoop {
 
     const content = iterResult.content;
 
-    // 6c. Track message count for periodic memory flush
-    const flushInterval = this.deps.config.agent.memoryFlushInterval;
-    const counter = this.messageCounters.get(sessionKey) ?? { count: 0, userId: msg.user?.userId, scope: msg.scope };
-    counter.count++;
-    counter.userId = msg.user?.userId;
-    counter.scope = msg.scope;
-    this.messageCounters.set(sessionKey, counter);
+    // 6c. Pointer-based memory flush tracking
+    const fullSession = await this.deps.sessions.getOrCreate(sessionKey);
 
-    if (this.deps.memory && counter.count >= flushInterval) {
-      counter.count = 0;
-      this.flushMemory(sessionKey, counter.userId, counter.scope).catch(err => {
+    // Initialize flush state from session metadata (migration-safe)
+    if (!this.flushState.has(sessionKey)) {
+      this.flushState.set(sessionKey, {
+        lastFlushed: fullSession.metadata.lastFlushed ?? 0,
+      });
+    }
+    const state = this.flushState.get(sessionKey)!;
+    state.userId = msg.user?.userId;
+    state.scope = msg.scope;
+
+    // Reset idle flush timer
+    if (state.idleTimer) clearTimeout(state.idleTimer);
+    if (this.deps.memory) {
+      const idleMs = this.deps.config.agent.memoryIdleFlushMs;
+      state.idleTimer = setTimeout(() => {
+        state.idleTimer = undefined;
+        this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
+          log.warn(`Idle memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }, idleMs);
+    }
+
+    // Count-based flush trigger (pointer-based)
+    const flushInterval = this.deps.config.agent.memoryFlushInterval;
+    const unflushed = fullSession.messages.length - state.lastFlushed;
+    if (this.deps.memory && unflushed >= flushInterval) {
+      this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
         log.warn(`Periodic memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
 
-    // 7. Maybe summarize (async, non-blocking)
-    const fullSession = await this.deps.sessions.getOrCreate(sessionKey);
+    // Token-aware flush trigger (60% of budget)
     const sessionTokenEstimate = estimateMessagesTokens(fullSession.messages);
+    const tokenFlushThreshold = this.deps.config.agent.tokenBudget * 0.6;
+    if (this.deps.memory && unflushed > 0 && !state.flushing && sessionTokenEstimate > tokenFlushThreshold) {
+      this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
+        log.warn(`Token-aware memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+
+    // 7. Maybe summarize (async, non-blocking)
     const tokenThreshold = this.deps.config.agent.tokenBudget * 0.75;
     if (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
         || sessionTokenEstimate > tokenThreshold) {
@@ -676,31 +706,99 @@ export class AgentLoop {
     };
   }
 
-  /** Extract key facts from recent messages and append to daily notes. */
-  private async flushMemory(sessionKey: string, userId?: string, scope?: InboundMessage['scope']): Promise<void> {
+  /** Extract key facts from messages and save to daily notes + HISTORY.md + MEMORY.md. */
+  private async flushMemory(sessionKey: string, userId?: string, scope?: InboundMessage['scope'], upToIndex?: number): Promise<void> {
     if (!this.deps.memory) return;
 
+    const state = this.flushState.get(sessionKey);
+    if (!state) return;
+    if (state.flushing) return;
+
     const session = await this.deps.sessions.getOrCreate(sessionKey);
-    const flushInterval = this.deps.config.agent.memoryFlushInterval;
-    const recentMessages = session.messages.slice(-flushInterval);
-    if (recentMessages.length === 0) return;
+    const from = state.lastFlushed;
+    const to = upToIndex ?? session.messages.length;
+    const messagesToFlush = session.messages.slice(from, to);
+    if (messagesToFlush.length === 0) return;
 
-    log.info(`[${sessionKey}] Memory flush: LLM call start`);
-    const flushStart = Date.now();
-    const flushResponse = await withTimeout(this.deps.llm.chat({
-      model: this.deps.config.llm.model,
-      messages: [
-        { role: 'system', content: 'Extract important facts, decisions, and learnings from this conversation that should be remembered long-term. Output as bullet points. If nothing is worth remembering, respond with "NONE".' },
-        { role: 'user', content: recentMessages.map(m => `${m.role}: ${'content' in m ? m.content : ''}`).join('\n') },
-      ],
-      temperature: 0.3,
-      maxTokens: 512,
-    }, 'flush'), 90_000, 'Memory flush LLM call timed out');
-    log.info(`[${sessionKey}] Memory flush: LLM call done in ${Date.now() - flushStart}ms`);
+    state.flushing = true;
+    try {
+      // Build context: session summary + current MEMORY.md
+      const currentMemory = await this.deps.memory.readMemory();
+      const sessionSummary = session.metadata.summary ?? '';
+      const contextParts: string[] = [];
+      if (sessionSummary) contextParts.push(`Previous conversation context:\n${sessionSummary}`);
+      if (currentMemory.trim()) contextParts.push(`Current MEMORY.md:\n${currentMemory}`);
+      const contextStr = contextParts.length > 0 ? contextParts.join('\n\n') + '\n\n' : '';
 
-    if (flushResponse.content.trim() !== 'NONE') {
-      await this.deps.memory.appendDaily(`## Session notes\n${flushResponse.content}`, userId, scope);
-      log.info('Memory flush: saved session notes');
+      const messagesText = messagesToFlush.map(m =>
+        `${m.role}: ${'content' in m ? m.content : ''}`,
+      ).join('\n');
+
+      log.info(`[${sessionKey}] Memory flush: ${messagesToFlush.length} messages (${from}→${to}), LLM call start`);
+      const flushStart = Date.now();
+
+      const flushResponse = await withTimeout(this.deps.llm.chat({
+        model: this.deps.config.llm.model,
+        messages: [
+          { role: 'system', content: `You are a memory manager. Extract and preserve important information from conversation messages.
+
+${contextStr}Respond in this exact format:
+
+<summary>1-2 sentence summary of what happened. Include specific names, numbers, decisions.</summary>
+<facts>
+- Key fact 1
+- Key fact 2
+(Write NONE if nothing worth remembering)
+</facts>
+<memory>
+Full updated MEMORY.md with new facts merged into existing content. Keep valid existing info, add new details, remove outdated info. Organize by topic.
+(Write UNCHANGED if no updates needed)
+</memory>` },
+          { role: 'user', content: `New messages to process:\n${messagesText}` },
+        ],
+        temperature: 0.3,
+        maxTokens: 2048,
+      }, 'flush'), 90_000, 'Memory flush LLM call timed out');
+
+      log.info(`[${sessionKey}] Memory flush: LLM call done in ${Date.now() - flushStart}ms`);
+
+      const response = flushResponse.content;
+      const summaryMatch = response.match(/<summary>([\s\S]*?)<\/summary>/);
+      const factsMatch = response.match(/<facts>([\s\S]*?)<\/facts>/);
+      const memoryMatch = response.match(/<memory>([\s\S]*?)<\/memory>/);
+
+      const summary = summaryMatch?.[1]?.trim() ?? '';
+      const facts = factsMatch?.[1]?.trim() ?? '';
+      const memoryUpdate = memoryMatch?.[1]?.trim() ?? '';
+
+      // HISTORY.md — append-only safety net (never lost)
+      if (summary && summary !== 'NONE') {
+        await this.deps.memory.appendHistory(`[memory flush] ${summary}`);
+      }
+
+      // Daily notes — for temporal search (FTS5 + vector)
+      if (facts && facts !== 'NONE') {
+        await this.deps.memory.appendDaily(`## Session notes\n${facts}`, userId, scope);
+      }
+
+      // MEMORY.md — holistic update (merge new facts into existing)
+      if (memoryUpdate && memoryUpdate !== 'UNCHANGED' && memoryUpdate !== 'NONE') {
+        await this.deps.memory.writeMemory(memoryUpdate);
+      }
+
+      // Fallback: if XML parsing failed, treat whole response as daily notes
+      if (!summaryMatch && !factsMatch && !memoryMatch && response.trim() !== 'NONE') {
+        await this.deps.memory.appendDaily(`## Session notes\n${response}`, userId, scope);
+        await this.deps.memory.appendHistory(`[memory flush] Session notes extracted`);
+      }
+
+      // Update pointer
+      state.lastFlushed = to;
+      session.metadata.lastFlushed = to;
+
+      log.info(`[${sessionKey}] Memory flush: saved (pointer ${from}→${to})`);
+    } finally {
+      state.flushing = false;
     }
   }
 
@@ -708,15 +806,26 @@ export class AgentLoop {
   async flushAllSessions(): Promise<void> {
     if (!this.deps.memory) return;
 
-    const unflushed = [...this.messageCounters.entries()].filter(([, c]) => c.count > 0);
-    if (unflushed.length === 0) return;
+    // Clear idle timers — we're flushing everything now
+    for (const state of this.flushState.values()) {
+      if (state.idleTimer) { clearTimeout(state.idleTimer); state.idleTimer = undefined; }
+    }
 
-    log.info(`Flushing memory for ${unflushed.length} session(s)...`);
+    // Find sessions with unflushed messages
+    const toFlush: Array<[string, typeof this.flushState extends Map<string, infer V> ? V : never]> = [];
+    for (const [sessionKey, state] of this.flushState.entries()) {
+      const session = await this.deps.sessions.getOrCreate(sessionKey);
+      if (state.lastFlushed < session.messages.length) {
+        toFlush.push([sessionKey, state]);
+      }
+    }
+
+    if (toFlush.length === 0) return;
+    log.info(`Flushing memory for ${toFlush.length} session(s)...`);
 
     const timeout = AbortSignal.timeout(10_000);
-    const promises = unflushed.map(([sessionKey, counter]) =>
-      this.flushMemory(sessionKey, counter.userId, counter.scope)
-        .then(() => { counter.count = 0; }),
+    const promises = toFlush.map(([sessionKey, state]) =>
+      this.flushMemory(sessionKey, state.userId, state.scope),
     );
 
     try {
@@ -739,13 +848,19 @@ export class AgentLoop {
     const sumStart = Date.now();
     const halfIdx = Math.floor(messages.length / 2);
     const toSummarize = messages.slice(0, halfIdx);
+    const keepCount = 4; // must match SessionManager.summarize()
+    const discardUpTo = messages.length - keepCount;
 
-    // Memory flush — extract key facts before discarding old messages
+    // Memory flush — extract key facts from ALL messages about to be discarded
     try {
-      await this.flushMemory(sessionKey, userId, scope);
+      await this.flushMemory(sessionKey, userId, scope, discardUpTo);
     } catch (err) {
-      log.warn(`Memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
+      log.warn(`Pre-summarization memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+
+    // Reset pointer after summarization (messages array will be truncated)
+    const state = this.flushState.get(sessionKey);
+    if (state) state.lastFlushed = 0;
 
     log.info(`[${sessionKey}] Summarization: LLM call start`);
     const llmStart = Date.now();
