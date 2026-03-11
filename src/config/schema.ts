@@ -51,6 +51,7 @@ const AgentSchema = z.object({
   maxSkillsInPrompt: z.number().default(150),
   maxSkillsPromptChars: z.number().default(30_000),
   memoryFlushInterval: z.number().default(5),
+  memoryIdleFlushMs: z.number().default(120_000),
   lanes: LanesSchema.optional().transform(v => LanesSchema.parse(v ?? {})),
 });
 

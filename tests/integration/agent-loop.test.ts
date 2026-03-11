@@ -345,16 +345,16 @@ describe('AgentLoop integration', () => {
   });
 
   it('should flush memory after memoryFlushInterval messages', async () => {
-    // Set flush interval to 3 for fast testing
+    // Flush interval 5: triggers when unflushed messages >= 5
+    // 3 processDirect calls = 6 messages (3 user + 3 assistant) >= 5
     const config = createTestConfig({
-      agent: { maxIterations: 5, summarizationThreshold: 100, memoryFlushInterval: 3 },
+      agent: { maxIterations: 5, summarizationThreshold: 100, memoryFlushInterval: 5, memoryIdleFlushMs: 600_000 },
       streaming: { enabled: false },
     });
     const bus = new MessageBus();
 
-    // Mock provider: returns a flush response for the LLM flush call
+    // 3 chat responses + 1 flush response
     const responses: import('../helpers/mock-llm.js').MockResponse[] = [];
-    // 3 chat responses + 1 flush response (flush happens after 3rd message)
     for (let i = 0; i < 4; i++) responses.push({ content: `Response ${i + 1}` });
     const mock = new MockProvider(responses);
 
@@ -371,7 +371,7 @@ describe('AgentLoop integration', () => {
 
     const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner, memory });
 
-    // Send 3 messages (flush interval = 3)
+    // Send 3 messages (6 msgs total: user+assistant each, unflushed=6 >= 5 after 3rd)
     await agent.processDirect('message 1', { chatId: 'flush-test' });
     await agent.processDirect('message 2', { chatId: 'flush-test' });
     await agent.processDirect('message 3', { chatId: 'flush-test' });
@@ -379,24 +379,25 @@ describe('AgentLoop integration', () => {
     // Wait for fire-and-forget flush
     await new Promise(r => setTimeout(r, 100));
 
-    // The 4th LLM call should be the flush call (with 'flush' purpose)
+    // 4 calls: 3 responses + 1 flush (pointer-based, with memory manager prompt)
     expect(mock.calls.length).toBe(4);
     const flushCall = mock.calls[3];
-    expect(flushCall.messages[0].content).toContain('Extract important facts');
+    expect(flushCall.messages[0].content).toContain('memory manager');
   });
 
   it('should flush all sessions on flushAllSessions()', async () => {
     const config = createTestConfig({
-      agent: { maxIterations: 5, summarizationThreshold: 100, memoryFlushInterval: 100 },
+      agent: { maxIterations: 5, summarizationThreshold: 100, memoryFlushInterval: 100, memoryIdleFlushMs: 600_000 },
       streaming: { enabled: false },
     });
     const bus = new MessageBus();
 
-    // 2 chat responses + 1 flush response
+    // 2 chat responses + 2 flush responses (one per session)
     const mock = new MockProvider([
       { content: 'Hello' },
       { content: 'World' },
-      { content: 'Flushed facts' },
+      { content: 'Flushed A' },
+      { content: 'Flushed B' },
     ]);
     const registry = new ProviderRegistry();
     registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
@@ -417,10 +418,10 @@ describe('AgentLoop integration', () => {
 
     expect(mock.calls.length).toBe(2); // Only chat calls, no flush yet
 
-    // Trigger session-end flush
+    // Trigger session-end flush (pointer-based: both sessions have lastFlushed=0, messages.length=2)
     await agent.flushAllSessions();
 
-    // Should have made flush LLM call(s)
+    // Should have made flush LLM call(s) for both sessions
     expect(mock.calls.length).toBeGreaterThan(2);
   });
 

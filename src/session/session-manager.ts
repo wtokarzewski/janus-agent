@@ -11,6 +11,7 @@ export interface SessionMetadata {
   updated: string;
   messageCount: number;
   summary?: string;
+  lastFlushed?: number;
 }
 
 export interface Session {
@@ -105,6 +106,7 @@ export class SessionManager {
       session.messages = session.messages.slice(-keepCount);
       session.metadata.summary = summaryText;
       session.metadata.messageCount = session.messages.length;
+      session.metadata.lastFlushed = 0; // Reset pointer — remaining messages may need re-flush
 
       await this.save(key, session);
       log.debug(`Summarized session ${key}, kept ${keepCount} messages`);
@@ -150,7 +152,7 @@ export class SessionManager {
       };
     }
     const metadata: SessionMetadata = first._type === 'metadata'
-      ? { key: String(first.key ?? key), created: String(first.created), updated: String(first.updated), messageCount: Number(first.messageCount ?? 0), summary: first.summary as string | undefined }
+      ? { key: String(first.key ?? key), created: String(first.created), updated: String(first.updated), messageCount: Number(first.messageCount ?? 0), summary: first.summary as string | undefined, lastFlushed: first.lastFlushed as number | undefined }
       : { key, created: new Date().toISOString(), updated: new Date().toISOString(), messageCount: 0 };
 
     const startIdx = first._type === 'metadata' ? 1 : 0;
