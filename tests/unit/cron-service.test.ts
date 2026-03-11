@@ -40,7 +40,19 @@ describe('CronService CRUD', () => {
     expect(job.scheduleValue).toBe('60000');
     expect(job.task).toBe('Do something');
     expect(job.enabled).toBe(true);
+    expect(job.userId).toBeNull();
     expect(job.id).toBeTruthy();
+  });
+
+  it('should store userId on a job', () => {
+    const job = service.addJob({
+      name: 'user-job',
+      scheduleKind: 'every',
+      scheduleValue: '60000',
+      task: 'Personal task',
+      userId: 'wojtek',
+    });
+    expect(job.userId).toBe('wojtek');
   });
 
   it('should list jobs', () => {
@@ -82,6 +94,28 @@ describe('CronService CRUD', () => {
     expect(service.listJobs(true)).toHaveLength(2);
   });
 
+  it('should upsert by name and set userId', () => {
+    const job = service.upsertByName({
+      name: 'heartbeat:wojtek:Morning',
+      scheduleKind: 'cron',
+      scheduleValue: '0 8 * * *',
+      task: 'Morning briefing',
+      userId: 'wojtek',
+    });
+    expect(job.userId).toBe('wojtek');
+
+    // Update preserves userId
+    const updated = service.upsertByName({
+      name: 'heartbeat:wojtek:Morning',
+      scheduleKind: 'cron',
+      scheduleValue: '0 9 * * *',
+      task: 'Morning briefing v2',
+      userId: 'wojtek',
+    });
+    expect(updated.id).toBe(job.id);
+    expect(updated.userId).toBe('wojtek');
+  });
+
   it('should upsert by name', () => {
     const first = service.upsertByName({ name: 'upsert-test', scheduleKind: 'every', scheduleValue: '1000', task: 'first' });
     const second = service.upsertByName({ name: 'upsert-test', scheduleKind: 'every', scheduleValue: '2000', task: 'second' });
@@ -90,6 +124,41 @@ describe('CronService CRUD', () => {
     expect(second.task).toBe('second');
     expect(second.scheduleValue).toBe('2000');
     expect(service.listJobs(true)).toHaveLength(1);
+  });
+});
+
+describe('CronService per-user filtering', () => {
+  it('should list only system + own jobs for a user', () => {
+    service.addJob({ name: 'system-job', scheduleKind: 'every', scheduleValue: '1000', task: 'system' });
+    service.addJob({ name: 'wojtek-job', scheduleKind: 'every', scheduleValue: '1000', task: 'wojtek', userId: 'wojtek' });
+    service.addJob({ name: 'maciek-job', scheduleKind: 'every', scheduleValue: '1000', task: 'maciek', userId: 'maciek' });
+
+    const wojtekJobs = service.listJobsForUser('wojtek');
+    expect(wojtekJobs).toHaveLength(2);
+    expect(wojtekJobs.map(j => j.name).sort()).toEqual(['system-job', 'wojtek-job']);
+
+    const maciekJobs = service.listJobsForUser('maciek');
+    expect(maciekJobs).toHaveLength(2);
+    expect(maciekJobs.map(j => j.name).sort()).toEqual(['maciek-job', 'system-job']);
+  });
+
+  it('should include family members jobs when familyUserIds provided', () => {
+    service.addJob({ name: 'system-job', scheduleKind: 'every', scheduleValue: '1000', task: 'system' });
+    service.addJob({ name: 'wojtek-job', scheduleKind: 'every', scheduleValue: '1000', task: 'w', userId: 'wojtek' });
+    service.addJob({ name: 'monika-job', scheduleKind: 'every', scheduleValue: '1000', task: 'm', userId: 'monika' });
+    service.addJob({ name: 'maciek-job', scheduleKind: 'every', scheduleValue: '1000', task: 'mac', userId: 'maciek' });
+
+    const familyJobs = service.listJobsForUser('wojtek', ['monika', 'zuzia']);
+    expect(familyJobs).toHaveLength(3); // system + wojtek + monika (zuzia has no jobs)
+    expect(familyJobs.map(j => j.name).sort()).toEqual(['monika-job', 'system-job', 'wojtek-job']);
+  });
+
+  it('should return all jobs when no userId given', () => {
+    service.addJob({ name: 'a', scheduleKind: 'every', scheduleValue: '1000', task: 'a' });
+    service.addJob({ name: 'b', scheduleKind: 'every', scheduleValue: '1000', task: 'b', userId: 'wojtek' });
+
+    const allJobs = service.listJobsForUser(undefined);
+    expect(allJobs).toHaveLength(2);
   });
 });
 

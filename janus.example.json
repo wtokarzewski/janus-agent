@@ -75,7 +75,9 @@
       "mkfs",
       ":\\(\\)\\{:|:&\\};:",
       ">\\s*/dev/sda",
-      "dd\\s+if=/dev/zero"
+      "dd\\s+if=/dev/zero",
+      "sqlite3\\s+.*\\.janus/",
+      "sqlite3\\s+.*janus\\.db"
     ],
     "execDenyPatternsExtra": []
   },

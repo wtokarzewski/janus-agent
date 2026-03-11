@@ -6,7 +6,7 @@ import type { SkillLoader } from '../skills/skill-loader.js';
 import type { JanusConfig } from '../config/schema.js';
 import type { InboundMessage } from '../bus/types.js';
 import type { SkillLearner } from '../learner/learner.js';
-import { loadProfileMd, findUserProfile } from '../users/user-resolver.js';
+import { loadProfileMd, findUserProfile, sanitizeChatId } from '../users/user-resolver.js';
 
 interface ContextDeps {
   skills: SkillLoader;
@@ -65,6 +65,13 @@ export class ContextBuilder {
       if (userSection) parts.push(userSection);
     }
 
+    // 1c. Shared chat files section (group chats — Telegram group IDs start with '-')
+    if (opts.chatId && opts.chatId.startsWith('-')) {
+      const safeChatId = sanitizeChatId(opts.chatId);
+      const chatFilesDir = resolve(this.deps.config.workspace.dir, '.janus', 'chats', safeChatId, 'files');
+      parts.push(`<chat_files>\nShared files for this group chat: ${chatFilesDir}/\nWhen creating shared files for the group (not for a specific user), save them here.\n</chat_files>`);
+    }
+
     if (!minimal) {
       // 2. Ego (EGO.md from .janus/)
       const ego = await this.loadEgo();
@@ -118,7 +125,12 @@ export class ContextBuilder {
     user: NonNullable<InboundMessage['user']>,
     profilePath?: string,
   ): Promise<string | null> {
-    const lines = [`You are talking to ${user.name ?? user.userId} (userId: ${user.userId}).`];
+    const userDir = resolve(this.deps.config.workspace.dir, '.janus', 'users', user.userId);
+    const lines = [
+      `You are talking to ${user.name ?? user.userId} (userId: ${user.userId}).`,
+      `User directory: ${userDir}`,
+      `User files: ${resolve(userDir, 'files')}/`,
+    ];
     const profile = await loadProfileMd(user.userId, this.deps.config.workspace.dir, profilePath);
     if (profile?.trim()) {
       lines.push(profile.trim());
@@ -166,6 +178,7 @@ Tool usage rules:
 - State your intent briefly, then act. Do not narrate every step.
 - For heartbeat/cron system messages, always call the heartbeat tool first to indicate skip or run.
 - When you learn a user preference (language, style, habits, restrictions), update their PROFILE.md at .janus/users/{userId}/PROFILE.md using edit_file (or write_file if it doesn't exist). Keep it concise: key-value style, grouped by category.
+- When creating files for a specific user (notes, lists, documents, scripts, etc.), always save them in .janus/users/{userId}/files/ — never in the workspace root, .janus/ root, or other users' directories.
 </identity>`;
   }
 

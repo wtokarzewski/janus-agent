@@ -72,6 +72,7 @@ export class HeartbeatService {
           scheduleValue: task.scheduleValue,
           task: task.description,
           enabled: true,
+          userId: task.userId,
         });
       }
       log.info(`Heartbeat: synced ${this.tasks.length} task(s) to CronService (${this.tasks.filter(t => t.userId).length} per-user)`);

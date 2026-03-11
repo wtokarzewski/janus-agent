@@ -1,9 +1,10 @@
-import type { ContextualTool, ToolContext } from '../types.js';
+import type { ContextualTool, ToolContext, RequestContext } from '../types.js';
 import type { CronService, ScheduleKind } from '../../services/cron-service.js';
 
 /**
  * cron tool — allows the agent to manage scheduled tasks.
  * Blocks add/update when called from within a cron job (cronDepth > 0).
+ * Filters jobs by userId — users only see their own + system jobs (+ family in group chats).
  */
 export class CronTool implements ContextualTool {
   name = 'cron';
@@ -64,7 +65,20 @@ export class CronTool implements ContextualTool {
     this.cronDepth = ctx.cronDepth ?? 0;
   }
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  /** Check if the requesting user can access a specific job. */
+  private canAccess(job: { userId: string | null }, reqCtx?: RequestContext): boolean {
+    // System jobs (no userId) are visible to all
+    if (!job.userId) return true;
+    // No user context → allow (system/cron calls)
+    if (!reqCtx?.userId) return true;
+    // Own job
+    if (job.userId === reqCtx.userId) return true;
+    // Family member's job (in family group chat)
+    if (reqCtx.familyUserIds?.includes(job.userId)) return true;
+    return false;
+  }
+
+  async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
     const action = String(args.action ?? '');
 
     // Recursion guard: block scheduling from within cron jobs
@@ -74,7 +88,11 @@ export class CronTool implements ContextualTool {
 
     switch (action) {
       case 'list': {
-        const jobs = this.cronService.listJobs(true);
+        const jobs = this.cronService.listJobsForUser(
+          reqCtx?.userId,
+          reqCtx?.familyUserIds,
+          true,
+        );
         return JSON.stringify(jobs, null, 2);
       }
 
@@ -93,6 +111,7 @@ export class CronTool implements ContextualTool {
           scheduleTz: args.schedule_tz ? String(args.schedule_tz) : undefined,
           task,
           enabled: args.enabled !== false,
+          userId: reqCtx?.userId,
         });
         return JSON.stringify(job, null, 2);
       }
@@ -100,6 +119,9 @@ export class CronTool implements ContextualTool {
       case 'update': {
         const id = String(args.id ?? '');
         if (!id) return 'Error: update requires id.';
+        const existing = this.cronService.getJob(id);
+        if (!existing) return 'Error: Job not found.';
+        if (!this.canAccess(existing, reqCtx)) return 'Error: Access denied — this job belongs to another user.';
         try {
           const patch: Record<string, unknown> = {};
           if (args.name !== undefined) patch.name = String(args.name);
@@ -118,6 +140,9 @@ export class CronTool implements ContextualTool {
       case 'remove': {
         const id = String(args.id ?? '');
         if (!id) return 'Error: remove requires id.';
+        const existing = this.cronService.getJob(id);
+        if (!existing) return 'Error: Job not found.';
+        if (!this.canAccess(existing, reqCtx)) return 'Error: Access denied — this job belongs to another user.';
         this.cronService.removeJob(id);
         return 'Job removed.';
       }
@@ -126,12 +151,17 @@ export class CronTool implements ContextualTool {
         const id = String(args.id ?? '');
         if (!id) return 'Error: status requires id.';
         const job = this.cronService.getJob(id);
-        return job ? JSON.stringify(job, null, 2) : 'Error: Job not found.';
+        if (!job) return 'Error: Job not found.';
+        if (!this.canAccess(job, reqCtx)) return 'Error: Access denied — this job belongs to another user.';
+        return JSON.stringify(job, null, 2);
       }
 
       case 'runs': {
         const id = String(args.id ?? '');
         if (!id) return 'Error: runs requires id.';
+        const job = this.cronService.getJob(id);
+        if (!job) return 'Error: Job not found.';
+        if (!this.canAccess(job, reqCtx)) return 'Error: Access denied — this job belongs to another user.';
         const limit = typeof args.limit === 'number' ? args.limit : 20;
         const runs = this.cronService.getRunHistory(id, limit);
         return JSON.stringify(runs, null, 2);
