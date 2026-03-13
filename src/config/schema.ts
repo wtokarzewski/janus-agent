@@ -140,7 +140,10 @@ const UserIdentitySchema = z.object({
   channel: z.string(),
   channelUserId: z.string().optional(),
   channelUsername: z.string().optional(),
-});
+}).refine(
+  id => id.channelUserId || id.channelUsername,
+  { message: 'Identity must have at least channelUserId or channelUsername' },
+);
 
 const ToolPolicySchema = z.object({
   maxRecencyDays: z.number().optional(),
