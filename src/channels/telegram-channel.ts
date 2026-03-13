@@ -13,6 +13,8 @@ import { transcribeVoice } from './voice-transcribe.js';
 import * as log from '../utils/logger.js';
 
 const MAX_TELEGRAM_MSG = 4096;
+/** Max inbound message size (100 KB). Prevents token waste from oversized pastes. */
+const MAX_INBOUND_CHARS = 100_000;
 const START_MAX_RETRIES = 3;
 const START_RETRY_DELAY_MS = 5000;
 
@@ -226,6 +228,13 @@ export class TelegramChannel {
           log.debug(`Telegram: ignoring group message (mention policy, no @${botUsername})`);
           return;
         }
+      }
+
+      // Reject oversized messages (prevents token waste)
+      if (ctx.message.text.length > MAX_INBOUND_CHARS) {
+        log.warn(`Telegram: rejecting oversized message from ${author} (${ctx.message.text.length} chars)`);
+        ctx.reply('Message too long. Please send shorter messages.').catch(() => {});
+        return;
       }
 
       // Resolve user identity (explicit config first, then auto-identify from channel metadata)
