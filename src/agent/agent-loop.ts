@@ -382,7 +382,7 @@ export class AgentLoop {
 
     // Token-aware flush trigger (60% of budget)
     const sessionTokenEstimate = estimateMessagesTokens(fullSession.messages);
-    const tokenFlushThreshold = this.deps.config.agent.tokenBudget * 0.6;
+    const tokenFlushThreshold = this.deps.config.agent.tokenBudget * 0.5;
     if (this.deps.memory && unflushed > 0 && !state.flushing && sessionTokenEstimate > tokenFlushThreshold) {
       this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
         log.warn(`Token-aware memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -833,7 +833,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     if (toFlush.length === 0) return;
     log.info(`Flushing memory for ${toFlush.length} session(s)...`);
 
-    const timeout = AbortSignal.timeout(10_000);
+    const timeout = AbortSignal.timeout(30_000);
     const promises = toFlush.map(([sessionKey, state]) =>
       this.flushMemory(sessionKey, state.userId, state.scope),
     );
@@ -844,7 +844,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
         new Promise((_, reject) => timeout.addEventListener('abort', () => reject(new Error('Flush timeout')))),
       ]);
     } catch {
-      log.warn('Session-end flush timed out (10s)');
+      log.warn('Session-end flush timed out (30s)');
     }
   }
 
@@ -862,15 +862,20 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     const discardUpTo = messages.length - keepCount;
 
     // Memory flush — extract key facts from ALL messages about to be discarded
-    try {
-      await this.flushMemory(sessionKey, userId, scope, discardUpTo);
-    } catch (err) {
-      log.warn(`Pre-summarization memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
+    // Retry up to 3 times with exponential backoff before giving up
+    let flushed = false;
+    for (let attempt = 1; attempt <= 3 && !flushed; attempt++) {
+      try {
+        await this.flushMemory(sessionKey, userId, scope, discardUpTo);
+        flushed = true;
+      } catch (err) {
+        log.warn(`Pre-summarization flush attempt ${attempt}/3 failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (attempt < 3) await sleep(2000 * attempt);
+      }
     }
-
-    // Reset pointer after summarization (messages array will be truncated)
-    const state = this.flushState.get(sessionKey);
-    if (state) state.lastFlushed = 0;
+    if (!flushed) {
+      log.error(`[${sessionKey}] All flush attempts failed — proceeding with summarization. Some memory may be lost.`);
+    }
 
     log.info(`[${sessionKey}] Summarization: LLM call start`);
     const llmStart = Date.now();
@@ -886,6 +891,11 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
 
     await this.deps.sessions.summarize(sessionKey, summaryResponse.content);
+
+    // Reset pointer AFTER summarization completes (prevents mismatch on crash)
+    const state = this.flushState.get(sessionKey);
+    if (state) state.lastFlushed = 0;
+
     log.info(`[${sessionKey}] Summarization: complete in ${Date.now() - sumStart}ms`);
   }
 }

@@ -18,6 +18,7 @@ import { createTestConfig } from '../helpers/test-fixtures.js';
 import { PatternGate } from '../../src/gates/pattern-gate.js';
 import type { GateService } from '../../src/gates/types.js';
 import type { LearnerStorage, ExecutionRecord } from '../../src/learner/types.js';
+import type { ChatRequest } from '../../src/llm/types.js';
 
 class InMemoryLearnerStorage implements LearnerStorage {
   records: ExecutionRecord[] = [];
@@ -512,6 +513,70 @@ describe('AgentLoop integration', () => {
     const toolMsg = mock.calls[1].messages.find((m: any) => m.role === 'tool');
     expect(toolMsg?.content).toContain('Stopped by user');
   });
+
+  it('should retry flush before summarization and proceed on failure', async () => {
+    // Low summarizationThreshold so 3 messages (6 entries) triggers it
+    // High memoryFlushInterval/idleFlushMs so only pre-summarization flush fires
+    const config = createTestConfig({
+      agent: { maxIterations: 5, summarizationThreshold: 4, memoryFlushInterval: 999, memoryIdleFlushMs: 600_000 },
+      streaming: { enabled: false },
+    });
+    const bus = new MessageBus();
+
+    // Track which calls are flush calls (contain "memory manager" in system prompt)
+    let flushAttempts = 0;
+
+    const mock = new MockProvider([
+      { content: 'Response 1' },
+      { content: 'Response 2' },
+      { content: 'Response 3' },
+      // Flush calls will fail (handled below), summarization call:
+      { content: 'Summary of conversation' },
+    ]);
+
+    // Override chat to fail on flush calls (memory manager in system prompt)
+    const originalChat = mock.chat.bind(mock);
+    mock.chat = async (request: ChatRequest) => {
+      const systemContent = request.messages[0]?.content ?? '';
+      if (typeof systemContent === 'string' && systemContent.includes('memory manager')) {
+        flushAttempts++;
+        throw new Error('Simulated flush LLM failure');
+      }
+      return originalChat(request);
+    };
+
+    const registry = new ProviderRegistry();
+    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
+
+    const tools = new ToolRegistry();
+    tools.setContext({ workspaceDir: config.workspace.dir, execDenyPatterns: [], execTimeout: 5000, maxFileSize: 1_000_000 });
+    const memory = new MemoryStore(config);
+    const sessions = new SessionManager(config);
+    const skills = new SkillLoader(config);
+    const context = new ContextBuilder({ skills, memory, config });
+    const learner = new SkillLearner(new InMemoryLearnerStorage());
+
+    const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner, memory });
+
+    // Send 3 messages = 6 session entries (user+assistant) > summarizationThreshold of 4
+    await agent.processDirect('message 1', { chatId: 'retry-test' });
+    await agent.processDirect('message 2', { chatId: 'retry-test' });
+    await agent.processDirect('message 3', { chatId: 'retry-test' });
+
+    // Wait for fire-and-forget summarization (includes flush retries with backoff: 2s + 4s)
+    await new Promise(r => setTimeout(r, 10_000));
+
+    // Flush should have been attempted 3 times (retry with backoff)
+    expect(flushAttempts).toBe(3);
+
+    // Summarization LLM call should have completed despite flush failures
+    // mock.calls only contains successful calls (flush throws before reaching originalChat)
+    const summarizeCall = mock.calls.find((c: ChatRequest) => {
+      const sys = c.messages[0]?.content;
+      return typeof sys === 'string' && sys.includes('Summarize');
+    });
+    expect(summarizeCall).toBeTruthy();
+  }, 15_000);
 
   it('should deny tool execution when gate denies', async () => {
     const mock = new MockProvider([
