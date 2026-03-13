@@ -34,9 +34,9 @@ const LLMSchema = z.object({
 });
 
 const LanesSchema = z.object({
-  user: z.number().default(3),
-  cron: z.number().default(1),
-  heartbeat: z.number().default(1),
+  user: z.number().default(6),
+  cron: z.number().default(3),
+  heartbeat: z.number().default(2),
 });
 
 const AgentSchema = z.object({
