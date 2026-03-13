@@ -3,6 +3,30 @@ import type { LLMProvider, ChatRequest, ChatResponse, ToolCall, StreamCallback }
 import { AnthropicProvider } from './anthropic-provider.js';
 import * as log from '../utils/logger.js';
 
+/**
+ * Normalize assistant content — handles two provider quirks:
+ * 1. DeepSeek V3.2 returns content as array [{type:'text', text:'...'}] instead of string
+ * 2. DeepSeek/Kimi return empty content with reasoning in reasoning_content field
+ */
+function normalizeContent(message: Record<string, unknown>): string {
+  let content = message.content;
+
+  // #48: content-block array → string
+  if (Array.isArray(content)) {
+    content = (content as Array<{ type: string; text?: string }>)
+      .filter(b => b.type === 'text')
+      .map(b => b.text ?? '')
+      .join('');
+  }
+
+  // #40: fallback to reasoning_content when content is empty
+  if (!content && message.reasoning_content) {
+    content = String(message.reasoning_content);
+  }
+
+  return String(content ?? '');
+}
+
 const PROVIDER_DEFAULTS: Record<string, { apiBase: string; extraHeaders?: Record<string, string> }> = {
   openrouter: {
     apiBase: 'https://openrouter.ai/api/v1',
@@ -95,7 +119,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     log.debug(`LLM [${this.name}]: finish=${finishReason}, tool_calls=${toolCalls.length}, tokens=${response.usage?.total_tokens ?? '?'}`);
 
     return {
-      content: choice.message.content ?? '',
+      content: normalizeContent(choice.message as unknown as Record<string, unknown>),
       toolCalls,
       usage: {
         promptTokens: response.usage?.prompt_tokens ?? 0,
@@ -140,8 +164,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
       if (!choice) continue;
 
       if (choice.delta?.content) {
-        content += choice.delta.content;
-        onChunk(choice.delta.content);
+        const chunk = typeof choice.delta.content === 'string'
+          ? choice.delta.content
+          : normalizeContent(choice.delta as unknown as Record<string, unknown>);
+        content += chunk;
+        onChunk(chunk);
       }
 
       if (choice.delta?.tool_calls) {
