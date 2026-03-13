@@ -17,6 +17,7 @@ import { AppendFileTool } from './tools/builtin/append-file.js';
 import { EditFileTool } from './tools/builtin/edit-file.js';
 import { ListDirTool } from './tools/builtin/list-dir.js';
 import { MessageTool } from './tools/builtin/message.js';
+import { SendFileTool } from './tools/builtin/send-file.js';
 import { SpawnAgentTool } from './tools/builtin/spawn-agent.js';
 import { SkillLearner } from './learner/learner.js';
 import { JSONLLearnerStorage } from './learner/storage.js';
@@ -114,6 +115,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   tools.register(new EditFileTool());
   tools.register(new ListDirTool());
   tools.register(new MessageTool(bus));
+  tools.register(new SendFileTool(bus));
   tools.register(new HeartbeatTool());
   // Web tools
   tools.register(new WebFetchTool());

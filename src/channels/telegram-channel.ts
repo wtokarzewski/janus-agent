@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Bot } from 'grammy';
+import { Bot, InputFile } from 'grammy';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage } from '../bus/types.js';
 import type { JanusConfig } from '../config/schema.js';
@@ -87,6 +87,24 @@ export class TelegramChannel {
         if (pending) await pending.catch(() => {});
         await this.handleStreamEnd(bot, msg.chatId);
         this.chunkQueues.delete(msg.chatId);
+        return;
+      }
+
+      // File attachment — send via appropriate Telegram API method
+      if (msg.filePath) {
+        this.stopTyping(msg.chatId);
+        try {
+          const file = new InputFile(msg.filePath);
+          const captionOpts = msg.content ? { caption: msg.content, ...topicOpts } : topicOpts;
+          switch (msg.fileType ?? 'document') {
+            case 'photo': await bot.api.sendPhoto(tgChatId, file, captionOpts); break;
+            case 'audio': await bot.api.sendAudio(tgChatId, file, captionOpts); break;
+            case 'video': await bot.api.sendVideo(tgChatId, file, captionOpts); break;
+            default: await bot.api.sendDocument(tgChatId, file, captionOpts); break;
+          }
+        } catch (err) {
+          log.error(`Telegram: failed to send file to ${msg.chatId}: ${err instanceof Error ? err.message : err}`);
+        }
         return;
       }
 

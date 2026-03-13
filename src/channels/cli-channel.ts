@@ -50,6 +50,11 @@ export class CLIChannel {
         } else if (msg.type === 'stream_end') {
           process.stdout.write('\n\n');
           this.rl?.prompt();
+        } else if (msg.filePath) {
+          process.stdout.write(`\nFile: ${msg.filePath}`);
+          if (msg.content) process.stdout.write(` (${msg.content})`);
+          process.stdout.write('\n\n');
+          this.rl?.prompt();
         } else {
           // 'message' or undefined — backward compatible
           process.stdout.write('\n' + msg.content + '\n\n');
