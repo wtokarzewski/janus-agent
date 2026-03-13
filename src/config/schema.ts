@@ -88,6 +88,8 @@ const TelegramSchema = z.object({
   enabled: z.boolean().default(false),
   token: z.string().optional(),
   allowlist: z.array(z.string()).default([]),
+  /** Reject messages from users not in allowlist (explicit or derived from users[]). Default: true. */
+  denyByDefault: z.boolean().default(true),
   /** How the bot responds in group chats: 'all' = every message, 'mention' = only when @mentioned. */
   groupPolicy: z.enum(['all', 'mention']).default('all'),
 });
