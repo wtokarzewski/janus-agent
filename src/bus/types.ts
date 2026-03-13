@@ -22,6 +22,8 @@ export interface InboundMessage {
   lane?: Lane;
   /** Telegram forum topic ID (message_thread_id). Only set for forum-enabled supergroups. */
   topicId?: number;
+  /** Text of the message being replied to (e.g. Telegram reply-to). */
+  replyContext?: string;
 }
 
 export interface OutboundMessage {

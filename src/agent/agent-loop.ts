@@ -298,18 +298,21 @@ export class AgentLoop {
     const history = await this.deps.sessions.getHistory(sessionKey);
     const cleanHistory = repairToolMessages(history);
     const maxTokens = this.deps.config.agent.tokenBudget;
-    const trimmedHistory = trimHistoryToTokenBudget(cleanHistory, systemPrompt, msg.content, maxTokens);
+    const userContent = msg.replyContext
+      ? `[Reply to ${msg.replyContext}]\n\n${msg.content}`
+      : msg.content;
+    const trimmedHistory = trimHistoryToTokenBudget(cleanHistory, systemPrompt, userContent, maxTokens);
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
       ...trimmedHistory,
-      { role: 'user', content: msg.content },
+      { role: 'user', content: userContent },
     ];
 
     log.info(`[${sessionKey}] Context built in ${Date.now() - t0}ms`);
 
     // 4. Save user message to session BEFORE iteration
     await this.deps.sessions.append(sessionKey, [
-      { role: 'user', content: msg.content },
+      { role: 'user', content: userContent },
     ]);
 
     // 5. LLM iteration loop — saves tool calls to session during iteration

@@ -220,6 +220,7 @@ export class TelegramChannel {
       }
       // else: undefined (global/backward-compat)
 
+      const replyContext = extractReplyContext(ctx.message.reply_to_message);
       const inbound: InboundMessage = {
         id: randomUUID(),
         channel: 'telegram',
@@ -235,6 +236,7 @@ export class TelegramChannel {
         } : undefined,
         scope,
         topicId,
+        replyContext,
       };
 
       // If the agent is already processing this chat, buffer as steering message
@@ -336,6 +338,7 @@ export class TelegramChannel {
       }
 
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const replyContext = extractReplyContext(ctx.message.reply_to_message);
       const inbound: InboundMessage = {
         id: randomUUID(),
         channel: 'telegram',
@@ -351,6 +354,7 @@ export class TelegramChannel {
         } : undefined,
         scope,
         topicId,
+        replyContext,
       };
 
       if (bus.isProcessing(chatId)) {
@@ -564,6 +568,16 @@ async function downloadTelegramFile(bot: Bot, file: { file_path?: string }): Pro
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Telegram file download failed: HTTP ${response.status}`);
   return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Extract reply context from a Telegram reply_to_message. */
+function extractReplyContext(replyMsg: { text?: string; caption?: string; from?: { username?: string; first_name?: string } } | undefined): string | undefined {
+  if (!replyMsg) return undefined;
+  const text = replyMsg.text ?? replyMsg.caption;
+  if (!text) return undefined;
+  const author = replyMsg.from?.username ?? replyMsg.from?.first_name ?? 'unknown';
+  const truncated = text.length > 500 ? text.slice(0, 497) + '...' : text;
+  return `${author}: ${truncated}`;
 }
 
 /** Split long messages into chunks at newline or space boundaries. */
