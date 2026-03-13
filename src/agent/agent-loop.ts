@@ -63,7 +63,7 @@ interface IterateResult {
  */
 export class AgentLoop {
   private deps: AgentDeps;
-  private flushState = new Map<string, { lastFlushed: number; userId?: string; scope?: InboundMessage['scope']; idleTimer?: ReturnType<typeof setTimeout>; flushing?: boolean }>();
+  private flushState = new Map<string, { lastFlushed: number; userId?: string; userName?: string; scope?: InboundMessage['scope']; idleTimer?: ReturnType<typeof setTimeout>; flushing?: boolean }>();
   private _iterationControllers = new Map<string, AbortController>();
 
   constructor(deps: AgentDeps) {
@@ -357,6 +357,7 @@ export class AgentLoop {
     }
     const state = this.flushState.get(sessionKey)!;
     state.userId = msg.user?.userId;
+    state.userName = msg.user?.name;
     state.scope = msg.scope;
 
     // Reset idle flush timer
@@ -736,6 +737,10 @@ export class AgentLoop {
       const currentMemory = await this.deps.memory.readMemory();
       const sessionSummary = session.metadata.summary ?? '';
       const contextParts: string[] = [];
+      const userName = this.flushState.get(sessionKey)?.userName;
+      if (userName || userId) {
+        contextParts.push(`This conversation is with user "${userName ?? userId}" (ID: ${userId ?? 'unknown'}). Attribute facts to this user, not to others.`);
+      }
       if (sessionSummary) contextParts.push(`Previous conversation context:\n${sessionSummary}`);
       if (currentMemory.trim()) contextParts.push(`Current MEMORY.md:\n${currentMemory}`);
       const contextStr = contextParts.length > 0 ? contextParts.join('\n\n') + '\n\n' : '';
