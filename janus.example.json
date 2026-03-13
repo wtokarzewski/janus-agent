@@ -49,9 +49,9 @@
     "memoryFlushInterval": 5,
     "memoryIdleFlushMs": 120000,
     "lanes": {
-      "user": 3,
-      "cron": 1,
-      "heartbeat": 1
+      "user": 6,
+      "cron": 3,
+      "heartbeat": 2
     }
   },
 
