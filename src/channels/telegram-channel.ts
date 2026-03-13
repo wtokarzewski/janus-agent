@@ -207,8 +207,13 @@ export class TelegramChannel {
       // Allowlist check — explicit allowlist, users-derived, or runtime (invite)
       // Use baseChatId for allowlist check (topic variant shouldn't bypass allowlist)
       const effectiveAllowlist = tg.allowlist.length > 0 ? tg.allowlist : deriveChannelAllowlist('telegram', config);
-      if (effectiveAllowlist.length > 0 && !effectiveAllowlist.includes(baseChatId) && !effectiveAllowlist.includes(author) && !runtimeAllowlist.has(baseChatId)) {
+      const isAllowed = effectiveAllowlist.includes(baseChatId) || effectiveAllowlist.includes(author) || runtimeAllowlist.has(baseChatId);
+      if (effectiveAllowlist.length > 0 && !isAllowed) {
         log.debug(`Telegram: ignoring message from ${author} (chat ${baseChatId}, not in allowlist)`);
+        return;
+      }
+      if (effectiveAllowlist.length === 0 && tg.denyByDefault) {
+        log.debug(`Telegram: denying message from ${author} (chat ${baseChatId}, deny-by-default, no allowlist configured)`);
         return;
       }
 
@@ -299,8 +304,13 @@ export class TelegramChannel {
 
       // Allowlist check
       const effectiveAllowlist = tg.allowlist.length > 0 ? tg.allowlist : deriveChannelAllowlist('telegram', config);
-      if (effectiveAllowlist.length > 0 && !effectiveAllowlist.includes(baseChatId) && !effectiveAllowlist.includes(author) && !runtimeAllowlist.has(baseChatId)) {
+      const isAllowed = effectiveAllowlist.includes(baseChatId) || effectiveAllowlist.includes(author) || runtimeAllowlist.has(baseChatId);
+      if (effectiveAllowlist.length > 0 && !isAllowed) {
         log.debug(`Telegram: ignoring voice from ${author} (chat ${baseChatId}, not in allowlist)`);
+        return;
+      }
+      if (effectiveAllowlist.length === 0 && tg.denyByDefault) {
+        log.debug(`Telegram: denying voice from ${author} (chat ${baseChatId}, deny-by-default, no allowlist configured)`);
         return;
       }
 
