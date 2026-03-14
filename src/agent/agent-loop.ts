@@ -395,7 +395,7 @@ export class AgentLoop {
     if (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
         || sessionTokenEstimate > tokenThreshold) {
       // Fire and forget — don't block response
-      this.triggerSummarization(sessionKey, fullSession.messages, msg.user?.userId, msg.scope).catch(err => {
+      this.triggerSummarization(sessionKey, fullSession.messages, msg.channel, msg.chatId, msg.user?.userId, msg.scope).catch(err => {
         log.warn(`Summarization failed: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
@@ -856,10 +856,16 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
   private async triggerSummarization(
     sessionKey: string,
     messages: LLMMessage[],
+    channel: string,
+    chatId: string,
     userId?: string,
     scope?: InboundMessage['scope'],
   ): Promise<void> {
     log.info(`[${sessionKey}] Summarization: start`);
+    // Notify user that context is being compressed (C6)
+    this.deps.bus.publishOutbound({
+      chatId, channel, content: '[Compressing context...]', timestamp: new Date(),
+    }, new AbortController().signal).catch(() => {});
     const sumStart = Date.now();
     const halfIdx = Math.floor(messages.length / 2);
     const toSummarize = messages.slice(0, halfIdx);
