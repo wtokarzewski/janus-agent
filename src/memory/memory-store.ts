@@ -3,6 +3,7 @@ import { resolve, join } from 'node:path';
 import type { JanusConfig } from '../config/schema.js';
 import type { MemoryIndex, MemoryChunk } from './memory-index.js';
 import type { InboundMessage } from '../bus/types.js';
+import * as log from '../utils/logger.js';
 
 export interface MemoryContext {
   memory: string;
@@ -114,9 +115,37 @@ export class MemoryStore {
     return this.readSafe(join(this.memoryDir, 'MEMORY.md'));
   }
 
+  private writeFailures = 0;
+
   async writeMemory(content: string): Promise<void> {
     await mkdir(this.memoryDir, { recursive: true });
-    await writeFile(join(this.memoryDir, 'MEMORY.md'), content, 'utf-8');
+    const path = join(this.memoryDir, 'MEMORY.md');
+
+    // Validate: content should not be empty or drastically shorter than existing (C5)
+    if (!content.trim()) {
+      log.warn('Memory write skipped: content is empty');
+      return;
+    }
+
+    try {
+      await writeFile(path, content, 'utf-8');
+      // Verify write succeeded by reading back
+      const readBack = await this.readSafe(path);
+      if (readBack.trim() !== content.trim()) {
+        throw new Error('Write verification failed: content mismatch');
+      }
+      this.writeFailures = 0;
+    } catch (err) {
+      this.writeFailures++;
+      log.error(`Memory write failed (${this.writeFailures}/3): ${err instanceof Error ? err.message : String(err)}`);
+      if (this.writeFailures >= 3) {
+        // Raw backup fallback — dump to timestamped file so data isn't lost
+        const backupPath = join(this.memoryDir, `MEMORY.backup.${Date.now()}.md`);
+        await writeFile(backupPath, content, 'utf-8').catch(() => {});
+        log.error(`Memory write failed 3x — raw backup saved to ${backupPath}`);
+        this.writeFailures = 0;
+      }
+    }
   }
 
   async appendDaily(entry: string, userId?: string, scope?: InboundMessage['scope']): Promise<void> {
