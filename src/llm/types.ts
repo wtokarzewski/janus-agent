@@ -23,6 +23,7 @@ export interface ChatRequest {
   model: string;
   messages: LLMMessage[];
   tools?: ToolDefinition[];
+  toolChoice?: 'auto' | 'none' | 'required';
   temperature?: number;
   maxTokens?: number;
   thinking?: { type: 'enabled'; budgetTokens: number };

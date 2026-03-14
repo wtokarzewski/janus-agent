@@ -59,7 +59,9 @@ function isRetryable(err: Error): boolean {
   }
 
   // Transient rate limit (per-minute quota, concurrent requests)
-  if (msg.includes('429') || msg.includes('rate limit')) return true;
+  if (msg.includes('429') || msg.includes('rate limit') || msg.includes('rate_limit')) return true;
+  // Resource exhaustion (gRPC-style, Anthropic overload) (L5)
+  if (msg.includes('resource_exhausted') || msg.includes('overloaded') || msg.includes('capacity')) return true;
   // Server errors
   if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('504')) return true;
   // Network
@@ -84,14 +86,15 @@ export function isFailoverCandidate(err: Error): boolean {
   const msg = err.message.toLowerCase();
   const status = extractStatusCode(msg);
 
-  // Client errors — failing over won't help
-  if (status !== null && status >= 400 && status < 500) return false;
-
-  // Server errors
+  // Server errors — always failover
   if (status !== null && status >= 500) return true;
 
-  // Transient rate limit (but not prompt-too-big disguised as 429)
-  if (msg.includes('rate limit') && !msg.includes('input tokens') && !msg.includes('prompt length')) return true;
+  // Resource exhaustion / overload — failover to different provider (L5)
+  if (msg.includes('resource_exhausted') || msg.includes('overloaded') || msg.includes('capacity')) return true;
+
+  // Transient rate limit (but not prompt-too-big disguised as 429) (L6)
+  if ((msg.includes('rate limit') || msg.includes('rate_limit') || msg.includes('too many requests'))
+    && !msg.includes('input tokens') && !msg.includes('prompt length')) return true;
 
   // Network errors
   if (msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('fetch failed')) return true;
@@ -99,6 +102,15 @@ export function isFailoverCandidate(err: Error): boolean {
   // Client error keywords — failing over won't help
   const clientErrors = ['invalid_api_key', 'authentication_error', 'invalid_request', 'malformed', 'invalid_model'];
   if (clientErrors.some(e => msg.includes(e))) return false;
+
+  // 422: distinguish format errors (failover may help) from billing errors (won't help) (L9)
+  if (status === 422) {
+    if (msg.includes('billing') || msg.includes('payment') || msg.includes('quota')) return false;
+    return true; // format/validation error — different provider may accept
+  }
+
+  // Other client errors — failing over won't help
+  if (status !== null && status >= 400 && status < 500) return false;
 
   // Unknown errors — fail over (safe default)
   log.debug(`Unknown error → failover: ${msg.slice(0, 120)}`);
