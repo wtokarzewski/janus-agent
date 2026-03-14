@@ -88,13 +88,29 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     if (request.tools && request.tools.length > 0) {
       params.tools = request.tools as OpenAI.ChatCompletionTool[];
+      // Tool choice (L14)
+      if (request.toolChoice) {
+        params.tool_choice = request.toolChoice;
+      }
     }
 
     if (request.reasoningEffort) {
       (params as unknown as Record<string, unknown>).reasoning_effort = request.reasoningEffort;
     }
 
-    const response = await this.client.chat.completions.create(params);
+    let response: OpenAI.ChatCompletion;
+    try {
+      response = await this.client.chat.completions.create(params);
+    } catch (err) {
+      // Fallback: if tool_choice rejected, retry without it (L14)
+      if (params.tool_choice && err instanceof Error && /tool_choice|tool choice/i.test(err.message)) {
+        log.warn(`${this.name}: tool_choice rejected, retrying without it`);
+        delete params.tool_choice;
+        response = await this.client.chat.completions.create(params);
+      } else {
+        throw err;
+      }
+    }
     const choice = response.choices[0];
 
     if (!choice) {
