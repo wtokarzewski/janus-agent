@@ -1,3 +1,5 @@
+import { stripInvisibleChars } from '../utils/sanitize.js';
+
 // Patterns that indicate command obfuscation / encoded payloads
 const OBFUSCATION_PATTERNS: RegExp[] = [
   /base64\s+(-d|--decode)\s*\|/i,                    // base64 -d | sh
@@ -48,8 +50,10 @@ export class PatternGate {
   shouldGate(toolName: string, args: Record<string, unknown>): boolean {
     // Gate exec commands
     if (toolName === 'exec') {
-      const command = typeof args.command === 'string' ? args.command : '';
-      if (!command) return false;
+      const raw = typeof args.command === 'string' ? args.command : '';
+      if (!raw) return false;
+      // Strip invisible Unicode chars to prevent gate bypass (S4)
+      const command = stripInvisibleChars(raw);
       if (this.patterns.some(p => p.test(command))) return true;
       if (this.isObfuscated(command)) return true;
       return false;

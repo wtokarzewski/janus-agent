@@ -4,6 +4,8 @@ export interface Tool {
   name: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
+  /** If true, only users listed in config.ownerIds can use this tool. */
+  ownerOnly?: boolean;
   execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string>;
 }
 
@@ -26,6 +28,8 @@ export interface ToolContext {
 export interface RequestContext {
   chatId?: string;
   userId?: string;
+  /** Whether the current user is an owner (has elevated privileges). */
+  isOwner?: boolean;
   /** User IDs of family members (set when in a family group chat). */
   familyUserIds?: string[];
   userToolAllow?: string[];

@@ -10,6 +10,7 @@
 
 import type { Tool } from '../types.js';
 import * as log from '../../utils/logger.js';
+import { checkSsrf } from '../../utils/ssrf-guard.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_CONTENT_LENGTH = 100_000; // 100 KB text limit
@@ -60,16 +61,9 @@ export class BrowserTool implements Tool {
     const url = String(args.url ?? '');
     if (!url) return 'Error: No URL provided';
 
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      return `Error: Invalid URL: ${url}`;
-    }
-
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return 'Error: Only http/https URLs are supported';
-    }
+    // SSRF guard — block private/internal networks (S8)
+    const ssrfError = checkSsrf(url);
+    if (ssrfError) return `Error: ${ssrfError}`;
 
     // Dynamic import — Playwright is optional (not in package.json)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

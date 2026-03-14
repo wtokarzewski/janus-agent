@@ -32,8 +32,9 @@ export class ToolRegistry {
   }
 
   /** Return name + description for each tool (for system prompt). */
-  summaries(): Array<{ name: string; description: string }> {
+  summaries(isOwner?: boolean): Array<{ name: string; description: string }> {
     return Array.from(this.tools.values())
+      .filter(t => !t.ownerOnly || isOwner)
       .sort((a, b) => a.name.localeCompare(b.name))
       .map(t => ({
         name: t.name,
@@ -50,6 +51,12 @@ export class ToolRegistry {
     const tool = this.tools.get(name);
     if (!tool) {
       return `Error: Unknown tool "${name}". Available tools: ${this.names().join(', ')}`;
+    }
+
+    // Owner-only enforcement (S7)
+    if (tool.ownerOnly && !reqCtx?.isOwner) {
+      log.info(`Tool "${name}" blocked: owner-only`);
+      return `Error: Tool "${name}" is owner-only.`;
     }
 
     // Per-user allow/deny enforcement (from per-request context, not shared state)
