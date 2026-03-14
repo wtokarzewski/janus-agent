@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { resolve, relative } from 'node:path';
 import type { ContextualTool, ToolContext } from '../types.js';
 import { getShellConfig, killProcessTree } from '../../utils/shell.js';
+import { stripInvisibleChars } from '../../utils/sanitize.js';
 
 const IS_WIN = process.platform === 'win32';
 
@@ -54,8 +55,10 @@ export class ExecTool implements ContextualTool {
   }
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const command = String(args.command ?? '');
-    if (!command) return 'Error: No command provided';
+    const raw = String(args.command ?? '');
+    if (!raw) return 'Error: No command provided';
+    // Strip invisible Unicode chars to prevent deny-pattern bypass (S4)
+    const command = stripInvisibleChars(raw);
 
     // Safety: deny pattern check
     for (const pattern of this.denyPatterns) {

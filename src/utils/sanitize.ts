@@ -18,6 +18,17 @@ const SENTENCE_TAG_RE =
   // <s>, </s> (sentence boundary markers)
   /<\/?s>/gi;
 
+/**
+ * Strip invisible Unicode characters that can bypass security regex patterns.
+ * Removes zero-width spaces, joiners, Mongolian vowel separator, etc.
+ */
+const INVISIBLE_UNICODE_RE =
+  /[\u200B-\u200F\u2028-\u202F\u2060-\u2069\u180E\uFEFF\u00AD]/g;
+
+export function stripInvisibleChars(text: string): string {
+  return text.replace(INVISIBLE_UNICODE_RE, '');
+}
+
 export function stripControlTokens(text: string): string {
   return text
     .replace(CONTROL_TOKEN_RE, '')
