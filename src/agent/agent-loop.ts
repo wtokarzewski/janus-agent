@@ -10,7 +10,7 @@ import type { SkillLoader } from '../skills/skill-loader.js';
 import type { JanusConfig } from '../config/schema.js';
 import type { MemoryStore } from '../memory/memory-store.js';
 import type { GateService } from '../gates/types.js';
-import { findUserProfile, deriveChannelAllowlist, saveProfileMd, loadProfileMd } from '../users/user-resolver.js';
+import { findUserProfile, deriveChannelAllowlist } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 import { stripControlTokens } from '../utils/sanitize.js';
 
@@ -756,12 +756,6 @@ export class AgentLoop {
       }
       if (sessionSummary) contextParts.push(`Previous conversation context:\n${sessionSummary}`);
       if (currentMemory.trim()) contextParts.push(`Current MEMORY.md:\n${currentMemory}`);
-      // Load current profile for merge context (#29)
-      if (userId) {
-        const userProfile = findUserProfile(userId, this.deps.config);
-        const currentProfile = await loadProfileMd(userId, this.deps.config.workspace.dir, userProfile?.profilePath);
-        if (currentProfile?.trim()) contextParts.push(`Current PROFILE.md for this user:\n${currentProfile}`);
-      }
       const contextStr = contextParts.length > 0 ? contextParts.join('\n\n') + '\n\n' : '';
 
       const messagesText = messagesToFlush.map(m =>
@@ -787,11 +781,7 @@ ${contextStr}Respond in this exact format:
 <memory>
 Full updated MEMORY.md with new facts merged into existing content. Keep valid existing info, add new details, remove outdated info. Organize by topic.
 (Write UNCHANGED if no updates needed)
-</memory>
-<profile>
-Updated PROFILE.md for this user with any new preferences, habits, or personal info learned from the conversation. Merge with existing profile content. Use key-value style grouped by category (Preferences, Habits, Restrictions, etc.).
-(Write UNCHANGED if no new preferences learned)
-</profile>` },
+</memory>` },
           { role: 'user', content: `New messages to process:\n${messagesText}` },
         ],
         temperature: 0.3,
@@ -804,12 +794,10 @@ Updated PROFILE.md for this user with any new preferences, habits, or personal i
       const summaryMatch = response.match(/<summary>([\s\S]*?)<\/summary>/);
       const factsMatch = response.match(/<facts>([\s\S]*?)<\/facts>/);
       const memoryMatch = response.match(/<memory>([\s\S]*?)<\/memory>/);
-      const profileMatch = response.match(/<profile>([\s\S]*?)<\/profile>/);
 
       const summary = summaryMatch?.[1]?.trim() ?? '';
       const facts = factsMatch?.[1]?.trim() ?? '';
       const memoryUpdate = memoryMatch?.[1]?.trim() ?? '';
-      const profileUpdate = profileMatch?.[1]?.trim() ?? '';
 
       // HISTORY.md — append-only safety net (never lost)
       if (summary && summary !== 'NONE') {
@@ -824,13 +812,6 @@ Updated PROFILE.md for this user with any new preferences, habits, or personal i
       // MEMORY.md — holistic update (merge new facts into existing)
       if (memoryUpdate && memoryUpdate !== 'UNCHANGED' && memoryUpdate !== 'NONE') {
         await this.deps.memory.writeMemory(memoryUpdate);
-      }
-
-      // PROFILE.md — auto-update user preferences (#29)
-      if (profileUpdate && profileUpdate !== 'UNCHANGED' && profileUpdate !== 'NONE' && userId) {
-        const userProfile = findUserProfile(userId, this.deps.config);
-        await saveProfileMd(userId, profileUpdate, this.deps.config.workspace.dir, userProfile?.profilePath);
-        log.info(`[${sessionKey}] Profile updated for user ${userId}`);
       }
 
       // Fallback: if XML parsing failed, treat whole response as daily notes
