@@ -25,12 +25,15 @@ export interface CronJobInput {
   task: string;
   enabled?: boolean;
   userId?: string;
+  /** Optional custom session ID — cron uses same session across runs instead of per-job UUID. */
+  sessionId?: string;
 }
 
 export interface CronJob {
   id: string;
   name: string;
   userId: string | null;
+  sessionId: string | null;
   scheduleKind: ScheduleKind;
   scheduleValue: string;
   scheduleTz: string | null;
@@ -118,9 +121,9 @@ export class CronService {
     });
 
     this.db.db.prepare(`
-      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at, user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt, input.userId ?? null);
+      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at, user_id, session_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt, input.userId ?? null, input.sessionId ?? null);
 
     return this.getJob(id)!;
   }
@@ -288,7 +291,7 @@ export class CronService {
       await this.bus.publishInbound({
         id: `cron-${job.id}-${Date.now()}`,
         channel: 'system',
-        chatId: `cron:${job.id}`,
+        chatId: job.sessionId ? `cron:${job.sessionId}` : `cron:${job.id}`,
         content: `[Cron job: ${job.name}]\n\n${job.task}`,
         author: 'system',
         timestamp: startedAt,
@@ -373,6 +376,7 @@ function rowToJob(row: unknown): CronJob {
     id: String(r.id),
     name: String(r.name),
     userId: r.user_id ? String(r.user_id) : null,
+    sessionId: r.session_id ? String(r.session_id) : null,
     scheduleKind: String(r.schedule_kind) as ScheduleKind,
     scheduleValue: String(r.schedule_value),
     scheduleTz: r.schedule_tz ? String(r.schedule_tz) : null,
