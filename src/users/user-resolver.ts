@@ -103,6 +103,17 @@ export async function loadProfileMd(userId: string, workspaceDir: string, profil
 }
 
 /**
+ * Save a user's PROFILE.md file.
+ */
+export async function saveProfileMd(userId: string, content: string, workspaceDir: string, profilePath?: string): Promise<void> {
+  const path = profilePath
+    ? resolve(profilePath)
+    : resolve(workspaceDir, '.janus', 'users', userId, 'PROFILE.md');
+  await mkdir(resolve(path, '..'), { recursive: true });
+  await writeFile(path, content, 'utf-8');
+}
+
+/**
  * Derive an allowlist of channelUserIds from config.users for a given channel.
  * Generic — works for any channel (telegram, whatsapp, etc.).
  */
