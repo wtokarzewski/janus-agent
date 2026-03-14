@@ -109,6 +109,7 @@ export class CLIChannel {
         console.log(chalk.bold('Commands:'));
         console.log(`  ${chalk.green('/help')}     Show this help`);
         console.log(`  ${chalk.green('/stop')}     Stop the running task`);
+        console.log(`  ${chalk.green('/model')}    Show/change model (e.g. /model claude-sonnet-4-5)`);
         console.log(`  ${chalk.green('/config')}   Reconfigure LLM provider`);
         console.log(`  ${chalk.green('exit')}      Quit (also: quit, /exit, /quit, :q, Ctrl+C)`);
         console.log('');
@@ -117,6 +118,23 @@ export class CLIChannel {
         console.log('');
         console.log(chalk.gray('Type any message to chat with Janus.'));
         console.log('');
+        this.rl?.prompt();
+        return;
+      }
+
+      // /model [name] — show or change current LLM model (I3)
+      const modelMatch = content.match(/^\/model(?:\s+(.+))?$/i);
+      if (modelMatch) {
+        const newModel = modelMatch[1]?.trim();
+        const { loadConfig, saveConfig } = await import('../config/config.js');
+        const currentConfig = await loadConfig();
+        if (newModel) {
+          await saveConfig({ llm: { model: newModel } });
+          console.log(chalk.green(`  Model changed to: ${newModel}\n`));
+          console.log(chalk.gray('  Restart Janus to apply.\n'));
+        } else {
+          console.log(`  Model: ${chalk.bold(currentConfig.llm.model)}\n  Provider: ${currentConfig.llm.provider}\n`);
+        }
         this.rl?.prompt();
         return;
       }

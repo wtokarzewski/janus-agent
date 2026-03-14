@@ -159,6 +159,20 @@ export class TelegramChannel {
         return;
       }
 
+      // /model [name] — show or change current LLM model (I3)
+      const modelMatch = ctx.message?.text?.trim().match(/^\/model(?:\s+(.+))?$/);
+      if (modelMatch) {
+        const newModel = modelMatch[1]?.trim();
+        if (newModel) {
+          config.llm.model = newModel;
+          await saveConfig({ llm: { model: newModel } });
+          await ctx.reply(`Model changed to: ${newModel}`);
+        } else {
+          await ctx.reply(`Current model: ${config.llm.model}\nProvider: ${config.llm.provider}`);
+        }
+        return;
+      }
+
       // /stop — cancel running agent + subagents
       if (ctx.message?.text?.trim() === '/stop') {
         const result = opts?.agent?.stop();

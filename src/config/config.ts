@@ -1,6 +1,8 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { watch, type FSWatcher } from 'node:fs';
 import { resolve } from 'node:path';
 import { JanusConfigSchema, type JanusConfig } from './schema.js';
+import * as log from '../utils/logger.js';
 
 /**
  * Load config with priority: CLI flags > env vars > workspace json > user json > defaults
@@ -92,6 +94,49 @@ export async function saveConfig(
   const existing = await loadJSON(path);
   const merged = deepMerge(existing, updates);
   await writeFile(path, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+}
+
+/**
+ * Watch config files for changes and reload (I1).
+ * Debounces rapid changes (e.g. editor save + format).
+ * Returns cleanup function to stop watching.
+ */
+export function watchConfig(
+  config: JanusConfig,
+  onChange: (newConfig: JanusConfig) => void,
+): () => void {
+  const files = [
+    resolve('.', 'janus.json'),
+    resolve('.', '.janus', 'config.json'),
+  ];
+  const watchers: FSWatcher[] = [];
+  let debounce: ReturnType<typeof setTimeout> | undefined;
+
+  for (const filePath of files) {
+    try {
+      const watcher = watch(filePath, () => {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(async () => {
+          try {
+            const newConfig = await loadConfig();
+            Object.assign(config, newConfig);
+            onChange(newConfig);
+            log.info(`Config reloaded from ${filePath}`);
+          } catch (err) {
+            log.warn(`Config reload failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }, 500);
+      });
+      watchers.push(watcher);
+    } catch {
+      // File doesn't exist yet — that's fine
+    }
+  }
+
+  return () => {
+    if (debounce) clearTimeout(debounce);
+    for (const w of watchers) w.close();
+  };
 }
 
 function deepMerge(...objects: Record<string, unknown>[]): Record<string, unknown> {

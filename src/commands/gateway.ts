@@ -5,7 +5,7 @@
 
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { loadConfig } from '../config/config.js';
+import { loadConfig, watchConfig } from '../config/config.js';
 import { createApp } from '../bootstrap.js';
 import { Bot } from 'grammy';
 import { TelegramChannel } from '../channels/telegram-channel.js';
@@ -160,6 +160,12 @@ export async function runGateway(): Promise<void> {
       });
     }, 3000);
   }
+
+  // Watch config files for hot reload (I1)
+  const stopWatching = watchConfig(config, (newConfig) => {
+    log.info(`Gateway: config reloaded (model: ${newConfig.llm.model})`);
+  });
+  signal.addEventListener('abort', stopWatching);
 
   console.log('Gateway running. Press Ctrl+C to stop.');
 
