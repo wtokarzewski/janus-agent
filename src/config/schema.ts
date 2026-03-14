@@ -211,6 +211,8 @@ export const JanusConfigSchema = z.object({
   mcp: MCPSchema.optional().transform(v => MCPSchema.parse(v ?? {})),
   autoUpdate: AutoUpdateSchema.optional().transform(v => AutoUpdateSchema.parse(v ?? {})),
   users: z.array(UserProfileSchema).default([]),
+  /** User IDs with owner privileges (owner-only tools, admin actions). Defaults to first user. */
+  ownerIds: z.array(z.string()).default([]),
   family: FamilySchema.optional(),
 });
 

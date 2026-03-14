@@ -41,6 +41,8 @@ export class TelegramChannel {
   private typingTimers = new Map<string, ReturnType<typeof setInterval>>();
   private typingStartedAt = new Map<string, number>();
   private throttleMs = 500;
+  /** Dedup: track recently sent message hashes to prevent duplicates (S6). */
+  private sentHashes = new Map<string, number>();
 
   /** Get the bot instance (available after start). */
   getBot(): Bot | undefined {
@@ -112,6 +114,22 @@ export class TelegramChannel {
 
       // 'message' or undefined — backward compatible
       this.stopTyping(msg.chatId);
+
+      // Dedup: skip if same content was sent to same chat recently (S6)
+      const dedupKey = `${msg.chatId}:${simpleHash(msg.content)}`;
+      const now = Date.now();
+      if (this.sentHashes.has(dedupKey) && now - this.sentHashes.get(dedupKey)! < 30_000) {
+        log.debug(`Telegram: dedup — skipping duplicate message to ${msg.chatId}`);
+        return;
+      }
+      this.sentHashes.set(dedupKey, now);
+      // Evict old entries every 100 messages
+      if (this.sentHashes.size > 100) {
+        for (const [k, t] of this.sentHashes) {
+          if (now - t > 60_000) this.sentHashes.delete(k);
+        }
+      }
+
       const chunks = chunkMessage(cleanMarkdownUrls(msg.content), MAX_TELEGRAM_MSG);
       for (const chunk of chunks) {
         try {
@@ -615,6 +633,15 @@ function extractReplyContext(replyMsg: { text?: string; caption?: string; from?:
   const author = replyMsg.from?.username ?? replyMsg.from?.first_name ?? 'unknown';
   const truncated = text.length > 500 ? text.slice(0, 497) + '...' : text;
   return `${author}: ${truncated}`;
+}
+
+/** Simple string hash for dedup keys. */
+function simpleHash(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  }
+  return h.toString(36);
 }
 
 /** Split long messages into chunks at newline or space boundaries. */

@@ -270,9 +270,16 @@ export class AgentLoop {
       ? this.deps.config.users.map(u => u.id)
       : undefined;
 
+    // Owner check: ownerIds from config, or first user if not set
+    const ownerIds = this.deps.config.ownerIds.length > 0
+      ? this.deps.config.ownerIds
+      : this.deps.config.users.length > 0 ? [this.deps.config.users[0].id] : [];
+    const isOwner = !msg.user?.userId || ownerIds.includes(msg.user.userId);
+
     const reqCtx: RequestContext = {
       chatId: msg.chatId,
       userId: msg.user?.userId,
+      isOwner,
       familyUserIds,
       userToolAllow: userProfile?.tools?.allow,
       userToolDeny: userProfile?.tools?.deny,
@@ -285,7 +292,7 @@ export class AgentLoop {
     const systemPrompt = await this.deps.context.build({
       channel: msg.channel,
       chatId: msg.chatId,
-      tools: this.deps.tools.summaries(),
+      tools: this.deps.tools.summaries(isOwner),
       summary: session.metadata.summary,
       userMessage: msg.content,
       mode: msg.contextMode,
