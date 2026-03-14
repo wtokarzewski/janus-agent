@@ -108,9 +108,30 @@ export class AnthropicProvider implements LLMProvider {
         }
         return tool;
       });
+      // Tool choice with fallback (L14)
+      if (request.toolChoice === 'required') {
+        params.tool_choice = { type: 'any' };
+      } else if (request.toolChoice === 'none') {
+        // Remove tools instead — Anthropic doesn't support tool_choice: none
+        delete params.tools;
+      } else if (request.toolChoice) {
+        params.tool_choice = { type: request.toolChoice };
+      }
     }
 
-    const response = await this.client.messages.create(params);
+    let response: Anthropic.Message;
+    try {
+      response = await this.client.messages.create(params);
+    } catch (err) {
+      // Fallback: if tool_choice rejected, retry without it (L14)
+      if (params.tool_choice && err instanceof Error && /tool_choice|tool choice/i.test(err.message)) {
+        log.warn(`Anthropic: tool_choice rejected, retrying without it`);
+        delete params.tool_choice;
+        response = await this.client.messages.create(params);
+      } else {
+        throw err;
+      }
+    }
 
     let content = '';
     let thinkingContent = '';
