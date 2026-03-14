@@ -107,8 +107,9 @@ export class ContextBuilder {
     }
 
     // 8. Session info (dynamic — not cached by Anthropic prompt caching)
-    const now = new Date().toISOString();
-    const sessionParts = [`Current time: ${now}`, `Channel: ${opts.channel}`, `Chat: ${opts.chatId}`];
+    // Use date-only (no time) to maximize Anthropic prompt cache hits within a day
+    const now = new Date().toISOString().slice(0, 10);
+    const sessionParts = [`Current date: ${now}`, `Channel: ${opts.channel}`, `Chat: ${opts.chatId}`];
     if (opts.user) sessionParts.push(`User: ${opts.user.userId}`);
     if (opts.scope) sessionParts.push(`Scope: ${opts.scope.kind}:${opts.scope.id}`);
     parts.push(`<session>\n${sessionParts.join('\n')}\n</session>`);

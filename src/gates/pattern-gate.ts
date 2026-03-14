@@ -77,7 +77,9 @@ export class PatternGate {
   private isObfuscated(command: string): boolean {
     // Skip whitelisted tools
     if (OBFUSCATION_WHITELIST.some(w => w.test(command))) return false;
-    return OBFUSCATION_PATTERNS.some(p => p.test(command));
+    // Strip URLs to avoid false positives (e.g. https://...bash/ matching pipe-to-shell)
+    const withoutUrls = command.replace(/https?:\/\/\S+/gi, '');
+    return OBFUSCATION_PATTERNS.some(p => p.test(withoutUrls));
   }
 
   formatAction(toolName: string, args: Record<string, unknown>): string {
