@@ -65,6 +65,8 @@ export class AgentLoop {
   private deps: AgentDeps;
   private flushState = new Map<string, { lastFlushed: number; userId?: string; userName?: string; scope?: InboundMessage['scope']; idleTimer?: ReturnType<typeof setTimeout>; flushing?: boolean }>();
   private _iterationControllers = new Map<string, AbortController>();
+  /** Guard against concurrent summarization (C2) */
+  private summarizing = new Set<string>();
 
   constructor(deps: AgentDeps) {
     this.deps = deps;
@@ -401,10 +403,14 @@ export class AgentLoop {
     const tokenThreshold = this.deps.config.agent.tokenBudget * 0.75;
     if (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
         || sessionTokenEstimate > tokenThreshold) {
-      // Fire and forget — don't block response
-      this.triggerSummarization(sessionKey, fullSession.messages, msg.channel, msg.chatId, msg.user?.userId, msg.scope).catch(err => {
-        log.warn(`Summarization failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      // Double-fire guard: skip if already summarizing this session (C2)
+      if (this.summarizing.has(sessionKey)) {
+        log.debug(`[${sessionKey}] Skipping summarization — already in progress`);
+      } else {
+        this.triggerSummarization(sessionKey, fullSession.messages, msg.channel, msg.chatId, msg.user?.userId, msg.scope, sessionTokenEstimate).catch(err => {
+          log.warn(`Summarization failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
     }
 
     return {
@@ -867,6 +873,25 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     chatId: string,
     userId?: string,
     scope?: InboundMessage['scope'],
+    preTokenEstimate?: number,
+  ): Promise<void> {
+    // Double-fire guard (C2)
+    this.summarizing.add(sessionKey);
+    try {
+      await this.doSummarization(sessionKey, messages, channel, chatId, userId, scope, preTokenEstimate);
+    } finally {
+      this.summarizing.delete(sessionKey);
+    }
+  }
+
+  private async doSummarization(
+    sessionKey: string,
+    messages: LLMMessage[],
+    channel: string,
+    chatId: string,
+    userId?: string,
+    scope?: InboundMessage['scope'],
+    preTokenEstimate?: number,
   ): Promise<void> {
     log.info(`[${sessionKey}] Summarization: start`);
     // Notify user that context is being compressed (C6)
@@ -907,6 +932,18 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
       maxTokens: 1024,
     }, 'summarize'), 90_000, 'Summarization LLM call timed out');
     log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
+
+    // Sanity check: verify compaction actually reduced token count (C1)
+    const postSession = await this.deps.sessions.getOrCreate(sessionKey);
+    const summaryTokens = estimateTokens(summaryResponse.content);
+    const keptTokens = estimateMessagesTokens(postSession.messages.slice(-keepCount));
+    const postEstimate = summaryTokens + keptTokens;
+    const preEstimate = preTokenEstimate ?? estimateMessagesTokens(messages);
+    if (postEstimate >= preEstimate) {
+      log.warn(`[${sessionKey}] Compaction sanity check failed: post (${postEstimate}) >= pre (${preEstimate}) — summary may be too long`);
+    } else {
+      log.info(`[${sessionKey}] Compaction: ${preEstimate} → ${postEstimate} tokens (${Math.round((1 - postEstimate / preEstimate) * 100)}% reduction)`);
+    }
 
     await this.deps.sessions.summarize(sessionKey, summaryResponse.content);
 
