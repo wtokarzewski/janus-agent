@@ -14,7 +14,7 @@ const BROWSER_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) Apple
  */
 export class WebFetchTool implements ContextualTool {
   name = 'web_fetch';
-  description = 'Fetch a URL and return its content. HTML is converted to markdown. JSON is pretty-printed. Returns structured result with url, status, extractor, length, and text.';
+  description = 'Fetch a URL and return its content. HTML is converted to markdown. JSON is pretty-printed. Use reader="jina" for cleaner text extraction from complex web pages.';
   parameters = {
     type: 'object',
     properties: {
@@ -25,6 +25,11 @@ export class WebFetchTool implements ContextualTool {
       headers: {
         type: 'object',
         description: 'Optional HTTP headers (e.g. {"Accept": "application/json"}).',
+      },
+      reader: {
+        type: 'string',
+        enum: ['native', 'jina'],
+        description: 'Text extraction method. "native" (default) = built-in HTML→markdown. "jina" = Jina Reader API for cleaner extraction from complex pages.',
       },
     },
     required: ['url'],
@@ -45,6 +50,13 @@ export class WebFetchTool implements ContextualTool {
     // SSRF guard — block private/internal networks (S8)
     const ssrfError = checkSsrf(url);
     if (ssrfError) return `Error: ${ssrfError}`;
+
+    const reader = String(args.reader ?? 'native');
+
+    // Jina Reader — clean text extraction via r.jina.ai (T1)
+    if (reader === 'jina') {
+      return this.fetchViaJina(url);
+    }
 
     const headers = (args.headers && typeof args.headers === 'object')
       ? args.headers as Record<string, string>
@@ -125,6 +137,36 @@ export class WebFetchTool implements ContextualTool {
         return `Error: Request timed out after ${this.timeoutMs}ms`;
       }
       return `Error: ${msg}`;
+    }
+  }
+
+  private async fetchViaJina(url: string): Promise<string> {
+    const jinaUrl = `https://r.jina.ai/${url}`;
+    log.info(`web_fetch (jina): ${url}`);
+    try {
+      const response = await fetch(jinaUrl, {
+        signal: AbortSignal.timeout(this.timeoutMs),
+        headers: { Accept: 'text/plain' },
+      });
+      if (!response.ok) {
+        return `Error: Jina Reader returned HTTP ${response.status}`;
+      }
+      let text = await response.text();
+      const truncated = text.length > this.maxBytes;
+      if (truncated) {
+        text = text.slice(0, this.maxBytes) + `\n\n[Truncated: showing first ${this.maxBytes} chars]`;
+      }
+      return JSON.stringify({
+        url,
+        status: response.status,
+        extractor: 'jina',
+        truncated,
+        length: text.length,
+        text,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return `Error: Jina Reader failed: ${msg}`;
     }
   }
 }

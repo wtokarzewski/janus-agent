@@ -94,4 +94,9 @@ export const migrations: string[] = [
   ALTER TABLE cron_jobs ADD COLUMN user_id TEXT;
   CREATE INDEX IF NOT EXISTS idx_cron_jobs_user_id ON cron_jobs(user_id);
   `,
+
+  // Migration 7: custom session IDs for cron jobs (K1)
+  `
+  ALTER TABLE cron_jobs ADD COLUMN session_id TEXT;
+  `,
 ];
