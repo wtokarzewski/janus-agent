@@ -615,14 +615,22 @@ export function parseTelegramChatId(chatId: string): { chatId: string; topicId?:
   return { chatId: chatId.slice(0, idx), topicId: isNaN(topicId) ? undefined : topicId };
 }
 
-/** Download a file from Telegram Bot API. */
+/** Download a file from Telegram Bot API. Timeout + retry on failure (U4). */
 async function downloadTelegramFile(bot: Bot, file: { file_path?: string }): Promise<Uint8Array> {
   if (!file.file_path) throw new Error('Telegram file has no file_path');
   const token = bot.token;
   const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Telegram file download failed: HTTP ${response.status}`);
-  return new Uint8Array(await response.arrayBuffer());
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return new Uint8Array(await response.arrayBuffer());
+    } catch (err) {
+      if (attempt === 2) throw new Error(`Telegram file download failed after retry: ${err instanceof Error ? err.message : err}`);
+      log.debug(`Telegram file download attempt ${attempt} failed, retrying: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  throw new Error('Telegram file download failed');
 }
 
 /** Extract reply context from a Telegram reply_to_message. */
