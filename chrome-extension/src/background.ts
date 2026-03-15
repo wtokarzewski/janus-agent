@@ -260,6 +260,7 @@ async function executeCommand(cmd: BrowserCommand): Promise<BrowserResponse> {
     }
 
     // Content script commands — forward to active tab
+    case 'dismissCookies':
     case 'snapshot':
     case 'click':
     case 'type':

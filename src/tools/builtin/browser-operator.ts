@@ -15,7 +15,7 @@ import * as log from '../../utils/logger.js';
 const VALID_COMMANDS: BrowserCommandName[] = [
   'ping', 'openTab', 'focusTab', 'closeTab', 'navigate', 'getCurrentUrl',
   'snapshot', 'click', 'type', 'pressKey', 'scroll', 'waitFor',
-  'extractText', 'screenshot', 'status', 'closeBrowser',
+  'extractText', 'screenshot', 'dismissCookies', 'status', 'closeBrowser',
 ];
 
 const BROWSER_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
@@ -46,7 +46,7 @@ function getRuntime(): BrowserRuntime {
 
 export class BrowserOperatorTool implements ContextualTool {
   name = 'browser';
-  description = 'Control a real Chrome browser through a dedicated extension. Use for web research, shopping, form filling, and any task requiring real browser interaction. Commands: ping, snapshot, click, type, pressKey, scroll, navigate, openTab, focusTab, closeTab, getCurrentUrl, waitFor, extractText, screenshot, status, closeBrowser. The browser uses structured page snapshots — request a snapshot first, then act on element references (e1, e2, etc.). Chrome stays open between tasks. Use closeBrowser when done or it auto-closes after 30 min idle.';
+  description = 'Control a real Chrome browser through a dedicated extension. Use for web research, shopping, form filling, and any task requiring real browser interaction. Commands: ping, snapshot, click, type, pressKey, scroll, navigate, openTab, focusTab, closeTab, getCurrentUrl, waitFor, extractText, screenshot, dismissCookies, status, closeBrowser. The browser uses structured page snapshots — request a snapshot first, then act on element references (e1, e2, etc.). Use dismissCookies after navigating to a new site to clear GDPR/cookie banners. Chrome stays open between tasks. Use closeBrowser when done or it auto-closes after 30 min idle.';
 
   setContext(ctx: ToolContext): void {
     // Only update fields that are explicitly provided (ignore undefined to avoid
