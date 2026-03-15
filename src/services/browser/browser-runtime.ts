@@ -70,16 +70,26 @@ export class BrowserRuntime {
   async ensureRunning(): Promise<void> {
     if (this.ready) return;
 
-    // Start WS server if not already — may fail with EADDRINUSE if previous
-    // session's server is still running. In that case, retry once after a delay
-    // (the old server may be shutting down).
-    this.wsServer.start();
+    const state = this.wsServer.runtimeState;
 
-    // If WS server failed to bind (EADDRINUSE), wait briefly and retry once
-    if (this.wsServer.runtimeState === 'idle' && !this.wsServer.ready) {
-      log.info('Browser: WS server port busy, retrying in 1s...');
-      await new Promise<void>(r => setTimeout(r, 1000));
+    // If extension disconnected but WS server is still running, reset to accept reconnection.
+    // The extension's keep-alive alarm or backoff reconnect will re-establish the connection.
+    if (state === 'failed' || state === 'disconnected_temporarily') {
+      log.info(`Browser: recovering from ${state} state`);
+      this.wsServer.resetForReconnect();
+    }
+
+    // Start WS server if not already — may fail with EADDRINUSE if previous
+    // session's server is still running. In that case, retry once after a delay.
+    if (state === 'idle') {
       this.wsServer.start();
+
+      // If WS server failed to bind (EADDRINUSE), wait briefly and retry once
+      if (this.wsServer.runtimeState === 'idle' && !this.wsServer.ready) {
+        log.info('Browser: WS server port busy, retrying in 1s...');
+        await new Promise<void>(r => setTimeout(r, 1000));
+        this.wsServer.start();
+      }
     }
 
     // Launch Chrome if not already running

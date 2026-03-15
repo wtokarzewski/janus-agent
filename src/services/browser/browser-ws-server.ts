@@ -130,6 +130,23 @@ export class BrowserWsServer {
     });
   }
 
+  /**
+   * Reset state to accept a new extension connection.
+   * Used when the extension disconnected and grace period expired (state=failed),
+   * but WS server is still running — allows reconnection without full restart.
+   */
+  resetForReconnect(): void {
+    if (this._runtimeState === 'failed' || this._runtimeState === 'disconnected_temporarily') {
+      log.info('Browser WS: resetting for reconnection');
+      if (this.reconnectGraceTimer) {
+        clearTimeout(this.reconnectGraceTimer);
+        this.reconnectGraceTimer = null;
+      }
+      this.extensionSocket = null;
+      this.transitionTo('waiting_for_extension');
+    }
+  }
+
   /** Handle extension disconnect with grace period for reconnection. */
   private handleDisconnect(): void {
     if (this._runtimeState === 'ready') {
