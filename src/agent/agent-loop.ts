@@ -929,7 +929,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     const summaryResponse = await withTimeout(this.deps.llm.chat({
       model: this.deps.config.llm.model,
       messages: [
-        { role: 'system', content: 'Summarize this conversation concisely. Focus on: decisions made, key context, and current state. Be brief.' },
+        { role: 'system', content: 'Summarize this conversation concisely. Focus on: 1) what task the user requested, 2) what progress was made, 3) what remains to be done, 4) key decisions and context. If the user had an active task in progress, make sure to preserve what it was and where it stopped.' },
         { role: 'user', content: toSummarize.map(m => `${m.role}: ${'content' in m ? m.content : ''}`).join('\n') },
       ],
       temperature: 0.3,
