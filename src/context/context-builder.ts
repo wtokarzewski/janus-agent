@@ -65,11 +65,11 @@ export class ContextBuilder {
       if (userSection) parts.push(userSection);
     }
 
-    // 1c. Shared chat files section (group chats — Telegram group IDs start with '-')
+    // 1c. Shared chat files directory (group chats — Telegram group IDs start with '-')
     if (opts.chatId && opts.chatId.startsWith('-')) {
       const safeChatId = sanitizeChatId(opts.chatId);
       const chatFilesDir = resolve(this.deps.config.workspace.dir, '.janus', 'chats', safeChatId, 'files');
-      parts.push(`<chat_files>\nShared files for this group chat: ${chatFilesDir}/\nWhen creating shared files for the group (not for a specific user), save them here.\n</chat_files>`);
+      parts.push(`<chat_files>\n${chatFilesDir}/\n</chat_files>`);
     }
 
     if (!minimal) {
@@ -274,20 +274,8 @@ ${toolList}
     const maxChars = this.deps.config.agent.maxSkillsPromptChars;
     const maxCount = this.deps.config.agent.maxSkillsInPrompt;
 
-    const instructions = `<instructions>
-Before responding, scan the skill descriptions below.
-If exactly one skill clearly applies to the user's request, read its file with read_file, then follow the instructions.
-If multiple could apply, choose the most specific one.
-If none apply, proceed without loading a skill.
-Never read more than one skill at a time.
-
-If you notice a task pattern you have performed multiple times and no existing skill covers it, or the user asks you to build a solution you don't have — load the skill-creator skill for guidance on how to create a well-structured skill with scripts and resources.
-
-After writing SKILL.md to the workspace skills/ directory, the skill is available immediately — no restart needed.
-</instructions>`;
-
     const skillEntries: string[] = [];
-    let totalChars = instructions.length;
+    let totalChars = 0;
 
     for (const s of skills.slice(0, maxCount)) {
       let entry: string;
@@ -305,7 +293,7 @@ After writing SKILL.md to the workspace skills/ directory, the skill is availabl
       totalChars += entry.length;
     }
 
-    return `<skills>\n${instructions}\n${skillEntries.join('\n')}\n</skills>`;
+    return `<skills>\n${skillEntries.join('\n')}\n</skills>`;
   }
 
   private async buildLearnerSection(task: string): Promise<string | null> {
