@@ -752,6 +752,102 @@ Acceptance:
 - Janus can send and receive protocol messages
 - active tab metadata can be read
 
+### Phase 1.5: runtime hardening
+Goal:
+Production-grade resilience and runtime stability after Phase 1 foundation.
+
+Important: We **do not adopt a CDP proxy model**. Janus remains **snapshot-centric and AI-native**.
+
+#### Design principles (unchanged)
+1. Public interface remains **one tool**: `browser({ command, args })`
+2. Agent API remains **high-level**, not CDP level.
+3. Browser control remains **snapshot-centric**.
+4. Dangerous actions remain **policy-gated**.
+5. Chrome runs using a **dedicated Janus profile**.
+6. Extension connects to Janus (not the other way around).
+
+#### P0 upgrades (immediate)
+
+**WebSocket reconnect with exponential backoff**
+MV3 service workers are restarted unpredictably. Extension must automatically reconnect.
+
+Reconnect algorithm:
+- initialDelay = 1000ms
+- multiplier = 2
+- maxDelay = 30000ms
+- jitter = ±20%
+
+Example sequence: 1s → 2s → 4s → 8s → 16s → 30s (cap).
+
+**Extension reconnect grace period**
+Janus must not immediately kill the session when the extension disconnects.
+
+- extensionReconnectGraceMs = 20000
+- If extension disconnects: state → disconnected_temporarily
+- If extension reconnects before grace period: session continues
+- If not: runtime transitions to `failed`
+
+**Capability negotiation in handshake**
+
+Extension → hello:
+- protocolVersion, extensionVersion, browser info (name, version, userAgent)
+- capabilities: ping, snapshot, click, type, scroll, pressKey, waitFor, screenshot, tabManagement
+
+Janus → welcome:
+- sessionId, acceptedProtocolVersion, policyMode
+- snapshotConfig: viewportOnly, maxElements, maxGroups
+- enabledCapabilities
+
+**Runtime state machine**
+Explicit states in browser-runtime.ts:
+- idle → starting_ws → launching_browser → waiting_for_extension → ready → disconnected_temporarily → failed
+
+**Health timeouts**
+- launchTimeoutMs = 15000
+- handshakeTimeoutMs = 10000
+- commandTimeoutMs = 10000
+- reconnectGraceMs = 20000
+
+#### P1 upgrades (recommended next)
+
+**Persistent extension state**
+Use chrome.storage.session to persist: sessionId, active controlled tabs, last handshake metadata, connection status, policy mode.
+Do NOT persist: full snapshots, large DOM blobs, screenshots.
+
+**Tab/target lifecycle store**
+Janus maintains tab metadata: tabId, url, title, active, controlled, status (discovered → controlled → active → stale → closed), lastSeenAt, snapshotVersion.
+
+**Status command**
+`browser({ command: "status" })` returns: wsServerRunning, chromeLaunched, extensionConnected, lastHandshakeAt, activeSessionId, activeTabCount, browserName, browserVersion, profilePath, policyMode.
+
+#### P2 optional improvements
+
+- Re-announce tabs after reconnect (tabs_announce message)
+- Diagnostics metadata: requiresUserAttention, truncationApplied, captchaDetected, modalDetected
+- Internal low-level substrate (hidden from public agent API)
+
+#### Explicitly out of scope
+- full CDP proxy
+- external relay server
+- exposing Runtime.evaluate to agent
+- exposing DOM.querySelector to agent
+- personal browser session as default
+
+#### Phase 1.5 implementation checklist
+1. WS reconnect with exponential backoff
+2. extensionReconnectGraceMs handling
+3. capability negotiation in handshake
+4. runtime state machine
+5. health timeouts
+6. chrome.storage.session persistence
+7. tab lifecycle store
+8. browser.status command
+
+#### Expected result
+After Phase 1.5 the runtime has: resilient extension reconnect, protocol versioning, runtime lifecycle control, persistent session recovery, tab lifecycle management, diagnostic tooling.
+
+---
+
 ### Phase 2: snapshot engine
 Goal:
 Give Janus a useful model of the page.
@@ -1141,7 +1237,7 @@ Do not build:
 - marketplace-specific workflows in the core
 - remote browser infrastructure
 - massive package architecture
-- full OpenClaw clone
+- full browser-automation framework clone
 
 ### What to preserve from day one
 Preserve:
@@ -1185,7 +1281,7 @@ The v1 foundation is done when all of the following are true:
 
 ## 27. Short conclusion
 
-We are building a generic real-browser operator for Janus, not a marketplace scraper and not a clone of Playwright or OpenClaw.
+We are building a generic real-browser operator for Janus, not a marketplace scraper and not a clone of existing automation frameworks.
 
 The key decisions are:
 

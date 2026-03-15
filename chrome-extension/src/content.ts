@@ -2,11 +2,13 @@
  * Janus Browser Operator — Content Script.
  *
  * Runs in every page. Handles:
- * - Page snapshot generation
+ * - Page snapshot generation (with schemaVersion, password masking)
  * - Element interactions (click, type, pressKey, scroll)
  * - Wait conditions
  * - Text extraction
  */
+
+const SCHEMA_VERSION = 1;
 
 // ─── Message Handler ─────────────────────────────────────────────────
 
@@ -120,6 +122,7 @@ function buildSnapshot(config?: { viewportOnly: boolean; maxElements: number; ma
   }
 
   const snapshot = {
+    schemaVersion: SCHEMA_VERSION,
     snapshotVersion,
     page: {
       url: location.href,
@@ -296,7 +299,12 @@ function getAccessibleName(el: Element): string | null {
 }
 
 function getValuePreview(el: Element): string | null {
-  const val = (el as HTMLInputElement).value;
+  const input = el as HTMLInputElement;
+
+  // Password masking: never expose password field values
+  if (input.type === 'password') return null;
+
+  const val = input.value;
   if (!val) return null;
   return val.length > 80 ? val.slice(0, 77) + '...' : val;
 }
@@ -306,7 +314,7 @@ function normalizeText(text: string): string {
   return normalized.length > 160 ? normalized.slice(0, 157) + '...' : normalized;
 }
 
-const PRICE_REGEX = /(\d+[\.,]\d{2})\s?(zł|zl|pln|eur|€|\$|usd|gbp|£)/i;
+const PRICE_REGEX = /(\d+[\.,]\d{2})\s?(zl|zl|pln|eur|\u20ac|\$|usd|gbp|\u00a3)/i;
 const SEARCH_HINT_REGEX = /(szukaj|search|czego szukasz|wyszukaj)/i;
 
 function inferSemanticHints(el: Element): string[] {
@@ -333,7 +341,6 @@ function inferSemanticHints(el: Element): string[] {
 function inferPageTypeHints(): string[] {
   const hints: string[] = [];
   const url = location.href.toLowerCase();
-  const title = document.title.toLowerCase();
 
   if (url.includes('/search') || url.includes('?q=') || url.includes('?string=') || url.includes('query=')) {
     hints.push('search_results');
@@ -364,6 +371,7 @@ function detectLoginGate(): boolean {
 function waitForDomStable(stableMs: number, maxWaitMs: number): Promise<boolean> {
   return new Promise(resolve => {
     let lastMutation = Date.now();
+    const startTime = Date.now();
     const observer = new MutationObserver(() => { lastMutation = Date.now(); });
     observer.observe(document.body, { childList: true, subtree: true });
 
@@ -373,7 +381,7 @@ function waitForDomStable(stableMs: number, maxWaitMs: number): Promise<boolean>
         clearInterval(check);
         resolve(true);
       }
-      if (Date.now() > Date.now() + maxWaitMs) {
+      if (Date.now() - startTime > maxWaitMs) {
         observer.disconnect();
         clearInterval(check);
         resolve(false);

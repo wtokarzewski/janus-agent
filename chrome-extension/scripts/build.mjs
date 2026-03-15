@@ -19,6 +19,7 @@ const shared = {
 const entries = [
   { entryPoints: ['src/background.ts'], ...shared },
   { entryPoints: ['src/content.ts'], ...shared, format: 'iife' }, // content scripts must be IIFE
+  { entryPoints: ['src/popup.ts'], ...shared, format: 'iife' },   // popup must be IIFE
 ];
 
 if (watch) {

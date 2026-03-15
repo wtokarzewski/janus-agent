@@ -15,7 +15,7 @@ import * as log from '../../utils/logger.js';
 const VALID_COMMANDS: BrowserCommandName[] = [
   'ping', 'openTab', 'focusTab', 'closeTab', 'navigate', 'getCurrentUrl',
   'snapshot', 'click', 'type', 'pressKey', 'scroll', 'waitFor',
-  'extractText', 'screenshot',
+  'extractText', 'screenshot', 'status',
 ];
 
 // Singleton runtime — shared across tool invocations
@@ -30,7 +30,7 @@ function getRuntime(): BrowserRuntime {
 
 export class BrowserOperatorTool implements Tool {
   name = 'browser';
-  description = 'Control a real Chrome browser through a dedicated extension. Use for web research, shopping, form filling, and any task requiring real browser interaction. Commands: ping, snapshot, click, type, pressKey, scroll, navigate, openTab, focusTab, closeTab, getCurrentUrl, waitFor, extractText, screenshot. The browser uses structured page snapshots — request a snapshot first, then act on element references (e1, e2, etc.).';
+  description = 'Control a real Chrome browser through a dedicated extension. Use for web research, shopping, form filling, and any task requiring real browser interaction. Commands: ping, snapshot, click, type, pressKey, scroll, navigate, openTab, focusTab, closeTab, getCurrentUrl, waitFor, extractText, screenshot, status. The browser uses structured page snapshots — request a snapshot first, then act on element references (e1, e2, etc.). Use status to check runtime diagnostics.';
 
   parameters = {
     type: 'object',
@@ -57,6 +57,11 @@ export class BrowserOperatorTool implements Tool {
     }
 
     const rt = getRuntime();
+
+    // Status is a read-only diagnostic — no runtime launch or policy check needed
+    if (command === 'status') {
+      return JSON.stringify(rt.getStatus(), null, 2);
+    }
 
     // Ensure runtime is up (lazy start)
     try {

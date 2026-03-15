@@ -6,18 +6,69 @@
  * - Route commands to content scripts
  * - Handle tab-level operations (open, focus, close, navigate)
  * - Manage handshake lifecycle
+ * - Exponential backoff reconnection with jitter
+ * - Session persistence via chrome.storage.session
  */
 
 import type { BrowserCommand, BrowserResponse, ExtensionHello, JanusWelcome } from './types.js';
 
 const JANUS_WS_URL = 'ws://127.0.0.1:19816';
-const RECONNECT_INTERVAL_MS = 3000;
 const EXTENSION_VERSION = '0.1.0';
+const PROTOCOL_VERSION = 1;
+
+// ─── Exponential Backoff Config ──────────────────────────────────────
+
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MULTIPLIER = 2;
+const RECONNECT_CAP_MS = 30_000;
+const RECONNECT_JITTER = 0.15; // +/-15%
 
 let ws: WebSocket | null = null;
 let sessionId: string | null = null;
+let policyMode: string | null = null;
 let snapshotConfig = { viewportOnly: true, maxElements: 100, maxGroups: 25 };
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempt = 0;
+let lastHandshakeAt: number | null = null;
+
+// ─── Session Persistence ────────────────────────────────────────────
+
+interface PersistedState {
+  sessionId: string | null;
+  connectionState: 'connected' | 'disconnected';
+  policyMode: string | null;
+  lastHandshakeAt: number | null;
+  protocolVersion: number | null;
+  enabledCapabilities: string[];
+}
+
+let acceptedProtocolVersion: number | null = null;
+let enabledCapabilities: string[] = [];
+
+async function persistState(): Promise<void> {
+  try {
+    const state: PersistedState = {
+      sessionId,
+      connectionState: ws?.readyState === WebSocket.OPEN ? 'connected' : 'disconnected',
+      policyMode,
+      lastHandshakeAt,
+      protocolVersion: acceptedProtocolVersion,
+      enabledCapabilities,
+    };
+    await chrome.storage.session.set({ janusState: state });
+  } catch {
+    // storage.session may not be available in all contexts
+  }
+}
+
+async function restoreState(): Promise<PersistedState | null> {
+  try {
+    const result = await chrome.storage.session.get('janusState');
+    return (result.janusState as PersistedState) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // ─── WebSocket Connection ────────────────────────────────────────────
 
@@ -33,6 +84,7 @@ function connect(): void {
 
   ws.onopen = async () => {
     console.log('[Janus] Connected to WS server');
+    reconnectAttempt = 0; // Reset backoff on successful connection
     await sendHello();
   };
 
@@ -48,7 +100,7 @@ function connect(): void {
   ws.onclose = () => {
     console.log('[Janus] Disconnected from WS server');
     ws = null;
-    sessionId = null;
+    persistState();
     scheduleReconnect();
   };
 
@@ -59,10 +111,24 @@ function connect(): void {
 
 function scheduleReconnect(): void {
   if (reconnectTimer) return;
+
+  // Exponential backoff: base * multiplier^attempt, capped
+  const delay = Math.min(
+    RECONNECT_BASE_MS * Math.pow(RECONNECT_MULTIPLIER, reconnectAttempt),
+    RECONNECT_CAP_MS,
+  );
+
+  // Apply jitter: +/-15%
+  const jitter = delay * RECONNECT_JITTER * (2 * Math.random() - 1);
+  const finalDelay = Math.round(delay + jitter);
+
+  reconnectAttempt++;
+  console.log(`[Janus] Reconnecting in ${finalDelay}ms (attempt ${reconnectAttempt})`);
+
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connect();
-  }, RECONNECT_INTERVAL_MS);
+  }, finalDelay);
 }
 
 function send(data: unknown): void {
@@ -77,6 +143,7 @@ async function sendHello(): Promise<void> {
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const hello: ExtensionHello = {
     type: 'hello',
+    protocolVersion: PROTOCOL_VERSION,
     extensionVersion: EXTENSION_VERSION,
     profileId: 'janus-browser',
     activeTab: activeTab ? {
@@ -84,14 +151,7 @@ async function sendHello(): Promise<void> {
       url: activeTab.url ?? '',
       title: activeTab.title ?? '',
     } : undefined,
-    capabilities: {
-      snapshot: true,
-      click: true,
-      type: true,
-      pressKey: true,
-      scroll: true,
-      screenshot: true,
-    },
+    capabilities: ['snapshot', 'click', 'type', 'pressKey', 'scroll', 'screenshot'],
     browser: {
       name: 'chrome',
       version: navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1] ?? 'unknown',
@@ -108,8 +168,13 @@ function handleMessage(msg: Record<string, unknown>): void {
   if (msg.type === 'welcome') {
     const welcome = msg as unknown as JanusWelcome;
     sessionId = welcome.sessionId;
+    policyMode = welcome.policyMode;
     snapshotConfig = welcome.snapshotConfig;
-    console.log(`[Janus] Session: ${sessionId}, policy: ${welcome.policyMode}`);
+    acceptedProtocolVersion = welcome.acceptedProtocolVersion;
+    enabledCapabilities = welcome.enabledCapabilities ?? [];
+    lastHandshakeAt = Date.now();
+    console.log(`[Janus] Session: ${sessionId}, policy: ${welcome.policyMode}, protocol: v${welcome.acceptedProtocolVersion}, capabilities: ${enabledCapabilities.join(', ')}`);
+    persistState();
     return;
   }
 
@@ -205,7 +270,17 @@ async function executeCommand(cmd: BrowserCommand): Promise<BrowserResponse> {
 
 // ─── Start ───────────────────────────────────────────────────────────
 
-connect();
+// On service worker startup, try to restore persisted state before reconnecting
+(async () => {
+  const persisted = await restoreState();
+  if (persisted) {
+    sessionId = persisted.sessionId;
+    policyMode = persisted.policyMode;
+    lastHandshakeAt = persisted.lastHandshakeAt;
+    console.log(`[Janus] Restored session state: ${sessionId}, policy: ${policyMode}`);
+  }
+  connect();
+})();
 
 // Reconnect on extension wake (service worker can be suspended)
 chrome.runtime.onStartup.addListener(() => {

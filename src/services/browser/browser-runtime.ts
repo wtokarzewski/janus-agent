@@ -2,6 +2,8 @@
  * Browser Operator — runtime manager.
  * Handles Chrome launch, extension discovery, and lifecycle.
  * Lazy: only starts when the browser tool is first called.
+ *
+ * Delegates runtime state to BrowserWsServer's state machine.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -9,6 +11,8 @@ import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import * as log from '../../utils/logger.js';
 import { BrowserWsServer } from './browser-ws-server.js';
+import { LAUNCH_TIMEOUT_MS, HANDSHAKE_TIMEOUT_MS } from './browser-types.js';
+import type { RuntimeState, RuntimeDiagnostics } from './browser-types.js';
 
 const CHROME_PATHS: Record<string, string[]> = {
   darwin: [
@@ -33,7 +37,6 @@ export class BrowserRuntime {
   private chromeProcess: ChildProcess | null = null;
   private profileDir: string;
   private extensionDir: string;
-  private _started = false;
 
   constructor(opts?: { profileDir?: string; extensionDir?: string }) {
     this.wsServer = new BrowserWsServer();
@@ -41,8 +44,9 @@ export class BrowserRuntime {
     this.extensionDir = opts?.extensionDir ?? resolve(process.cwd(), 'chrome-extension');
   }
 
-  get started(): boolean {
-    return this._started;
+  /** Runtime state from the WS server's state machine. */
+  get state(): RuntimeState {
+    return this.wsServer.runtimeState;
   }
 
   get server(): BrowserWsServer {
@@ -51,6 +55,11 @@ export class BrowserRuntime {
 
   get ready(): boolean {
     return this.wsServer.ready;
+  }
+
+  /** Get runtime diagnostics for status command. */
+  getStatus(): RuntimeDiagnostics {
+    return this.wsServer.getStatus();
   }
 
   /** Ensure browser runtime is running. Idempotent. */
@@ -66,8 +75,7 @@ export class BrowserRuntime {
     }
 
     // Wait for extension to connect and handshake
-    await this.wsServer.waitForReady(30_000);
-    this._started = true;
+    await this.wsServer.waitForReady(HANDSHAKE_TIMEOUT_MS);
   }
 
   /** Stop everything. */
@@ -78,7 +86,6 @@ export class BrowserRuntime {
       log.info('Browser: Chrome process terminated');
     }
     this.chromeProcess = null;
-    this._started = false;
   }
 
   private async launchChrome(): Promise<void> {
@@ -118,8 +125,8 @@ export class BrowserRuntime {
       this.chromeProcess = null;
     });
 
-    // Give Chrome a moment to start before we expect the extension to connect
-    await new Promise(r => setTimeout(r, 2000));
+    // Give Chrome time to start before expecting extension connection
+    await new Promise<void>(r => setTimeout(r, Math.min(LAUNCH_TIMEOUT_MS, 2000)));
   }
 
   private findChrome(): string | null {

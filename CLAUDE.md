@@ -4,7 +4,7 @@ Instructions for Claude Code when working with this repository.
 
 ## Project Overview
 
-Janus is a universal AI agent. CLI + Telegram, ~11,200 lines TypeScript.
+Janus is a universal AI agent. CLI + Telegram + Browser Operator, ~13,200 lines TypeScript.
 
 **Name:** Janus — Roman god of beginnings, transitions, and duality. Two faces looking to the past and the future. Reflects the agent's dual nature: planning vs execution, analysis vs implementation, AI vs human control.
 
@@ -17,6 +17,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
                                 ↑              ↑               ↑
                           CronService        Database    spawn_agent → SubAgent
                           HeartbeatService (SQLite+FTS5)  Learner (metrics)
+                                                         Browser Operator → Chrome Extension → Real Browser
 ```
 
 ### Key modules (src/)
@@ -24,23 +25,88 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `agent/` — Agent loop (LLM iteration with tool calls, `stop()` for mid-task cancellation), subagent spawning, SubagentRegistry (cancel/cancelAll)
 - `auth/` — Native OAuth (PKCE S256, token storage, auto-refresh) for Anthropic + Codex
 - `bus/` — MessageBus + AsyncQueue (bounded, backpressure), multi-lane concurrent queue (semaphore, per-lane concurrency config, AbortSignal), steering messages (mid-run injection)
-- `channels/` — CLI (interactive REPL, persistent history, `/stop` + `/help` + `/config`), Telegram (grammy, typing indicators, start retry, `/stop` + `/whoami`, invite deep-link onboarding, forum/topic session isolation, group mention policy, voice transcription)
+- `channels/` — CLI (interactive REPL, persistent history, `/stop` + `/help` + `/model` + `/config`), Telegram (grammy, typing indicators, start retry, `/stop` + `/whoami` + `/model`, invite deep-link onboarding, forum/topic session isolation, group mention policy, voice transcription)
 - `commands/` — onboard (alias: init), gateway, mcp-server, setup (interactive wizard), update (pull + install + test)
 - `config/` — JSON config + Zod schema, `~/.janus/config.json` (user) + `janus.json` (workspace) + env
 - `context/` — System prompt builder (identity + tool guidelines + EGO + project + skills + memory + learner)
-- `db/` — SQLite database (better-sqlite3, WAL mode, 6 numbered migrations)
-- `gates/` — Pattern-based gate system (exec + file writes + spawn_agent + self_update:update + obfuscation detection), CLI + Telegram gates
+- `db/` — SQLite database (better-sqlite3, WAL mode, 7 numbered migrations)
+- `gates/` — Pattern-based gate system (exec + file writes + spawn_agent + self_update:update + obfuscation detection + Unicode invisible char stripping + URL-safe obfuscation check), CLI + Telegram gates
 - `learner/` — Execution metrics (SQLite or JSONL fallback), keyword similarity, recommendations (wired into context prompt)
-- `llm/` — Anthropic native + OpenAI-compatible + ClaudeAgent + Codex + Codex OAuth providers, ProviderRegistry (multi-provider with failover + 5xx), streaming, extended thinking, prompt caching, SDK utils (structured output), model listing from APIs, SDK timeout (2 min)
+- `llm/` — Anthropic native + OpenAI-compatible + ClaudeAgent + Codex + Codex OAuth providers, ProviderRegistry (multi-provider with failover + 5xx + RESOURCE_EXHAUSTED + rate-limit hardening + 422 classification), streaming, extended thinking, prompt caching, SDK utils (structured output), model listing from APIs, SDK timeout (2 min), toolChoice with fallback
 - `mcp/` — MCP server (JSON-RPC, stdio, tool bridge) + MCP client (connect to external servers, auto-discover tools)
 - `memory/` — MEMORY.md + HISTORY.md + daily notes + MemoryIndex (FTS5 + vector hybrid search with temporal decay), embedder (local @xenova/transformers, setImmediate yield points for non-blocking inference)
-- `services/` — CronService (persistent cron scheduler, SQLite, recursion guard, missed job staggering on restart, per-user job ownership via userId), HeartbeatService (HEARTBEAT.md → CronService sync, per-user HEARTBEAT.md with userId routing)
+- `services/` — CronService (persistent cron scheduler, SQLite, recursion guard, missed job staggering on restart, per-user job ownership via userId, custom session IDs), HeartbeatService (HEARTBEAT.md → CronService sync, per-user HEARTBEAT.md with userId routing), Browser Operator (WS server, Chrome runtime manager, policy enforcement)
 - `session/` — JSONL persistence, atomic writes, summarization, per-key mutex locking
 - `skills/` — SKILL.md loader (YAML frontmatter + markdown), lazy loading (stubs + read on demand), mtime-based cache invalidation on skill file writes
 - `invites/` — InviteStore (in-memory, 24h TTL) for Telegram deep-link onboarding
-- `tools/` — 15 built-in tools (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite), path validation (symlink safety, user-scoped access in family chats)
-- `utils/` — Logger, cross-platform shell config (`getShellConfig`, `killProcessTree`), sanitize (strip leaked LLM control tokens)
+- `tools/` — 16 built-in tools (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, browser [Playwright], browser_operator [Chrome Extension], heartbeat, self_update, invite), path validation (symlink safety, user-scoped access in family chats)
+- `utils/` — Logger, cross-platform shell config (`getShellConfig`, `killProcessTree`), sanitize (strip leaked LLM control tokens + invisible Unicode), SSRF guard
 - `users/` — User resolver (Telegram userId/username → Janus user), per-user profiles, tool/skill filtering, `ensureUserDir()` (auto-create `.janus/users/{id}/` on first resolution, channel-agnostic), `ensureChatDir()` (auto-create `.janus/chats/{chatId}/`)
+
+### Browser Operator (chrome-extension/)
+Real-browser automation via Chrome Extension. Controls a dedicated Chrome profile through structured snapshots instead of CSS selectors.
+
+**Architecture:** `Agent → browser tool → WS server (127.0.0.1:19816) → Chrome Extension → Web page`
+
+- `chrome-extension/src/background.ts` — WS client, exponential backoff reconnect, handshake, tab management, chrome.storage.session persistence
+- `chrome-extension/src/content.ts` — Snapshot engine (viewport-only, max 100 elements, visual reading order, semantic hints, CAPTCHA detection, password masking), actions (click, type, pressKey, scroll), wait conditions
+- `chrome-extension/src/types.ts` — Shared protocol types
+- `chrome-extension/scripts/build.mjs` — esbuild (background + content script)
+- `src/services/browser/browser-types.ts` — Protocol (commands, responses, handshake, snapshot, policy), runtime state machine, tab lifecycle
+- `src/services/browser/browser-ws-server.ts` — WS server, state machine (idle→starting→ready→disconnected→failed), reconnect grace period, tab store, diagnostics
+- `src/services/browser/browser-runtime.ts` — Chrome launcher (auto-detect path, dedicated profile, --load-extension), lazy start
+- `src/services/browser/browser-policy.ts` — Safety enforcement (dangerous action text blocking, read-only default)
+- `src/tools/builtin/browser-operator.ts` — Single `browser` tool with sub-commands
+
+**Key design decisions:**
+- Snapshot-centric, not selector-centric (AI-native)
+- Dedicated Chrome profile (never personal browser)
+- Lazy start on first tool call
+- Protocol versioning + capability negotiation
+- Dangerous actions (checkout, payment) blocked by policy
+
+**Setup & usage:**
+
+```bash
+# 1. Build the extension
+cd chrome-extension && npm install && npm run build
+
+# 2. (Dev) Watch mode — auto-rebuild on changes
+cd chrome-extension && npm run watch
+
+# 3. Load extension in Chrome manually (first time only)
+#    - Open chrome://extensions in the Janus Chrome profile
+#    - Enable "Developer mode"
+#    - Click "Load unpacked" → select chrome-extension/ folder
+#    (Or let Janus auto-launch with --load-extension flag)
+```
+
+**How it works at runtime:**
+1. Agent calls `browser({ command: "snapshot" })` (or any browser command)
+2. Janus checks if WS server is running → starts if not (`ws://127.0.0.1:19816`)
+3. Janus checks if Chrome is connected → launches Chrome with dedicated profile if not:
+   ```
+   chrome --user-data-dir=~/.janus/chrome-profile --load-extension=./chrome-extension --no-first-run
+   ```
+4. Extension connects to WS server → sends `hello` (capabilities, browser version)
+5. Janus responds with `welcome` (session ID, policy mode, snapshot config)
+6. Command executes → extension acts on the real page → returns structured result
+7. On disconnect, extension reconnects with exponential backoff (1s→30s cap)
+8. Janus gives 20s grace period before marking runtime as failed
+
+**Agent workflow example (shopping):**
+```
+browser({ command: "navigate", args: { url: "https://allegro.pl" } })
+browser({ command: "snapshot" })                    → page map with e1, e2, e3...
+browser({ command: "click", args: { elementId: "e1" } })   → click search input
+browser({ command: "type", args: { elementId: "e1", text: "lavazza 1kg" } })
+browser({ command: "pressKey", args: { key: "Enter" } })
+browser({ command: "waitFor", args: { type: "domStable", stableForMs: 1200 } })
+browser({ command: "snapshot" })                    → product results with titles & prices
+```
+
+**Environment variables:**
+- `CHROME_PATH` — override Chrome binary path (auto-detected on macOS/Linux/Windows)
 
 ### Bootstrap files (unique to Janus)
 - `~/.janus/EGO.md` — Agent character (global, static)
@@ -53,8 +119,9 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `./.janus/users/{id}/HEARTBEAT.md` — Per-user scheduled tasks (routed to user's Telegram chat)
 - `./.janus/chats/{chatId}/` — Per-chat directory (auto-created by `ensureChatDir()`)
 - `./JANUS.md` — Project-specific instructions (per-repo, like CLAUDE.md)
-- `./AGENTS.md` — Agent behavior rules (per-workspace, customizable)
+- `./AGENTS.md` — Agent behavior rules (per-workspace, customizable — all behavioral instructions live here, not in code)
 - `./HEARTBEAT.md` — Autonomous periodic tasks (per-workspace, supports `every Xm/h/d`, `at HH:MM`, and cron expressions)
+- `~/.janus/chrome-profile/` — Dedicated Chrome profile for Browser Operator (persistent cookies, isolated from personal browsing)
 
 ## Commands
 
@@ -76,13 +143,14 @@ Three auth modes (mutually exclusive):
 - **Subscription** — `claude-agent` (Claude Code Max via `claude login`), `codex` (ChatGPT Plus/Pro via `codex login`)
 - **OAuth** — `anthropic` or `codex` with native PKCE flow (browser-based login, auto-refresh)
 
-Key sections: `llm` (provider, model, multi-provider, thinking, reasoningEffort, toolTemperature), `agent` (iterations, tokenBudget, contextWindow, skillLimits, memoryFlushInterval, memoryIdleFlushMs, onLLMError, lanes), `workspace`, `tools` (exec deny patterns, execDenyPatternsExtra), `database`, `heartbeat`, `telegram` (token, allowlist, groupPolicy), `streaming`, `gates`, `memory` (vectorSearch, vectorWeight, textWeight, recentDays), `autoUpdate` (enabled, schedule cron expression), `users` (profiles, tool/skill allow/deny), `family` (groupChatIds, shared scope), `mcp` (servers).
+Key sections: `llm` (provider, model, multi-provider, thinking, reasoningEffort, toolTemperature, toolChoice), `agent` (iterations, tokenBudget=750K, contextWindow=1M, temperature=0.3, skillLimits, memoryFlushInterval, memoryIdleFlushMs, onLLMError, lanes), `workspace`, `tools` (exec deny patterns, execDenyPatternsExtra), `database`, `heartbeat`, `telegram` (token, allowlist, denyByDefault, groupPolicy), `streaming`, `gates`, `memory` (vectorSearch, vectorWeight, textWeight, recentDays), `voice` (Groq Whisper), `autoUpdate` (enabled, schedule), `users` (profiles, tool/skill allow/deny), `ownerIds` (owner-only tool access), `family` (groupChatIds, shared scope), `mcp` (servers). Config hot reload via `watchConfig()` (fs.watch on janus.json + .janus/config.json).
 
 ## Dependencies
 
-12 runtime: @anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod
-1 optional: playwright (for browser tool)
-4 dev: @types/better-sqlite3, tsx, typescript, vitest
+13 runtime: @anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, ws, yaml, zod
+1 optional: playwright (for headless browser tool)
+5 dev: @types/better-sqlite3, @types/ws, tsx, typescript, vitest
+Chrome Extension: esbuild (build tooling)
 
 ## Testing
 

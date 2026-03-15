@@ -1,5 +1,5 @@
 /**
- * Browser Operator — shared types for Janus ↔ Chrome Extension protocol.
+ * Browser Operator — shared types for Janus <-> Chrome Extension protocol.
  *
  * Frozen baseline v1:
  * - Janus = WS server on ws://127.0.0.1:19816
@@ -7,6 +7,47 @@
  * - Single tool: browser({ command, args })
  * - Snapshot: viewportOnly, maxElements=100, maxGroups=25
  */
+
+// ─── Protocol Version ────────────────────────────────────────────────
+
+/** Wire-protocol version. Bump when message shapes change. */
+export const protocolVersion = 1;
+
+/** Snapshot schema version. Bump when element/group shapes change. */
+export const schemaVersion = 1;
+
+// ─── Timeout Constants ──────────────────────────────────────────────
+
+export const LAUNCH_TIMEOUT_MS = 15_000;
+export const HANDSHAKE_TIMEOUT_MS = 10_000;
+export const COMMAND_TIMEOUT_MS = 10_000;
+export const RECONNECT_GRACE_MS = 20_000;
+
+// ─── Runtime State ──────────────────────────────────────────────────
+
+export type RuntimeState =
+  | 'idle'
+  | 'starting_ws'
+  | 'launching_browser'
+  | 'waiting_for_extension'
+  | 'ready'
+  | 'disconnected_temporarily'
+  | 'failed';
+
+// ─── Tab State ──────────────────────────────────────────────────────
+
+export type TabStatus = 'discovered' | 'controlled' | 'active' | 'stale' | 'closed';
+
+export interface TabState {
+  tabId: number;
+  url: string;
+  title: string;
+  active: boolean;
+  controlled: boolean;
+  status: TabStatus;
+  lastSeenAt: number;
+  snapshotVersion: number;
+}
 
 // ─── Commands ────────────────────────────────────────────────────────
 
@@ -24,7 +65,8 @@ export type BrowserCommandName =
   | 'scroll'
   | 'waitFor'
   | 'extractText'
-  | 'screenshot';
+  | 'screenshot'
+  | 'status';
 
 export interface BrowserCommand {
   id: string;
@@ -65,17 +107,11 @@ export type BrowserErrorCode =
 
 export interface ExtensionHello {
   type: 'hello';
+  protocolVersion: number;
   extensionVersion: string;
   profileId: string;
   activeTab?: { tabId: number; url: string; title: string };
-  capabilities: {
-    snapshot: boolean;
-    click: boolean;
-    type: boolean;
-    pressKey: boolean;
-    scroll: boolean;
-    screenshot: boolean;
-  };
+  capabilities: string[];
   browser: {
     name: string;
     version: string;
@@ -86,8 +122,10 @@ export interface ExtensionHello {
 export interface JanusWelcome {
   type: 'welcome';
   sessionId: string;
+  acceptedProtocolVersion: number;
   ready: boolean;
   policyMode: 'read_only' | 'controlled' | 'full';
+  enabledCapabilities: string[];
   snapshotConfig: SnapshotConfig;
 }
 
@@ -106,6 +144,7 @@ export const DEFAULT_SNAPSHOT_CONFIG: SnapshotConfig = {
 // ─── Snapshot ────────────────────────────────────────────────────────
 
 export interface PageSnapshot {
+  schemaVersion: number;
   snapshotVersion: number;
   page: PageMetadata;
   state: PageState;
@@ -213,8 +252,21 @@ export interface PolicyDecision {
 export const DANGEROUS_ACTION_TEXT = [
   'kup teraz', 'buy now', 'place order', 'pay', 'checkout',
   'zamawiam', 'potwierdzam zakup', 'confirm order', 'submit payment',
-  'proceed to payment', 'zapłać', 'finalize order',
+  'proceed to payment', 'zaplac', 'finalize order',
 ];
+
+// ─── Status Diagnostics ─────────────────────────────────────────────
+
+export interface RuntimeDiagnostics {
+  runtimeState: RuntimeState;
+  wsServerRunning: boolean;
+  extensionConnected: boolean;
+  sessionId: string | null;
+  activeTabCount: number;
+  lastHandshakeAt: number | null;
+  protocolVersion: number;
+  uptime: number;
+}
 
 // ─── Constants ───────────────────────────────────────────────────────
 

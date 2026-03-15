@@ -153,6 +153,18 @@ Rules:
 - increment on every fresh snapshot generation
 - invalidate older element refs when the snapshotVersion changes materially
 
+### 7.1a schemaVersion
+Type: number
+
+Meaning:
+Schema version for the snapshot structure itself.
+Allows future schema evolution without breaking consumers.
+
+Example: `{ snapshotVersion: 7, schemaVersion: 1 }`
+
+snapshotVersion tracks per-page snapshot generation count.
+schemaVersion tracks the snapshot format version.
+
 ### 7.2 page
 Type: object
 
@@ -700,6 +712,13 @@ Priority order:
 - 20 to 50 groups
 - if more content exists, return truncationApplied = true
 
+### Default snapshot config (from snapshotConfig in welcome handshake)
+- viewportOnly = true (elements outside viewport are excluded by default)
+- maxElements = 100
+- maxGroups = 25
+
+These defaults are sent during the welcome handshake and can be adjusted per session.
+
 ### Optional future modes
 - compact
 - standard
@@ -960,6 +979,27 @@ Returning giant text blobs instead of structured element objects.
 
 ### Anti-pattern 7
 No snapshotVersion or stale reference rules.
+
+---
+
+## 25a. Password masking
+
+Snapshots must never expose sensitive field values.
+
+Fields of type "password" must return:
+- valuePreview: null
+
+Credit card fields and other sensitive inputs should also be masked.
+
+---
+
+## 25b. Performance target
+
+Snapshot generation must complete within:
+- <= 100 ms
+
+Typical element count per snapshot:
+- 40–80 elements
 
 ---
 

@@ -24,17 +24,11 @@ export interface BrowserResponse {
 
 export interface ExtensionHello {
   type: 'hello';
+  protocolVersion: number;
   extensionVersion: string;
   profileId: string;
   activeTab?: { tabId: number; url: string; title: string };
-  capabilities: {
-    snapshot: boolean;
-    click: boolean;
-    type: boolean;
-    pressKey: boolean;
-    scroll: boolean;
-    screenshot: boolean;
-  };
+  capabilities: string[];
   browser: {
     name: string;
     version: string;
@@ -45,8 +39,10 @@ export interface ExtensionHello {
 export interface JanusWelcome {
   type: 'welcome';
   sessionId: string;
+  acceptedProtocolVersion: number;
   ready: boolean;
   policyMode: string;
+  enabledCapabilities: string[];
   snapshotConfig: {
     viewportOnly: boolean;
     maxElements: number;
