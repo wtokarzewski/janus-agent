@@ -1,8 +1,8 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 373 passing tests.
+Canonical list of implemented, working features. Verified against source code and 374 passing tests.
 
-**Last updated:** 2026-03-11
+**Last updated:** 2026-03-15
 
 ---
 
@@ -19,6 +19,10 @@ Canonical list of implemented, working features. Verified against source code an
 - **Graceful shutdown flush** — SIGTERM/SIGINT triggers session flush before abort (double-signal = force exit). `memoryFlushInterval` default lowered from 10 to 5 messages for more frequent persistence.
 - **Diagnostic timing logs** — Full pipeline observability: Telegram incoming → lane semaphore → context build → LLM call → tool execution → flush → summarization, with durations.
 - **Leaked control token stripping** — Sanitizes LLM control tokens (`<|endoftext|>`, `[INST]`, `<<SYS>>`, `<s>`) from user-facing output before delivery.
+- **Invisible Unicode stripping** — Strips zero-width spaces, Mongolian vowel separators, and other invisible chars before gate/deny pattern checks. Prevents regex bypass.
+- **Compaction hardening** — Double-fire guard (no concurrent compaction on same session), post-compaction sanity check (verifies token reduction), task-aware summarization (preserves active task context).
+- **Compaction notifications** — "Porządkuję pamięć..." on start, "Gotowe, pamięć uporządkowana." on completion.
+- **SSRF guard** — Blocks private/reserved IPs (localhost, 10.x, 172.16-31.x, 192.168.x, link-local, cloud metadata) in web_fetch and browser tools.
 
 ## LLM Providers (8)
 
@@ -38,14 +42,15 @@ Three auth modes (mutually exclusive):
 - **Native OAuth (PKCE)** — Browser-based login for Anthropic + Codex with auto-refresh. File-based token storage (`~/.janus/auth.json`, 0o600).
 - **Extended thinking** — `llm.thinking.enabled` + `budgetTokens`. Thinking levels: off/minimal/low/medium/high.
 - **Prompt caching** — `cache_control: ephemeral` on system prompt + last tool def. Timestamp in dynamic session tail for cache stability.
-- **Multi-provider failover** — Priority-ordered list, automatic failover on error. Purpose-based routing (chat, summarize, flush).
+- **Multi-provider failover** — Priority-ordered list, automatic failover on error. Purpose-based routing (chat, summarize, flush). RESOURCE_EXHAUSTED/overload detection, rate-limit hardening (rate_limit, too many requests), HTTP 422 classification (billing vs format errors).
+- **toolChoice support** — `auto`/`none`/`required` with automatic fallback if provider rejects. Wired through Anthropic (required→any mapping) and OpenAI providers.
 - **Multi-provider OAuth** — `providers[]` array with per-provider `auth` field (api_key/oauth/cli). Shared `FileTokenStore` across providers. Supports mixed auth (e.g., Anthropic OAuth primary + Codex OAuth fallback).
 - **Dynamic model listing** — Setup wizard fetches models from provider APIs (Anthropic `/v1/models`, OpenAI `/v1/models`). Filters non-chat models from OpenAI. Falls back to manual input on fetch failure.
 - **Streaming** — `chatStream()` on Anthropic + OpenAI-compatible providers. Real-time chunk delivery via MessageBus to CLI and Telegram.
 - **Structured output** — Subscription providers use JSON schema enforcement via `sdk-utils.ts` (~99% reliability + fallback parsing).
 - **Setup wizard** — Interactive first-run config. Detects API key vs subscription. Fallback provider selection. `/config` command for reconfiguration.
 
-## Tools (15)
+## Tools (16)
 
 | Tool | Description |
 |------|-------------|
@@ -58,9 +63,10 @@ Three auth modes (mutually exclusive):
 | `message` | Send message to user via bus. |
 | `spawn_agent` | Spawn child agent for subtasks (minimal prompt, isolated session). |
 | `cron` | Create, list, update, delete persistent cron jobs. |
-| `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards, browser User-Agent). |
+| `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards, CAPTCHA detection, Jina Reader option, SSRF guard). |
 | `web_search` | Web search (Brave API or DuckDuckGo fallback, in-memory cache 15min TTL). |
-| `browser` | Headless Chromium via Playwright (optional dep). 3rd tier: search→fetch→browser. Supports wait_for, click, fill, extract. |
+| `browser` | Headless Chromium via Playwright (optional dep). Fallback for JS-heavy pages. |
+| `browser` (operator) | **Real Chrome** via dedicated extension + WebSocket. Snapshot-centric. Auto-launches Chrome with dedicated profile. 30min idle timeout. Safety policy blocks checkout/payment. |
 | `heartbeat` | Manage periodic heartbeat tasks. |
 | `self_update` | Check/apply updates (git pull, npm install, test, self-respawn, auto-revert). |
 | `invite` | Generate Telegram invite links for new user onboarding. |
@@ -68,10 +74,25 @@ Three auth modes (mutually exclusive):
 ### Tool Infrastructure
 
 - **Tool registry** — Centralized tool registration with per-user allow/deny lists.
+- **Owner-only tools** — `ownerOnly` flag on tool definitions. `ownerIds` in config (defaults to first user). Enforced in ToolRegistry + filtered from system prompt for non-owners.
 - **Gate integration** — Pattern-based confirmation before destructive commands.
-- **Context injection** — Tools receive workspace dir, chatId, userId.
+- **Context injection** — Tools receive workspace dir, chatId, userId, browser config.
 - **Result truncation** — Tool output capped at 4000 chars.
 - **Retry** — Automatic retry on tool failure (configurable, default 2x).
+
+### Browser Operator
+
+Real-browser automation via Chrome Extension. Controls a dedicated Chrome profile through structured snapshots.
+
+- **Architecture:** Agent → browser tool → WS server (127.0.0.1:19816) → Chrome Extension → web page
+- **Snapshot engine** — Viewport-only, max 100 elements, visual reading order, semantic hints (search_input, product_price, cookie_accept), CAPTCHA detection, password masking, schemaVersion
+- **Actions** — click (with URL change detection), type (with value verification), pressKey, scroll, navigate, waitFor (domStable, urlMatches, textVisible, elementExists)
+- **Runtime** — State machine (idle→starting→ready→disconnected→failed), reconnect grace period (20s), exponential backoff in extension (1s→30s), chrome.storage.session persistence
+- **Lifecycle** — Lazy start on first call, Chrome stays alive between tasks, closeBrowser for explicit shutdown, 30min idle auto-close
+- **Safety** — Dangerous action text blocking (checkout, payment, buy now), read-only default policy
+- **Popup UI** — Extension toolbar icon with real-time status (connected/disconnected), session info, capabilities
+- **Config** — `browserOperator` section in janus.json (chromePath, profileDir, extensionDir, wsPort)
+- **Protocol** — Versioned handshake (protocolVersion + capabilities negotiation), tab lifecycle store
 
 ## Memory System
 
@@ -93,8 +114,8 @@ Three auth modes (mutually exclusive):
 
 | Channel | Features |
 |---------|----------|
-| **CLI** | Interactive REPL, single-message mode (`-m`), persistent history (~/.janus/history), `/help` and `/config` commands, inline streaming output, gate confirmation via readline. |
-| **Telegram** | Grammy bot, user allowlist, streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami` diagnostic, `/stop` command, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup, bot.start() background error catch, forum/topic session isolation (per-topic sessions in forum supergroups), group mention policy (`groupPolicy: all\|mention`), voice message transcription (Groq Whisper, auto-transcribe to text). |
+| **CLI** | Interactive REPL, single-message mode (`-m`), persistent history (~/.janus/history), `/help`, `/config`, `/model`, `/stop` commands, inline streaming output, gate confirmation via readline. |
+| **Telegram** | Grammy bot, user allowlist (denyByDefault), streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami`, `/stop`, `/model` commands, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup, forum/topic session isolation, group mention policy (`groupPolicy: all\|mention`), voice message transcription (Groq Whisper), message dedup (hash-based, 30s window). |
 | **MCP Server** | JSON-RPC 2.0 over stdio. Exposes tools and prompts to editors (VS Code, Cursor, Claude Code). Tool bridge maps ToolRegistry to MCP protocol. |
 | **MCP Client** | Connect to external MCP servers. Config-driven `mcp.servers[]`. Auto-discover tools, register as `mcp_{server}_{tool}`. |
 
@@ -106,7 +127,7 @@ Three auth modes (mutually exclusive):
 - **TelegramGate** — Inline keyboard (Approve / Deny) confirmation. 60s timeout (auto-deny).
 - **Wired into ToolRegistry** — Gate check runs before every tool execution.
 - **Path validation** — `realpathSync()` + workspace prefix check on all file tools. Symlink safety. Cross-platform (`path.sep`). User-scoped access enforcement in family chats (users can only access their own `.janus/users/{id}/` directory).
-- **Obfuscation detection** — 8 patterns (base64 pipe, xxd, eval, etc.) + whitelist in PatternGate.
+- **Obfuscation detection** — 8 patterns (base64 pipe, xxd, eval, etc.) + whitelist in PatternGate. URL stripping before check (prevents false positives from URLs containing "bash").
 - **Gate on file writes** — 11 sensitive path patterns (/etc, .ssh, .env, .git/config, etc.).
 - **Gate on spawn_agent** — Always gated with task preview.
 - **Process group kill** — `spawn({detached:true})` + `kill(-pid)` on exec timeout.
@@ -119,6 +140,7 @@ Three auth modes (mutually exclusive):
   - Run history tracking, exponential backoff on consecutive errors (30s → 60s → 5m → 15m → 1h).
   - Missed job staggering: jobs >1 min late after restart spread 30s apart to prevent LLM overload.
   - Per-user job ownership: userId column (migration 6), ownership enforcement on update/delete/list.
+  - Custom session IDs: optional sessionId per cron job — reuse same session across runs (migration 7).
   - CRUD: addJob, updateJob, removeJob, listJobs, getRuns.
 - **HeartbeatService** — Parses `HEARTBEAT.md` for periodic tasks.
   - Supports `every Xm/h/d` and cron expressions.
@@ -156,7 +178,7 @@ Three auth modes (mutually exclusive):
 - **Keyword similarity** — Finds similar past tasks by keyword overlap.
 - **Recommendations** — Returns avgDuration, avgIterations, avgToolCalls, successRate from similar executions. Wired into system prompt via context builder.
 
-## Skills (7)
+## Skills (9)
 
 - **SKILL.md format** — YAML frontmatter (name, description, version, always, requires) + markdown body.
 - **3-source loading** — workspace/skills → ~/.janus/skills → builtin/skills.
@@ -175,6 +197,8 @@ Three auth modes (mutually exclusive):
 | `google-workspace` | Gmail, Calendar, Drive, Contacts, Sheets, Docs via `gog` CLI. |
 | `personal-travel` | Travel planning, documents, wishlists, budgets. |
 | `github` | GitHub operations via `gh` CLI: repos, issues, PRs, CI, releases, gists, search. |
+| `skill-creator` | Meta-skill for creating new SKILL.md files from repeated task patterns. |
+| `browser-operator` | Real browser automation guide — workflow patterns, snapshot interpretation, rules, error recovery. |
 
 ## Sessions
 
@@ -189,7 +213,7 @@ Assembles system prompt from multiple sources:
 
 | # | Section | Source | In minimal mode |
 |---|---------|--------|-----------------|
-| 1 | Identity | Built-in (timestamp, workspace, available tools) | Yes |
+| 1 | Identity | Built-in (date, workspace, available tools) | Yes |
 | 2 | User profile | Per-user PROFILE.md | Yes |
 | 3 | Ego | `~/.janus/EGO.md` | No |
 | 4 | Agents | `./AGENTS.md` + per-user override | No |
@@ -201,13 +225,17 @@ Assembles system prompt from multiple sources:
 
 Subagents use minimal mode (identity + user + skills only) to save tokens.
 
+- **All behavioral instructions externalized to AGENTS.md** — context-builder code has zero hardcoded rules. All tool usage rules, skill instructions, and behavioral guidance live in editable .md files.
+- **Date-only timestamp** — ISO date (no time) in session info maximizes Anthropic prompt cache hits within a day.
+
 ## Bootstrap Files
 
 | File | Scope | Purpose |
 |------|-------|---------|
 | `~/.janus/EGO.md` | Global | Agent character and personality |
+| `~/.janus/chrome-profile/` | Global | Dedicated Chrome profile for Browser Operator |
 | `./JANUS.md` | Per-repo | Project-specific instructions (like CLAUDE.md) |
-| `./AGENTS.md` | Per-workspace | Agent behavior rules |
+| `./AGENTS.md` | Per-workspace | Agent behavior rules (all behavioral instructions live here) |
 | `./HEARTBEAT.md` | Per-workspace | Autonomous periodic tasks |
 | `.janus/users/{id}/PROFILE.md` | Per-user | User preferences and identity |
 | `.janus/users/{id}/AGENTS.md` | Per-user | Agent behavior override (appended to global) |
@@ -217,7 +245,8 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 ## Database
 
 - **SQLite** (better-sqlite3), WAL mode, numbered migrations.
-- **6 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id), per-user cron (user_id column).
+- **7 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id), per-user cron (user_id column), cron session IDs (session_id column).
+- **Memory write validation** — Verify write succeeded by reading back. After 3 consecutive failures, dump to timestamped backup file.
 - **Graceful fallback** — File-based storage when database disabled.
 
 ## Configuration
@@ -226,21 +255,25 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 
 | Section | Key settings |
 |---------|-------------|
-| `llm` | provider, model, apiKey, apiBase, maxTokens, temperature, providers[] |
-| `agent` | maxIterations, tokenBudget, contextWindow, toolRetries, maxSubagentIterations, maxSkillsInPrompt, lanes (user/cron/heartbeat concurrency) |
+| `llm` | provider, model, apiKey, apiBase, maxTokens, temperature (default 0.3), toolChoice, providers[] |
+| `agent` | maxIterations (30), tokenBudget (750K), contextWindow (1M), summarizationThreshold (40), toolRetries, lanes |
 | `workspace` | dir, memoryDir, sessionsDir, skillsDir |
 | `tools` | execTimeout, execDenyPatterns[], maxFileSize |
 | `database` | enabled, path |
 | `heartbeat` | enabled, checkIntervalMs |
-| `telegram` | enabled, token, allowlist[], groupPolicy (all\|mention) |
+| `telegram` | enabled, token, allowlist[], denyByDefault (true), groupPolicy (all\|mention) |
 | `streaming` | enabled, telegramThrottleMs |
 | `gates` | enabled, execPatterns[] |
 | `voice` | enabled, provider (groq), apiKey, language, maxDurationSec |
-| `memory` | vectorSearch |
+| `memory` | vectorSearch, vectorWeight, textWeight, recentDays |
+| `browserOperator` | chromePath, profileDir, extensionDir, wsPort (19816) |
 | `users[]` | id, name, identities[], tools{allow,deny}, skills{allow,deny} |
+| `ownerIds` | User IDs with elevated privileges (owner-only tools) |
 | `family` | id, name, groupChatIds[] |
 
 Load priority: defaults < user config < workspace config < env vars.
+
+**Config hot reload** — `watchConfig()` watches janus.json + .janus/config.json with 500ms debounce. Changes take effect without restart in gateway mode.
 
 ## Infrastructure
 
@@ -248,7 +281,8 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 373 tests across 38 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 374 tests across 38 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Chrome Extension build** — esbuild pipeline for Browser Operator extension (background + content + popup). `npm run build` / `npm run watch` in chrome-extension/.
 
 ## Commands
 
