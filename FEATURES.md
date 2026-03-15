@@ -21,7 +21,7 @@ Canonical list of implemented, working features. Verified against source code an
 - **Leaked control token stripping** — Sanitizes LLM control tokens (`<|endoftext|>`, `[INST]`, `<<SYS>>`, `<s>`) from user-facing output before delivery.
 - **Invisible Unicode stripping** — Strips zero-width spaces, Mongolian vowel separators, and other invisible chars before gate/deny pattern checks. Prevents regex bypass.
 - **Compaction hardening** — Double-fire guard (no concurrent compaction on same session), post-compaction sanity check (verifies token reduction), task-aware summarization (preserves active task context).
-- **Compaction notifications** — "Porządkuję pamięć..." on start, "Gotowe, pamięć uporządkowana." on completion.
+- **Compaction notifications** — Silent background summarization with ⏳ status indicator.
 - **SSRF guard** — Blocks private/reserved IPs (localhost, 10.x, 172.16-31.x, 192.168.x, link-local, cloud metadata) in web_fetch and browser tools.
 
 ## LLM Providers (8)
@@ -88,7 +88,7 @@ Real-browser automation via Chrome Extension. Controls a dedicated Chrome profil
 - **Snapshot engine** — Viewport-only, max 100 elements, visual reading order, semantic hints (search_input, product_price, cookie_accept), CAPTCHA detection, password masking, schemaVersion
 - **Actions** — click (with URL change detection), type (with value verification), pressKey, scroll, navigate, waitFor (domStable, urlMatches, textVisible, elementExists)
 - **Runtime** — State machine (idle→starting→ready→disconnected→failed), reconnect grace period (20s), exponential backoff in extension (1s→30s), chrome.storage.session persistence
-- **Lifecycle** — Lazy start on first call, Chrome stays alive between tasks, closeBrowser for explicit shutdown, 30min idle auto-close
+- **Lifecycle** — Lazy start on first call, Chrome stays alive between tasks (setContext preserves runtime across messages), closeBrowser for explicit shutdown, 30min idle auto-close, EADDRINUSE recovery with retry
 - **Safety** — Dangerous action text blocking (checkout, payment, buy now), read-only default policy
 - **Popup UI** — Extension toolbar icon with real-time status (connected/disconnected), session info, capabilities
 - **Config** — `browserOperator` section in janus.json (chromePath, profileDir, extensionDir, wsPort)

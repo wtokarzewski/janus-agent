@@ -58,6 +58,10 @@ export class BrowserWsServer {
   /** Start WebSocket server. Idempotent — does nothing if already running. */
   start(): void {
     if (this.wss) return;
+    // Recover from previous failed state (e.g. EADDRINUSE that was resolved)
+    if (this._runtimeState === 'failed') {
+      this.transitionTo('idle');
+    }
 
     this.transitionTo('starting_ws');
     this.startedAt = Date.now();
@@ -66,6 +70,25 @@ export class BrowserWsServer {
     log.info(`Browser WS server listening on ws://127.0.0.1:${BROWSER_WS_PORT}`);
 
     this.transitionTo('waiting_for_extension');
+
+    this.setupConnectionHandler();
+
+    this.wss.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        log.warn(`Browser WS port ${BROWSER_WS_PORT} already in use — previous server still running`);
+        // Clean up failed instance so retry can work
+        this.wss?.close();
+        this.wss = null;
+        this.transitionTo('idle');
+      } else {
+        log.error(`Browser WS server error: ${err.message}`);
+        this.transitionTo('failed');
+      }
+    });
+  }
+
+  private setupConnectionHandler(): void {
+    if (!this.wss) return;
 
     this.wss.on('connection', (ws) => {
       log.info('Browser extension connected');
@@ -104,11 +127,6 @@ export class BrowserWsServer {
       ws.on('error', (err) => {
         log.error(`Browser WS error: ${err.message}`);
       });
-    });
-
-    this.wss.on('error', (err) => {
-      log.error(`Browser WS server error: ${err.message}`);
-      this.transitionTo('failed');
     });
   }
 
