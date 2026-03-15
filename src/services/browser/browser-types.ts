@@ -66,6 +66,7 @@ export type BrowserCommandName =
   | 'waitFor'
   | 'extractText'
   | 'screenshot'
+  | 'dismissCookies'
   | 'status'
   | 'closeBrowser';
 

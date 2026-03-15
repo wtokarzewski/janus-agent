@@ -168,3 +168,4 @@ export class MyTool implements Tool {
 - No circular imports between modules
 - No custom Error subclasses
 - No unnecessary abstractions — three similar lines > premature helper
+- **No hardcoded domain-specific data** — no walls of language-specific strings, site-specific selectors, or localized text patterns inline in code. Use structural/heuristic detection instead (DOM structure, CSS properties, ARIA roles). If domain-specific definitions are needed, extract them to a dedicated file (e.g. `consent.ts`) — never scatter them across implementation files. This prevents tech debt and keeps code language/site-agnostic.
