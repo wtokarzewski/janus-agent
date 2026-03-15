@@ -896,7 +896,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     log.info(`[${sessionKey}] Summarization: start`);
     // Notify user that context is being compressed (C6)
     this.deps.bus.publishOutbound({
-      chatId, channel, content: '[Compressing context...]', timestamp: new Date(),
+      chatId, channel, content: 'Porządkuję pamięć...', timestamp: new Date(),
     }, new AbortController().signal).catch(() => {});
     const sumStart = Date.now();
     const halfIdx = Math.floor(messages.length / 2);
