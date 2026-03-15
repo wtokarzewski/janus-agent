@@ -941,19 +941,67 @@ Acceptance:
   - forms
   - dashboards
 
-### Phase 8: domain packs
-Goal:
-Add optional specialized higher-level helpers without polluting the core.
+### Phase 8: domain packs / helpers (not yet started)
 
-Examples:
-- shopping helper pack
-- research helper pack
-- forms helper pack
-- monitoring helper pack
+Status: **informational only — no code yet**
+
+Goal:
+Add optional domain helpers that improve agent performance on common website patterns. The browser operator must remain fully functional without Phase 8. This phase is only an optimization layer.
+
+Design principles:
+1. Domain helpers must remain optional.
+2. The agent must be able to do everything using snapshot + actions alone.
+3. Helpers should never hide the browser model from the agent.
+4. Helpers should simplify common extraction tasks, not replace reasoning.
+
+#### Shopping helpers
+
+Possible utilities:
+- extractOffers(snapshot) — find product cards, group title + price + link
+- normalizePrice(text) — parse "49,99 zł" → { value: 49.99, currency: "PLN" }
+- groupProducts(snapshot) — cluster elements by proximity or shared container
+- compareOffers(offers) — sort by total price (product + shipping)
+
+Target sites: Allegro, Amazon, eBay, Ceneo, store fronts.
+
+#### Article / knowledge helpers
+
+Possible utilities:
+- extractArticleContent(snapshot) — main content block extraction
+- extractHeadings(snapshot) — page outline from heading elements
+- summarizePage(snapshot) — compact page summary for LLM context
+
+Target sites: Wikipedia, blogs, documentation, news articles.
+
+#### Search result helpers
+
+Possible utilities:
+- extractSearchResults(snapshot) — structured result list with title + url + snippet
+- rankSearchResults(results) — relevance ordering
+
+Target sites: Google, DuckDuckGo, Bing, site-internal search.
+
+#### Non-goals for Phase 8
+
+Do NOT:
+- introduce site-specific scraping logic
+- hardcode marketplace APIs
+- bypass the snapshot model
+- introduce CDP-level automation
+
+Phase 8 should remain lightweight, generic, and optional.
+
+#### When Phase 8 should begin
+
+Phase 8 should start only after:
+1. The browser operator works reliably on real websites.
+2. Several real tasks have been tested (shopping, search, article reading).
+3. We observe repeated patterns where helper utilities would improve agent performance.
 
 Acceptance:
 - core stays generic
 - domain helpers are optional layers
+- agent works equally well without helpers loaded
 
 ---
 
