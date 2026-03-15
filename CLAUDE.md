@@ -95,6 +95,10 @@ npm run typecheck   # TypeScript type checking
 
 ## Conventions
 
+See **[CODING.md](CODING.md)** for full coding standards (naming, imports, types, errors, testing, module structure).
+
+Summary:
 - TypeScript, ESM (`"type": "module"`)
 - Code and comments in English
 - No references to other projects in code
+- Follow patterns established in existing code — see CODING.md before writing new code
