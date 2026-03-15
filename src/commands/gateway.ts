@@ -6,6 +6,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadConfig, watchConfig } from '../config/config.js';
+import { stopBrowserRuntime } from '../tools/builtin/browser-operator.js';
 import { createApp } from '../bootstrap.js';
 import { Bot } from 'grammy';
 import { TelegramChannel } from '../channels/telegram-channel.js';
@@ -179,6 +180,7 @@ export async function runGateway(): Promise<void> {
   }
 
   await app.agent.flushAllSessions();
+  stopBrowserRuntime();
   ac.abort();
   await Promise.allSettled([agentPromise, dispatcherPromise]);
 }

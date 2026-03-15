@@ -75,6 +75,9 @@ export class WebFetchTool implements ContextualTool {
       });
 
       if (!response.ok) {
+        if (response.status === 403 || response.status === 429) {
+          return `Error: Blocked by ${new URL(finalUrl).hostname} (HTTP ${response.status}). Do not retry this site — give the user a direct link instead.`;
+        }
         return `Error: HTTP ${response.status} ${response.statusText}`;
       }
 
@@ -113,6 +116,10 @@ export class WebFetchTool implements ContextualTool {
         extractor = 'json';
       } else if (contentType.includes('html')) {
         text = htmlToMarkdown(raw);
+        // Detect CAPTCHA / bot-blocking pages
+        if (isBlockingPage(raw, text)) {
+          return `Error: Blocked by ${new URL(finalUrl).hostname} (CAPTCHA or bot detection). Do not retry this site — give the user a direct link instead.`;
+        }
         extractor = 'html';
       } else {
         text = raw;
@@ -259,4 +266,28 @@ function stripTags(html: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, ' ');
+}
+
+/** Detect CAPTCHA / bot-blocking pages from raw HTML + extracted text. */
+function isBlockingPage(rawHtml: string, extractedText: string): boolean {
+  const htmlLower = rawHtml.toLowerCase();
+  const textLower = extractedText.toLowerCase();
+
+  // CAPTCHA indicators in HTML
+  const captchaSignals = [
+    'captcha', 'recaptcha', 'hcaptcha', 'cf-challenge', 'challenge-platform',
+    'just a moment', 'checking your browser', 'verify you are human',
+    'ray id', 'cloudflare',
+  ];
+  const htmlMatches = captchaSignals.filter(s => htmlLower.includes(s));
+  if (htmlMatches.length >= 2) return true;
+
+  // Very short extracted text from a full HTML page = likely blocked
+  if (rawHtml.length > 5000 && extractedText.trim().length < 200) return true;
+
+  // Direct text indicators
+  if (textLower.includes('access denied') || textLower.includes('please verify')
+    || textLower.includes('enable javascript and cookies')) return true;
+
+  return false;
 }

@@ -125,6 +125,17 @@ const VoiceSchema = z.object({
   maxDurationSec: z.number().default(300),
 });
 
+const BrowserOperatorSchema = z.object({
+  /** Path to Chrome/Chromium binary. Auto-detected if not set. */
+  chromePath: z.string().optional(),
+  /** Path to dedicated Janus Chrome profile. Default: ~/.janus/chrome-profile */
+  profileDir: z.string().optional(),
+  /** Path to chrome-extension/ folder. Default: ./chrome-extension */
+  extensionDir: z.string().optional(),
+  /** WebSocket server port. Default: 19816 */
+  wsPort: z.number().default(19816),
+});
+
 const MCPServerSpecSchema = z.object({
   name: z.string(),
   command: z.string(),
@@ -209,6 +220,7 @@ export const JanusConfigSchema = z.object({
   memory: MemorySchema.optional().transform(v => MemorySchema.parse(v ?? {})),
   voice: VoiceSchema.optional().transform(v => VoiceSchema.parse(v ?? {})),
   mcp: MCPSchema.optional().transform(v => MCPSchema.parse(v ?? {})),
+  browserOperator: BrowserOperatorSchema.optional().transform(v => BrowserOperatorSchema.parse(v ?? {})),
   autoUpdate: AutoUpdateSchema.optional().transform(v => AutoUpdateSchema.parse(v ?? {})),
   users: z.array(UserProfileSchema).default([]),
   /** User IDs with owner privileges (owner-only tools, admin actions). Defaults to first user. */
