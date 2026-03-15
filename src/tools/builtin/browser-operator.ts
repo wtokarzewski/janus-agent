@@ -15,8 +15,23 @@ import * as log from '../../utils/logger.js';
 const VALID_COMMANDS: BrowserCommandName[] = [
   'ping', 'openTab', 'focusTab', 'closeTab', 'navigate', 'getCurrentUrl',
   'snapshot', 'click', 'type', 'pressKey', 'scroll', 'waitFor',
-  'extractText', 'screenshot', 'status',
+  'extractText', 'screenshot', 'status', 'closeBrowser',
 ];
+
+const BROWSER_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function resetIdleTimer(): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    if (runtime?.ready) {
+      log.info('Browser: idle timeout (30m) — closing Chrome');
+      runtime.stop();
+      runtime = null;
+    }
+    idleTimer = null;
+  }, BROWSER_IDLE_TIMEOUT_MS);
+}
 
 // Singleton runtime — shared across tool invocations
 let runtime: BrowserRuntime | null = null;
@@ -31,19 +46,25 @@ function getRuntime(): BrowserRuntime {
 
 export class BrowserOperatorTool implements ContextualTool {
   name = 'browser';
-  description = 'Control a real Chrome browser through a dedicated extension. Use for web research, shopping, form filling, and any task requiring real browser interaction. Commands: ping, snapshot, click, type, pressKey, scroll, navigate, openTab, focusTab, closeTab, getCurrentUrl, waitFor, extractText, screenshot, status. The browser uses structured page snapshots — request a snapshot first, then act on element references (e1, e2, etc.). Use status to check runtime diagnostics.';
+  description = 'Control a real Chrome browser through a dedicated extension. Use for web research, shopping, form filling, and any task requiring real browser interaction. Commands: ping, snapshot, click, type, pressKey, scroll, navigate, openTab, focusTab, closeTab, getCurrentUrl, waitFor, extractText, screenshot, status, closeBrowser. The browser uses structured page snapshots — request a snapshot first, then act on element references (e1, e2, etc.). Chrome stays open between tasks. Use closeBrowser when done or it auto-closes after 30 min idle.';
 
   setContext(ctx: ToolContext): void {
-    runtimeConfig = {
+    const newConfig = {
       profileDir: ctx.browserProfileDir,
       extensionDir: ctx.browserExtensionDir,
       chromePath: ctx.browserChromePath,
     };
-    // Reset runtime if config changed so it picks up new paths
-    if (runtime) {
-      runtime.stop();
+    // Only reset runtime if config actually changed (don't kill Chrome on every message)
+    const configChanged = runtime && (
+      newConfig.profileDir !== runtimeConfig.profileDir ||
+      newConfig.extensionDir !== runtimeConfig.extensionDir ||
+      newConfig.chromePath !== runtimeConfig.chromePath
+    );
+    if (configChanged) {
+      runtime!.stop();
       runtime = null;
     }
+    runtimeConfig = newConfig;
   }
 
   parameters = {
@@ -77,6 +98,17 @@ export class BrowserOperatorTool implements ContextualTool {
       return JSON.stringify(rt.getStatus(), null, 2);
     }
 
+    // Close browser — explicit user request to shut down Chrome
+    if (command === 'closeBrowser') {
+      if (rt.ready) {
+        rt.stop();
+        runtime = null;
+        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+        return 'Browser closed.';
+      }
+      return 'Browser is not running.';
+    }
+
     // Ensure runtime is up (lazy start)
     try {
       await rt.ensureRunning();
@@ -98,8 +130,9 @@ export class BrowserOperatorTool implements ContextualTool {
       return `Error: Blocked by safety policy. ${policy.reason}`;
     }
 
-    // Send to extension
+    // Send to extension + reset idle timer
     log.info(`Browser: ${command} ${JSON.stringify(cmdArgs).slice(0, 200)}`);
+    resetIdleTimer();
     const response = await rt.server.send(browserCommand);
 
     if (!response.ok) {

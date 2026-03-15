@@ -8,7 +8,7 @@ describe('JanusConfigSchema', () => {
     expect(config.llm.provider).toBe('openrouter');
     expect(config.llm.maxTokens).toBe(4096);
     expect(config.llm.temperature).toBe(0.3);
-    expect(config.agent.maxIterations).toBe(20);
+    expect(config.agent.maxIterations).toBe(30);
     expect(config.agent.toolRetries).toBe(2);
     expect(config.workspace.dir).toBe('.');
     expect(config.workspace.memoryDir).toBe('memory');

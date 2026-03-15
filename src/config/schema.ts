@@ -40,8 +40,8 @@ const LanesSchema = z.object({
 });
 
 const AgentSchema = z.object({
-  maxIterations: z.number().default(20),
-  summarizationThreshold: z.number().default(20),
+  maxIterations: z.number().default(30),
+  summarizationThreshold: z.number().default(40),
   tokenBudget: z.number().default(750_000),
   contextWindow: z.number().default(1_000_000),
   toolRetries: z.number().default(2),

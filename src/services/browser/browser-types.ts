@@ -66,7 +66,8 @@ export type BrowserCommandName =
   | 'waitFor'
   | 'extractText'
   | 'screenshot'
-  | 'status';
+  | 'status'
+  | 'closeBrowser';
 
 export interface BrowserCommand {
   id: string;
