@@ -135,7 +135,19 @@ export class BrowserOperatorTool implements ContextualTool {
     // Send to extension + reset idle timer
     log.info(`Browser: ${command} ${JSON.stringify(cmdArgs).slice(0, 200)}`);
     resetIdleTimer();
-    const response = await rt.server.send(browserCommand);
+    let response = await rt.server.send(browserCommand);
+
+    // Auto-retry once on extension_unavailable (service worker may need to wake up)
+    if (!response.ok && response.error?.code === 'extension_unavailable') {
+      log.info('Browser: extension unavailable, waiting for reconnection...');
+      try {
+        await rt.ensureRunning();
+        const retryCommand = { ...browserCommand, id: randomUUID() };
+        response = await rt.server.send(retryCommand);
+      } catch {
+        // Fall through to error handling below
+      }
+    }
 
     if (!response.ok) {
       const err = response.error;

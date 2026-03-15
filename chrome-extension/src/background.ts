@@ -131,6 +131,22 @@ function scheduleReconnect(): void {
   }, finalDelay);
 }
 
+// ─── Keep-Alive ──────────────────────────────────────────────────────
+// MV3 service workers can be suspended after ~30s of inactivity.
+// Periodic alarm keeps the worker alive and ensures WS reconnection.
+
+const KEEP_ALIVE_ALARM = 'janus-keepalive';
+
+chrome.alarms.create(KEEP_ALIVE_ALARM, { periodInMinutes: 0.4 }); // ~24s
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== KEEP_ALIVE_ALARM) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.log('[Janus] Keep-alive: WS not connected, reconnecting...');
+    connect();
+  }
+});
+
 function send(data: unknown): void {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(data));
