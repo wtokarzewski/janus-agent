@@ -161,12 +161,19 @@ function buildSnapshot(config?: { viewportOnly: boolean; maxElements: number; ma
 
 // ─── Actions ─────────────────────────────────────────────────────────
 
-function clickElement(elementId: string): { ok: boolean; result?: unknown; error?: unknown } {
+async function clickElement(elementId: string): Promise<{ ok: boolean; result?: unknown; error?: unknown }> {
   const el = currentElements.get(elementId);
   if (!el) return { ok: false, error: { code: 'element_not_found', message: `Element ${elementId} not found (snapshot v${snapshotVersion})`, recoverable: true, suggestedNextStep: 'Request a new snapshot' } };
 
+  const urlBefore = location.href;
   (el as HTMLElement).click();
-  return { ok: true, result: { clicked: elementId } };
+
+  // Post-action verification: detect if click caused navigation or DOM change
+  await sleep(300);
+  const urlChanged = location.href !== urlBefore;
+  const snapshotStale = urlChanged; // navigation invalidates snapshot
+
+  return { ok: true, result: { clicked: elementId, urlChanged, snapshotStale, newUrl: urlChanged ? location.href : undefined } };
 }
 
 function typeIntoElement(elementId: string, text: string, clear: boolean): { ok: boolean; result?: unknown; error?: unknown } {
@@ -179,7 +186,11 @@ function typeIntoElement(elementId: string, text: string, clear: boolean): { ok:
   input.value += text;
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
-  return { ok: true, result: { typed: text, elementId } };
+
+  // Verify value was set
+  const actualValue = input.value;
+  const verified = clear ? actualValue === text : actualValue.endsWith(text);
+  return { ok: true, result: { typed: text, elementId, verified, actualValue: actualValue.length > 80 ? actualValue.slice(0, 77) + '...' : actualValue } };
 }
 
 function pressKey(key: string): { ok: boolean; result?: unknown } {
