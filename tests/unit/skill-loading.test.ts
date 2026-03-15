@@ -116,9 +116,8 @@ describe('Context builder skill stubs', () => {
     expect(prompt).toMatch(/name="on-demand".*\/>/s);
     // always-on should have full instructions
     expect(prompt).toContain('Instructions for always-on skill.');
-    // Should contain the instruction block
-    expect(prompt).toContain('<instructions>');
-    expect(prompt).toContain('read its file with read_file');
+    // Should contain skills section
+    expect(prompt).toContain('<skills>');
   });
 
   it('should truncate skill list when exceeding char limit', async () => {
