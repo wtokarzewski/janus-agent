@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Tool } from '../types.js';
+import type { ContextualTool, ToolContext } from '../types.js';
 import { BrowserRuntime } from '../../services/browser/browser-runtime.js';
 import { checkPolicy } from '../../services/browser/browser-policy.js';
 import type { BrowserCommandName } from '../../services/browser/browser-types.js';
@@ -20,17 +20,31 @@ const VALID_COMMANDS: BrowserCommandName[] = [
 
 // Singleton runtime — shared across tool invocations
 let runtime: BrowserRuntime | null = null;
+let runtimeConfig: { profileDir?: string; extensionDir?: string; chromePath?: string } = {};
 
 function getRuntime(): BrowserRuntime {
   if (!runtime) {
-    runtime = new BrowserRuntime();
+    runtime = new BrowserRuntime(runtimeConfig);
   }
   return runtime;
 }
 
-export class BrowserOperatorTool implements Tool {
+export class BrowserOperatorTool implements ContextualTool {
   name = 'browser';
   description = 'Control a real Chrome browser through a dedicated extension. Use for web research, shopping, form filling, and any task requiring real browser interaction. Commands: ping, snapshot, click, type, pressKey, scroll, navigate, openTab, focusTab, closeTab, getCurrentUrl, waitFor, extractText, screenshot, status. The browser uses structured page snapshots — request a snapshot first, then act on element references (e1, e2, etc.). Use status to check runtime diagnostics.';
+
+  setContext(ctx: ToolContext): void {
+    runtimeConfig = {
+      profileDir: ctx.browserProfileDir,
+      extensionDir: ctx.browserExtensionDir,
+      chromePath: ctx.browserChromePath,
+    };
+    // Reset runtime if config changed so it picks up new paths
+    if (runtime) {
+      runtime.stop();
+      runtime = null;
+    }
+  }
 
   parameters = {
     type: 'object',

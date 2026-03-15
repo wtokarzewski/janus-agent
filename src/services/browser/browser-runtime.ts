@@ -37,11 +37,13 @@ export class BrowserRuntime {
   private chromeProcess: ChildProcess | null = null;
   private profileDir: string;
   private extensionDir: string;
+  private chromePath: string | undefined;
 
-  constructor(opts?: { profileDir?: string; extensionDir?: string }) {
+  constructor(opts?: { profileDir?: string; extensionDir?: string; chromePath?: string }) {
     this.wsServer = new BrowserWsServer();
     this.profileDir = opts?.profileDir ?? resolve(process.env.HOME ?? '~', '.janus', 'chrome-profile');
     this.extensionDir = opts?.extensionDir ?? resolve(process.cwd(), 'chrome-extension');
+    this.chromePath = opts?.chromePath;
   }
 
   /** Runtime state from the WS server's state machine. */
@@ -89,25 +91,52 @@ export class BrowserRuntime {
   }
 
   private async launchChrome(): Promise<void> {
-    const chromePath = this.findChrome();
+    const chromePath = this.chromePath ?? this.findChrome();
     if (!chromePath) {
-      throw new Error('Chrome not found. Install Google Chrome or set CHROME_PATH env var.');
+      throw new Error(
+        'Chrome not found. Install Google Chrome or set CHROME_PATH env var.\n'
+        + '  macOS:   brew install --cask google-chrome\n'
+        + '  Linux:   apt install google-chrome-stable\n'
+        + '  Manual:  export CHROME_PATH=/path/to/chrome',
+      );
     }
 
     const extensionPath = resolve(this.extensionDir);
-    const hasExtension = existsSync(resolve(extensionPath, 'manifest.json'));
+    const hasManifest = existsSync(resolve(extensionPath, 'manifest.json'));
+    const hasBuilt = existsSync(resolve(extensionPath, 'dist', 'background.js'));
+
+    if (!hasManifest) {
+      throw new Error(
+        `Browser extension not found at ${extensionPath}\n`
+        + '  Run: cd chrome-extension && npm install && npm run build',
+      );
+    }
+
+    if (!hasBuilt) {
+      throw new Error(
+        `Browser extension not built (dist/background.js missing)\n`
+        + '  Run: cd chrome-extension && npm run build',
+      );
+    }
+
+    // Profile is created automatically by Chrome if it doesn't exist
+    const profileExists = existsSync(this.profileDir);
+    if (!profileExists) {
+      log.info(`Browser: creating new Janus Chrome profile at ${this.profileDir}`);
+    }
 
     const args = [
       `--user-data-dir=${this.profileDir}`,
+      `--load-extension=${extensionPath}`,
       '--no-first-run',
       '--no-default-browser-check',
-      // Load unpacked extension in dev mode
-      ...(hasExtension ? [`--load-extension=${extensionPath}`] : []),
+      'about:blank',
     ];
 
-    log.info(`Browser: launching Chrome at ${chromePath}`);
-    log.info(`Browser: profile=${this.profileDir}`);
-    if (hasExtension) log.info(`Browser: extension=${extensionPath}`);
+    log.info(`Browser: launching Chrome`);
+    log.info(`Browser:   binary=${chromePath}`);
+    log.info(`Browser:   profile=${this.profileDir}${profileExists ? '' : ' (new)'}`);
+    log.info(`Browser:   extension=${extensionPath}`);
 
     this.chromeProcess = spawn(chromePath, args, {
       detached: true,

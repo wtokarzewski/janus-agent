@@ -22,6 +22,10 @@ export interface ToolContext {
   webFetchTimeoutMs?: number;
   webFetchMaxBytes?: number;
   cronDepth?: number;
+  // Browser operator
+  browserChromePath?: string;
+  browserProfileDir?: string;
+  browserExtensionDir?: string;
 }
 
 /** Per-request context — passed to execute(), not shared across lanes. */

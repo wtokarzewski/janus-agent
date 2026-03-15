@@ -136,6 +136,9 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
     maxFileSize: config.tools.maxFileSize,
     webFetchTimeoutMs: config.tools.webFetchTimeoutMs,
     webFetchMaxBytes: config.tools.webFetchMaxBytes,
+    browserChromePath: config.browserOperator?.chromePath,
+    browserProfileDir: config.browserOperator?.profileDir,
+    browserExtensionDir: config.browserOperator?.extensionDir,
   });
 
   // 4. Memory
