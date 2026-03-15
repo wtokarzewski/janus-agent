@@ -171,15 +171,6 @@ Workspace: ${workspace}
 
 Available tools:
 ${toolList}
-
-Tool usage rules:
-- Read files before modifying them. Verify existence before assuming.
-- Never predict tool outcomes. Run the tool and check the result.
-- If a tool fails, analyze the error. Try a different approach, not the same command.
-- State your intent briefly, then act. Do not narrate every step.
-- For heartbeat/cron system messages, always call the heartbeat tool first to indicate skip or run.
-- When you learn a user preference (language, style, habits, restrictions), update their PROFILE.md at .janus/users/{userId}/PROFILE.md using edit_file (or write_file if it doesn't exist). Keep it concise: key-value style, grouped by category.
-- When creating files for a specific user (notes, lists, documents, scripts, etc.), always save them in .janus/users/{userId}/files/ — never in the workspace root, .janus/ root, or other users' directories.
 </identity>`;
   }
 
