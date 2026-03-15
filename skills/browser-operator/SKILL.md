@@ -1,6 +1,6 @@
 ---
 name: browser-operator
-description: "Real browser automation via Chrome Extension. Use when web_fetch fails (403, CAPTCHA, blocked sites), for shopping/price research, filling forms, navigating multi-step flows, or any task that needs a real browser session. Preferred over web_fetch for e-commerce sites (Allegro, Amazon, eBay, Ceneo)."
+description: "Real browser automation via Chrome Extension. Use when a real browser session is needed — blocked sites (403, CAPTCHA), JS-heavy pages, shopping flows, multi-step navigation, or form filling."
 version: "1.0.0"
 always: false
 ---
@@ -12,11 +12,11 @@ Control a real Chrome browser through a dedicated extension. The browser uses a 
 ## When to use
 
 - web_fetch returned 403, CAPTCHA, or blocking
-- Shopping/price comparison on e-commerce sites
 - Pages that require JavaScript rendering
-- Multi-step navigation flows (search → results → details)
-- Form filling
-- Any site that blocks automated access
+- Shopping and price research flows
+- Multi-step navigation (search → results → details)
+- Form filling on dynamic sites
+- Any site that needs a real browser session
 
 ## When NOT to use
 
@@ -50,9 +50,14 @@ browser({ command: "getCurrentUrl" })
 ### Observation (always do first)
 ```
 browser({ command: "snapshot" })
-browser({ command: "screenshot" })
 browser({ command: "extractText" })
 ```
+
+### Screenshot (debugging and visual confirmation only)
+```
+browser({ command: "screenshot" })
+```
+Screenshot is for debugging, fallback inspection, or visual confirmation — not the primary reasoning source. Always use snapshot for action planning.
 
 ### Interaction
 ```
@@ -97,12 +102,13 @@ Key page state:
 2. **After navigate and click — resnapshot.** The page changed, your old references are stale.
 3. **When `requiresUserAttention` or `captchaVisible` → STOP.** Tell the user what's blocking and give a direct link. Don't try to solve CAPTCHAs or bypass login gates.
 4. **Use `waitFor`, never fixed sleeps.** After navigation or click, always `waitFor({ type: "domStable" })` before snapshotting.
-5. **Don't do too many actions without re-evaluating.** Max 5 actions per page state. Then resnapshot and reconsider.
+5. **Avoid long blind action chains.** As a rule of thumb, after a few actions on the same page state, resnapshot and reconsider.
 6. **Read the page through snapshot, don't guess.** If you're unsure what's on the page, snapshot. Don't assume structure.
 7. **Handle blockers first.** Cookie banners, modals, overlays — dismiss them before acting on the page behind them. Look for `cookie_accept` hint.
 8. **Don't try to circumvent policy.** Checkout/payment buttons are blocked. Don't try workarounds.
-9. **Keep workflows short.** If a task takes more than 10 browser actions, you're probably overcomplicating it. Give the user a link and let them finish manually.
+9. **Keep workflows short.** If a task takes too many browser actions, give the user a link and let them finish manually.
 10. **Prefer snapshot over extractText.** Snapshot gives structure and element references. extractText gives raw text but no actionability.
+11. **If the browser runtime behaves unexpectedly**, call `browser({ command: "status" })` before retrying multiple actions.
 
 ## Shopping workflow example
 
@@ -137,6 +143,7 @@ browser({ command: "snapshot" })
 - **Timeout:** The page might be slow. Try `waitFor` with longer timeout, or take a screenshot to debug.
 - **Extension unavailable:** Browser runtime is not running. The tool will auto-start it.
 - **Stale snapshot:** You used an old element ID. Resnapshot.
+- **Unexpected behavior:** Call `browser({ command: "status" })` to check runtime health before retrying.
 
 ## Tab management
 
