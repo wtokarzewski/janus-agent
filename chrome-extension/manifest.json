@@ -3,7 +3,7 @@
   "name": "Janus Browser Operator",
   "version": "0.1.0",
   "description": "Janus AI agent browser control extension",
-  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "permissions": ["activeTab", "alarms", "scripting", "storage", "tabs"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "dist/background.js",
