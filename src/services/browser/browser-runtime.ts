@@ -29,6 +29,7 @@ const CHROME_PATHS: Record<string, string[]> = {
   win32: [
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    `${process.env.LOCALAPPDATA ?? ''}\\Google\\Chrome\\Application\\chrome.exe`,
   ],
 };
 
@@ -41,7 +42,8 @@ export class BrowserRuntime {
 
   constructor(opts?: { profileDir?: string; extensionDir?: string; chromePath?: string }) {
     this.wsServer = new BrowserWsServer();
-    this.profileDir = opts?.profileDir ?? resolve(process.env.HOME ?? '~', '.janus', 'chrome-profile');
+    const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? process.env.HOMEPATH ?? '';
+    this.profileDir = opts?.profileDir ?? resolve(homeDir, '.janus', 'chrome-profile');
     this.extensionDir = opts?.extensionDir ?? resolve(process.cwd(), 'chrome-extension');
     this.chromePath = opts?.chromePath;
   }

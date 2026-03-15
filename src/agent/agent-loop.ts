@@ -878,7 +878,17 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     // Double-fire guard (C2)
     this.summarizing.add(sessionKey);
     try {
-      await this.doSummarization(sessionKey, messages, channel, chatId, userId, scope, preTokenEstimate);
+      // Notify user
+      this.deps.bus.publishOutbound({
+        chatId, channel, content: 'Porządkuję pamięć...', timestamp: new Date(),
+      }, new AbortController().signal).catch(() => {});
+
+      await this.doSummarization(sessionKey, messages, userId, scope, preTokenEstimate);
+
+      // Notify completion
+      this.deps.bus.publishOutbound({
+        chatId, channel, content: 'Gotowe, pamięć uporządkowana.', timestamp: new Date(),
+      }, new AbortController().signal).catch(() => {});
     } finally {
       this.summarizing.delete(sessionKey);
     }
@@ -887,17 +897,11 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
   private async doSummarization(
     sessionKey: string,
     messages: LLMMessage[],
-    channel: string,
-    chatId: string,
     userId?: string,
     scope?: InboundMessage['scope'],
     preTokenEstimate?: number,
   ): Promise<void> {
     log.info(`[${sessionKey}] Summarization: start`);
-    // Notify user that context is being compressed (C6)
-    this.deps.bus.publishOutbound({
-      chatId, channel, content: 'Porządkuję pamięć...', timestamp: new Date(),
-    }, new AbortController().signal).catch(() => {});
     const sumStart = Date.now();
     const halfIdx = Math.floor(messages.length / 2);
     const toSummarize = messages.slice(0, halfIdx);
