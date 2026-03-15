@@ -6,7 +6,10 @@
  * - Element interactions (click, type, pressKey, scroll)
  * - Wait conditions
  * - Text extraction
+ * - Cookie consent dismissal (delegated to consent.ts)
  */
+
+import { isConsentElement, dismissCookieBanner } from './consent.js';
 
 const SCHEMA_VERSION = 1;
 
@@ -35,6 +38,9 @@ async function handleContentCommand(cmd: { command: string; args?: Record<string
   switch (cmd.command) {
     case 'snapshot':
       return buildSnapshot(cmd.snapshotConfig);
+
+    case 'dismissCookies':
+      return dismissCookieBanner();
 
     case 'click':
       return clickElement(String(cmd.args?.elementId ?? ''));
@@ -165,8 +171,24 @@ async function clickElement(elementId: string): Promise<{ ok: boolean; result?: 
   const el = currentElements.get(elementId);
   if (!el) return { ok: false, error: { code: 'element_not_found', message: `Element ${elementId} not found (snapshot v${snapshotVersion})`, recoverable: true, suggestedNextStep: 'Request a new snapshot' } };
 
+  const htmlEl = el as HTMLElement;
   const urlBefore = location.href;
-  (el as HTMLElement).click();
+
+  // Robust click: dispatch full mouse event sequence (works with consent frameworks,
+  // custom event handlers, and elements that ignore .click())
+  const rect = htmlEl.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const mouseOpts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+
+  htmlEl.dispatchEvent(new MouseEvent('pointerdown', mouseOpts));
+  htmlEl.dispatchEvent(new MouseEvent('mousedown', mouseOpts));
+  htmlEl.dispatchEvent(new MouseEvent('pointerup', mouseOpts));
+  htmlEl.dispatchEvent(new MouseEvent('mouseup', mouseOpts));
+  htmlEl.dispatchEvent(new MouseEvent('click', mouseOpts));
+
+  // Fallback: also call .click() in case the above was prevented
+  htmlEl.click();
 
   // Post-action verification: detect if click caused navigation or DOM change
   await sleep(300);
@@ -342,7 +364,7 @@ function inferSemanticHints(el: Element): string[] {
   if (tag === 'a' && el.closest('[class*="product"], [class*="listing"], [class*="offer"], [data-testid*="product"]')) {
     hints.push('product_title');
   }
-  if (text.includes('cookie') || text.includes('accept') || text.includes('zgadzam')) {
+  if (isConsentElement(el)) {
     hints.push('cookie_accept');
   }
 
