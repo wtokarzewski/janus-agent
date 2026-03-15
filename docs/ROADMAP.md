@@ -105,7 +105,9 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Chat directories: `ensureChatDir()` creates per-chat dirs (`.janus/chats/{chatId}/`)
 - DB hardening: exec deny patterns block direct `sqlite3` access
 - Context isolation: system prompt scoped per-user in family chats
-- 373 tests across 38 files
+- Browser lifecycle fix: setContext preserves runtime across messages, EADDRINUSE recovery with retry
+- Silent summarization: ⏳ indicator instead of verbose notifications that confused users mid-task
+- 374 tests across 38 files
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
