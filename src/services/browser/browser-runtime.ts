@@ -70,8 +70,17 @@ export class BrowserRuntime {
   async ensureRunning(): Promise<void> {
     if (this.ready) return;
 
-    // Start WS server if not already
+    // Start WS server if not already — may fail with EADDRINUSE if previous
+    // session's server is still running. In that case, retry once after a delay
+    // (the old server may be shutting down).
     this.wsServer.start();
+
+    // If WS server failed to bind (EADDRINUSE), wait briefly and retry once
+    if (this.wsServer.runtimeState === 'idle' && !this.wsServer.ready) {
+      log.info('Browser: WS server port busy, retrying in 1s...');
+      await new Promise<void>(r => setTimeout(r, 1000));
+      this.wsServer.start();
+    }
 
     // Launch Chrome if not already running
     if (!this.chromeProcess || this.chromeProcess.exitCode !== null) {

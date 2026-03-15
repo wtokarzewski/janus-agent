@@ -263,6 +263,9 @@ export class AgentLoop {
       webFetchTimeoutMs: this.deps.config.tools.webFetchTimeoutMs,
       webFetchMaxBytes: this.deps.config.tools.webFetchMaxBytes,
       cronDepth: msg.cronDepth,
+      browserChromePath: this.deps.config.browserOperator?.chromePath,
+      browserProfileDir: this.deps.config.browserOperator?.profileDir,
+      browserExtensionDir: this.deps.config.browserOperator?.extensionDir,
     });
 
     // Per-request context — passed to execute(), not shared across concurrent lanes
@@ -878,17 +881,11 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     // Double-fire guard (C2)
     this.summarizing.add(sessionKey);
     try {
-      // Notify user
       this.deps.bus.publishOutbound({
-        chatId, channel, content: 'Porządkuję pamięć...', timestamp: new Date(),
+        chatId, channel, content: '⏳', timestamp: new Date(),
       }, new AbortController().signal).catch(() => {});
 
       await this.doSummarization(sessionKey, messages, userId, scope, preTokenEstimate);
-
-      // Notify completion
-      this.deps.bus.publishOutbound({
-        chatId, channel, content: 'Gotowe, pamięć uporządkowana.', timestamp: new Date(),
-      }, new AbortController().signal).catch(() => {});
     } finally {
       this.summarizing.delete(sessionKey);
     }

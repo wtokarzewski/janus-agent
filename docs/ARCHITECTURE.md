@@ -12,7 +12,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
                                              + Vector
 ```
 
-**Status (Phase 8):** ~10,800 LOC, 347 tests across 37 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
+**Status (Phase 9):** ~13,200 LOC, 374 tests across 38 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
 
 ## Core Pipeline
 

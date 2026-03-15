@@ -49,11 +49,13 @@ export class BrowserOperatorTool implements ContextualTool {
   description = 'Control a real Chrome browser through a dedicated extension. Use for web research, shopping, form filling, and any task requiring real browser interaction. Commands: ping, snapshot, click, type, pressKey, scroll, navigate, openTab, focusTab, closeTab, getCurrentUrl, waitFor, extractText, screenshot, status, closeBrowser. The browser uses structured page snapshots — request a snapshot first, then act on element references (e1, e2, etc.). Chrome stays open between tasks. Use closeBrowser when done or it auto-closes after 30 min idle.';
 
   setContext(ctx: ToolContext): void {
-    const newConfig = {
-      profileDir: ctx.browserProfileDir,
-      extensionDir: ctx.browserExtensionDir,
-      chromePath: ctx.browserChromePath,
-    };
+    // Only update fields that are explicitly provided (ignore undefined to avoid
+    // killing Chrome when agent-loop calls setContext without browser fields)
+    const newConfig = { ...runtimeConfig };
+    if (ctx.browserProfileDir !== undefined) newConfig.profileDir = ctx.browserProfileDir;
+    if (ctx.browserExtensionDir !== undefined) newConfig.extensionDir = ctx.browserExtensionDir;
+    if (ctx.browserChromePath !== undefined) newConfig.chromePath = ctx.browserChromePath;
+
     // Only reset runtime if config actually changed (don't kill Chrome on every message)
     const configChanged = runtime && (
       newConfig.profileDir !== runtimeConfig.profileDir ||
