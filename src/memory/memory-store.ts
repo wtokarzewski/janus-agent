@@ -111,15 +111,24 @@ export class MemoryStore {
     return this.index !== null;
   }
 
-  async readMemory(): Promise<string> {
-    return this.readSafe(join(this.memoryDir, 'MEMORY.md'));
+  /** Resolve memory directory: per-user when userId is given, global otherwise. */
+  private resolveMemDir(userId?: string): string {
+    if (userId) {
+      return resolve(this.config.workspace.dir, '.janus', 'users', userId, 'memory');
+    }
+    return this.memoryDir;
+  }
+
+  async readMemory(userId?: string): Promise<string> {
+    return this.readSafe(join(this.resolveMemDir(userId), 'MEMORY.md'));
   }
 
   private writeFailures = 0;
 
-  async writeMemory(content: string): Promise<void> {
-    await mkdir(this.memoryDir, { recursive: true });
-    const path = join(this.memoryDir, 'MEMORY.md');
+  async writeMemory(content: string, userId?: string): Promise<void> {
+    const dir = this.resolveMemDir(userId);
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, 'MEMORY.md');
 
     // Validate: content should not be empty or drastically shorter than existing (C5)
     if (!content.trim()) {
@@ -140,7 +149,7 @@ export class MemoryStore {
       log.error(`Memory write failed (${this.writeFailures}/3): ${err instanceof Error ? err.message : String(err)}`);
       if (this.writeFailures >= 3) {
         // Raw backup fallback — dump to timestamped file so data isn't lost
-        const backupPath = join(this.memoryDir, `MEMORY.backup.${Date.now()}.md`);
+        const backupPath = join(dir, `MEMORY.backup.${Date.now()}.md`);
         await writeFile(backupPath, content, 'utf-8').catch(() => {});
         log.error(`Memory write failed 3x — raw backup saved to ${backupPath}`);
         this.writeFailures = 0;
@@ -164,25 +173,26 @@ export class MemoryStore {
     await appendFile(path, `${prefix}${entry}\n`, 'utf-8');
   }
 
-  async readDaily(date?: string): Promise<string> {
+  async readDaily(date?: string, userId?: string): Promise<string> {
     const d = date ?? this.todayDate();
-    return this.readSafe(join(this.memoryDir, `${d}.md`));
+    return this.readSafe(join(this.resolveMemDir(userId), `${d}.md`));
   }
 
   /**
    * Get context for system prompt.
    * Loads MEMORY.md + last 3 daily notes for system prompt context.
+   * When userId is provided, reads per-user memory (multi-user isolation).
    */
-  async getContext(): Promise<MemoryContext> {
+  async getContext(userId?: string): Promise<MemoryContext> {
     const [memory, recentNotes] = await Promise.all([
-      this.readMemory(),
-      this.getRecentDailyNotes(3),
+      this.readMemory(userId),
+      this.getRecentDailyNotes(3, userId),
     ]);
     return { memory, recentNotes };
   }
 
   /** Load last N days of daily notes (today + N-1 previous days). */
-  private async getRecentDailyNotes(days: number): Promise<string> {
+  private async getRecentDailyNotes(days: number, userId?: string): Promise<string> {
     const notes: string[] = [];
     const today = new Date();
 
@@ -190,7 +200,7 @@ export class MemoryStore {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
       const dateStr = date.toISOString().slice(0, 10);
-      const content = await this.readDaily(dateStr);
+      const content = await this.readDaily(dateStr, userId);
       if (content.trim()) {
         notes.push(`<!-- ${dateStr} -->\n${content.trim()}`);
       }
