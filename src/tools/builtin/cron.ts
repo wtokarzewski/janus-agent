@@ -50,6 +50,10 @@ export class CronTool implements ContextualTool {
         type: 'string',
         description: 'Owner user ID. For update: reassign job ownership. For add: override auto-detected userId. Use "system" for system-wide jobs (no owner).',
       },
+      chat_id: {
+        type: 'string',
+        description: 'Target group chat ID for group-scoped jobs. Response will be sent to this chat instead of a specific user.',
+      },
       limit: {
         type: 'number',
         description: 'Limit for run history (default: 20).',
@@ -70,15 +74,17 @@ export class CronTool implements ContextualTool {
   }
 
   /** Check if the requesting user can access a specific job. */
-  private canAccess(job: { userId: string | null }, reqCtx?: RequestContext): boolean {
-    // System jobs (no userId) are visible to all
-    if (!job.userId) return true;
+  private canAccess(job: { userId: string | null; chatId: string | null }, reqCtx?: RequestContext): boolean {
+    // System jobs (no userId, no chatId) are visible to all
+    if (!job.userId && !job.chatId) return true;
+    // Group chat jobs — accessible if user is in the same chat
+    if (job.chatId && reqCtx?.chatId === job.chatId) return true;
     // No user context — deny access to user-owned jobs
     if (!reqCtx?.userId) return false;
     // Own job
     if (job.userId === reqCtx.userId) return true;
     // Family member's job (in family group chat)
-    if (reqCtx.familyUserIds?.includes(job.userId)) return true;
+    if (job.userId && reqCtx.familyUserIds?.includes(job.userId)) return true;
     return false;
   }
 
@@ -93,17 +99,19 @@ export class CronTool implements ContextualTool {
     switch (action) {
       case 'list': {
         const includeDisabled = args.include_disabled === true;
-        // Listing is always scoped to own + system — no family exposure
+        // Scoped to own + system + current chat's group jobs
         const jobs = this.cronService.listJobsForUser(
           reqCtx?.userId,
           undefined,
           includeDisabled,
+          reqCtx?.chatId,
         );
         // Compact format to avoid truncation with many jobs
         const compact = jobs.map(j => ({
           id: j.id,
           name: j.name,
           userId: j.userId,
+          chatId: j.chatId,
           schedule: `${j.scheduleKind}:${j.scheduleValue}`,
           tz: j.scheduleTz,
           enabled: j.enabled,
@@ -128,6 +136,7 @@ export class CronTool implements ContextualTool {
           task,
           enabled: args.enabled !== false,
           userId: args.user_id === 'system' ? undefined : (args.user_id ? String(args.user_id) : reqCtx?.userId),
+          chatId: args.chat_id ? String(args.chat_id) : undefined,
         });
         return JSON.stringify(job, null, 2);
       }
@@ -147,6 +156,7 @@ export class CronTool implements ContextualTool {
           if (args.task !== undefined) patch.task = String(args.task);
           if (args.enabled !== undefined) patch.enabled = Boolean(args.enabled);
           if (args.user_id !== undefined) patch.userId = args.user_id === 'system' ? null : String(args.user_id);
+          if (args.chat_id !== undefined) patch.chatId = String(args.chat_id);
           const job = this.cronService.updateJob(id, patch);
           return JSON.stringify(job, null, 2);
         } catch (err) {

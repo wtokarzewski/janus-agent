@@ -442,7 +442,7 @@ export class AgentLoop {
     }
 
     if (!response.streamed && msg.chatId !== 'internal') {
-      // Route cron/heartbeat responses to the correct user channel
+      // Route cron/heartbeat responses to the correct channel
       if (msg.chatId.startsWith('cron:') || msg.chatId.startsWith('heartbeat')) {
         // Per-user routing: find the user's Telegram chatId
         if (msg.user?.userId) {
@@ -454,23 +454,38 @@ export class AgentLoop {
             response.channel = 'telegram';
             response.chatId = tgIdentity.channelUserId;
           } else {
-            // User exists but no Telegram identity — suppress to avoid misrouting
             log.warn(`Cron response for user "${msg.user.userId}" has no Telegram identity — suppressing`);
             return;
           }
         } else {
-          // No userId — in multi-user (telegram) mode, suppress to prevent misrouting.
-          // In CLI mode (single-user), route to CLI as there's no wrong recipient.
-          const tgAllowlist = this.deps.config.telegram?.allowlist?.length
-            ? this.deps.config.telegram.allowlist
-            : deriveChannelAllowlist('telegram', this.deps.config);
-          const tgEnabled = this.deps.config.telegram?.enabled || tgAllowlist.length > 0;
-          if (tgEnabled) {
-            log.warn(`Cron response has no userId — suppressing to prevent misrouting in multi-user mode`);
+          // No userId — in multi-user mode, broadcast to all users
+          const tgEnabled = this.deps.config.telegram?.enabled
+            || (this.deps.config.telegram?.allowlist?.length ?? 0) > 0
+            || deriveChannelAllowlist('telegram', this.deps.config).length > 0;
+          if (tgEnabled && this.deps.config.users.length > 0) {
+            for (const user of this.deps.config.users) {
+              const tgId = user.identities.find(i => i.channel === 'telegram' && i.channelUserId);
+              if (tgId?.channelUserId) {
+                await this.deps.bus.publishOutbound({
+                  ...response,
+                  channel: 'telegram',
+                  chatId: tgId.channelUserId,
+                }, new AbortController().signal).catch(() => {});
+              }
+            }
             return;
           }
-          response.channel = 'cli';
+          if (!tgEnabled) {
+            response.channel = 'cli';
+          } else {
+            log.warn(`Cron response has no userId and no users configured — suppressing`);
+            return;
+          }
         }
+      } else if (msg.channel === 'system' && !msg.chatId.startsWith('cron:') && !msg.chatId.startsWith('heartbeat')) {
+        // Group chat cron job — chatId is already a real chat ID, route to telegram
+        response.channel = 'telegram';
+        response.chatId = msg.chatId;
       }
 
       await this.deps.bus.publishOutbound(response, new AbortController().signal).catch(err => {
