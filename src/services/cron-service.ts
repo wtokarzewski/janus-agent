@@ -314,6 +314,12 @@ export class CronService {
         INSERT INTO cron_runs (job_id, status, started_at, duration_ms) VALUES (?, 'ok', ?, ?)
       `).run(job.id, startedAt.toISOString(), durationMs);
 
+      // Auto-disable completed one-shot jobs
+      if (job.scheduleKind === 'at' && !nextRunAt) {
+        this.db.db.prepare('UPDATE cron_jobs SET enabled = 0 WHERE id = ?').run(job.id);
+        log.info(`Cron: one-shot job "${job.name}" completed, disabled`);
+      }
+
     } catch (err) {
       const errorText = err instanceof Error ? err.message : String(err);
       const durationMs = Date.now() - startedAt.getTime();

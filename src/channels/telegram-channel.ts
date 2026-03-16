@@ -74,6 +74,16 @@ export class TelegramChannel {
       const { chatId: tgChatId, topicId: tgTopicId } = parseTelegramChatId(msg.chatId);
       const topicOpts = tgTopicId ? { message_thread_id: tgTopicId } : {};
 
+      if (msg.type === 'typing') {
+        await this.startTyping(bot, msg.chatId);
+        return;
+      }
+
+      if (msg.type === 'typing_stop') {
+        this.stopTyping(msg.chatId);
+        return;
+      }
+
       if (msg.type === 'chunk') {
         // Serialize via promise chain — prevents race condition where
         // concurrent fire-and-forget calls from streamTo() each trigger

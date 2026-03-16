@@ -19,7 +19,9 @@ const VALID_COMMANDS: BrowserCommandName[] = [
 ];
 
 const BROWSER_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const MAX_CONSECUTIVE_FAILURES = 3;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
+let consecutiveFailures = 0;
 
 function resetIdleTimer(): void {
   if (idleTimer) clearTimeout(idleTimer);
@@ -102,20 +104,30 @@ export class BrowserOperatorTool implements ContextualTool {
 
     // Close browser — explicit user request to shut down Chrome
     if (command === 'closeBrowser') {
+      consecutiveFailures = 0;
       if (rt.ready) {
         rt.stop();
         runtime = null;
         if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
         return 'Browser closed.';
       }
-      return 'Browser is not running.';
+      runtime = null;
+      return 'Browser is not running. Failure counter reset.';
+    }
+
+    // Circuit breaker: stop retrying after consecutive failures
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      return `Error: Browser is unavailable after ${MAX_CONSECUTIVE_FAILURES} consecutive failures. The Chrome extension cannot connect. Use web_fetch or web_search as alternatives. Call browser({ command: "closeBrowser" }) to reset the failure counter.`;
     }
 
     // Ensure runtime is up (lazy start)
     try {
       await rt.ensureRunning();
     } catch (err) {
-      return `Error: Browser runtime failed to start: ${err instanceof Error ? err.message : String(err)}`;
+      consecutiveFailures++;
+      const remaining = MAX_CONSECUTIVE_FAILURES - consecutiveFailures;
+      const suffix = remaining > 0 ? ` (${remaining} attempts remaining before browser is disabled)` : '';
+      return `Error: Browser runtime failed to start: ${err instanceof Error ? err.message : String(err)}${suffix}`;
     }
 
     // Build protocol command
@@ -150,10 +162,16 @@ export class BrowserOperatorTool implements ContextualTool {
     }
 
     if (!response.ok) {
+      consecutiveFailures++;
       const err = response.error;
       const hint = err?.suggestedNextStep ? ` Suggestion: ${err.suggestedNextStep}` : '';
-      return `Error: ${err?.message ?? 'Unknown error'} [${err?.code ?? 'unknown'}]${hint}`;
+      const remaining = MAX_CONSECUTIVE_FAILURES - consecutiveFailures;
+      const breaker = remaining <= 0 ? ' Browser will be disabled on next call — use web_fetch/web_search instead.' : '';
+      return `Error: ${err?.message ?? 'Unknown error'} [${err?.code ?? 'unknown'}]${hint}${breaker}`;
     }
+
+    // Success — reset failure counter
+    consecutiveFailures = 0;
 
     // Format result for agent
     return JSON.stringify(response.result, null, 2);

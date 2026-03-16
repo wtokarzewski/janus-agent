@@ -331,7 +331,7 @@ export class AgentLoop {
     const toolDefs = this.deps.tools.list();
     const maxIterations = this.deps.config.agent.maxIterations;
     const startTime = Date.now();
-    const streamCtx = (this.deps.config.streaming?.enabled ?? true)
+    const streamCtx = (this.deps.config.streaming?.enabled ?? true) && msg.channel !== 'system'
       ? { channel: msg.channel, chatId: msg.chatId }
       : undefined;
     const iterResult = await this.iterate(messages, toolDefs, maxIterations, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx);
@@ -387,7 +387,7 @@ export class AgentLoop {
     // Count-based flush trigger (pointer-based)
     const flushInterval = this.deps.config.agent.memoryFlushInterval;
     const unflushed = fullSession.messages.length - state.lastFlushed;
-    if (this.deps.memory && unflushed >= flushInterval) {
+    if (this.deps.memory && !state.flushing && unflushed >= flushInterval) {
       this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
         log.warn(`Periodic memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
       });
@@ -631,8 +631,7 @@ export class AgentLoop {
       };
       messages.push(assistantMsg);
 
-      // Save assistant+tool_calls to session
-      await this.deps.sessions.append(sessionKey, [assistantMsg]);
+      // Note: assistant+tool_calls saved together with tool results below (atomic)
 
       // Execute tool calls — parallel when multiple, sequential for single
       const uniqueCalls: typeof response.toolCalls = [];
@@ -648,10 +647,9 @@ export class AgentLoop {
         }
       }
 
-      // Append duplicate skip messages
+      // Add duplicate skip messages to context (persisted with tool results below)
       for (const msg of dupMessages) {
         messages.push(msg);
-        await this.deps.sessions.append(sessionKey, [msg]);
       }
 
       // Execute unique tool calls (parallel when >1)
@@ -695,8 +693,12 @@ export class AgentLoop {
       for (const toolMsg of toolResults) {
         messages.push(toolMsg);
       }
-      if (toolResults.length > 0) {
-        await this.deps.sessions.append(sessionKey, toolResults);
+
+      // Atomic save: assistant + tool_calls + dup skip messages + tool results
+      // Prevents orphan tool_use without matching tool_result on crash
+      const toSave: LLMMessage[] = [assistantMsg, ...dupMessages, ...toolResults];
+      if (toSave.length > 0) {
+        await this.deps.sessions.append(sessionKey, toSave);
       }
 
       // Append significant tool calls to HISTORY.md (fire and forget)
@@ -740,14 +742,13 @@ export class AgentLoop {
     const state = this.flushState.get(sessionKey);
     if (!state) return;
     if (state.flushing) return;
+    state.flushing = true;
 
     const session = await this.deps.sessions.getOrCreate(sessionKey);
     const from = state.lastFlushed;
     const to = upToIndex ?? session.messages.length;
     const messagesToFlush = session.messages.slice(from, to);
-    if (messagesToFlush.length === 0) return;
-
-    state.flushing = true;
+    if (messagesToFlush.length === 0) { state.flushing = false; return; }
     try {
       // Build context: session summary + current MEMORY.md
       const currentMemory = await this.deps.memory.readMemory();
@@ -881,13 +882,18 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     // Double-fire guard (C2)
     this.summarizing.add(sessionKey);
     try {
+      // Show typing indicator during compaction (non-intrusive, auto-expires)
       this.deps.bus.publishOutbound({
-        chatId, channel, content: '⏳', timestamp: new Date(),
+        chatId, channel, content: '', timestamp: new Date(), type: 'typing',
       }, new AbortController().signal).catch(() => {});
 
       await this.doSummarization(sessionKey, messages, userId, scope, preTokenEstimate);
     } finally {
       this.summarizing.delete(sessionKey);
+      // Stop typing after compaction completes
+      this.deps.bus.publishOutbound({
+        chatId, channel, content: '', timestamp: new Date(), type: 'typing_stop',
+      }, new AbortController().signal).catch(() => {});
     }
   }
 
