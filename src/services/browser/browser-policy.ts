@@ -11,7 +11,7 @@ export function checkPolicy(command: BrowserCommand): PolicyDecision {
   // Safe read-only commands — always allowed
   const safeCommands = [
     'ping', 'snapshot', 'getCurrentUrl', 'extractText', 'screenshot',
-    'openTab', 'focusTab', 'closeTab', 'scroll', 'waitFor',
+    'openTab', 'focusTab', 'closeTab', 'scroll', 'waitFor', 'dismissCookies',
   ];
   if (safeCommands.includes(command.command)) {
     return { allowed: true };

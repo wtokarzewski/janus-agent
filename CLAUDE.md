@@ -8,7 +8,7 @@ Janus is a universal AI agent. CLI + Telegram + Browser Operator, ~13,200 lines 
 
 **Name:** Janus — Roman god of beginnings, transitions, and duality. Two faces looking to the past and the future. Reflects the agent's dual nature: planning vs execution, analysis vs implementation, AI vs human control.
 
-**Status:** Phase 9 — Browser lifecycle fix (setContext preserves runtime across messages, EADDRINUSE recovery with retry, WS server port conflict handling), silent summarization (⏳ indicator instead of verbose Polish notifications). Prior: Multi-user privacy (per-user cron jobs with userId ownership in migration 6, file access control in family chats via validatePath, chat directories `.janus/chats/{chatId}/`, DB hardening with sqlite3 exec deny patterns, per-user context isolation in system prompt). Prior: Voice transcription (Groq Whisper auto-transcribe for Telegram voice/audio messages, configurable language/duration, `voice` config section), GitHub skill (`gh` CLI wrapper — repos, issues, PRs, CI, releases, gists, search). Prior: Memory flush v2 (pointer-based lastFlushed tracking, context-aware extraction with session summary + MEMORY.md, triple output HISTORY.md/daily notes/MEMORY.md, 5 triggers: count/token/pre-summarization/idle/shutdown, memoryIdleFlushMs config), graceful shutdown flush (SIGTERM/SIGINT flush sessions before abort, memoryFlushInterval 10→5), leaked control token stripping (sanitize `<|endoftext|>`, `[INST]`, etc.), Telegram forum/topic session isolation (per-topic sessions in forum supergroups), group mention policy (`telegram.groupPolicy: all|mention`), cron missed job staggering (30s apart on restart), browser tool (Playwright headless Chromium, optional dep, 3rd escalation tier: search→fetch→browser). Prior: LLM overload resilience (5-retry exponential backoff 1s→16s, user notification, abort-aware sleep, clean error after exhaustion), SDK timeout hardening (2 min per request vs default 10 min, 90s hard cap on background flush/summarization calls), multi-provider OAuth (shared FileTokenStore, `providers[]` with auth/priority/purpose), dynamic model listing from APIs (Anthropic `/v1/models` + OpenAI `/v1/models` with filtering), setup wizard with fallback provider selection, Windows compatibility (`path.sep` in validatePath, conditional test skipping), diagnostic timing logs (Telegram→lane→context→LLM→flush→summarization), multi-lane concurrent message queue (semaphore-based, user:3/cron:1/heartbeat:1, AbortSignal), skill-creator meta-skill (mtime-based cache invalidation), non-blocking embedder (setImmediate yield points, delayed startup reindex). Prior: per-user overrides, community skills, PROFILE.md auto-update, invite links, Telegram hardening, orphaned tool_use repair, `/stop` command, `self_update` tool, auto-update cron, native OAuth (PKCE), security hardening, reliability, tools (web_fetch, web_search, append_file, heartbeat, self_update, invite), MCP client, steering messages, extended thinking, SubagentRegistry with cancel, prompt caching, 5xx failover, cross-platform shell, cron/heartbeat in CLI mode, web_fetch hardening, web search cache. Prior: multi-user, subscription providers, setup wizard, MCP server, vector search, temporal decay, memory flush, lazy skills, token management, cron scheduler, streaming, gates, hybrid memory search (FTS5), SQLite storage, tests (374), CI pipeline.
+**Status:** Phase 10 — Browser Operator Playwright migration (replaced Chrome Extension + WS server with Playwright persistent context, `_snapshotForAI()` AI-native snapshots, `aria-ref` locators, ~200 lines replaces ~2000 lines). Prior: Browser lifecycle fix (setContext preserves runtime across messages, EADDRINUSE recovery with retry, WS server port conflict handling), silent summarization (⏳ indicator instead of verbose Polish notifications). Prior: Multi-user privacy (per-user cron jobs with userId ownership in migration 6, file access control in family chats via validatePath, chat directories `.janus/chats/{chatId}/`, DB hardening with sqlite3 exec deny patterns, per-user context isolation in system prompt). Prior: Voice transcription (Groq Whisper auto-transcribe for Telegram voice/audio messages, configurable language/duration, `voice` config section), GitHub skill (`gh` CLI wrapper — repos, issues, PRs, CI, releases, gists, search). Prior: Memory flush v2 (pointer-based lastFlushed tracking, context-aware extraction with session summary + MEMORY.md, triple output HISTORY.md/daily notes/MEMORY.md, 5 triggers: count/token/pre-summarization/idle/shutdown, memoryIdleFlushMs config), graceful shutdown flush (SIGTERM/SIGINT flush sessions before abort, memoryFlushInterval 10→5), leaked control token stripping (sanitize `<|endoftext|>`, `[INST]`, etc.), Telegram forum/topic session isolation (per-topic sessions in forum supergroups), group mention policy (`telegram.groupPolicy: all|mention`), cron missed job staggering (30s apart on restart), browser tool (Playwright headless Chromium, optional dep, 3rd escalation tier: search→fetch→browser). Prior: LLM overload resilience (5-retry exponential backoff 1s→16s, user notification, abort-aware sleep, clean error after exhaustion), SDK timeout hardening (2 min per request vs default 10 min, 90s hard cap on background flush/summarization calls), multi-provider OAuth (shared FileTokenStore, `providers[]` with auth/priority/purpose), dynamic model listing from APIs (Anthropic `/v1/models` + OpenAI `/v1/models` with filtering), setup wizard with fallback provider selection, Windows compatibility (`path.sep` in validatePath, conditional test skipping), diagnostic timing logs (Telegram→lane→context→LLM→flush→summarization), multi-lane concurrent message queue (semaphore-based, user:3/cron:1/heartbeat:1, AbortSignal), skill-creator meta-skill (mtime-based cache invalidation), non-blocking embedder (setImmediate yield points, delayed startup reindex). Prior: per-user overrides, community skills, PROFILE.md auto-update, invite links, Telegram hardening, orphaned tool_use repair, `/stop` command, `self_update` tool, auto-update cron, native OAuth (PKCE), security hardening, reliability, tools (web_fetch, web_search, append_file, heartbeat, self_update, invite), MCP client, steering messages, extended thinking, SubagentRegistry with cancel, prompt caching, 5xx failover, cross-platform shell, cron/heartbeat in CLI mode, web_fetch hardening, web search cache. Prior: multi-user, subscription providers, setup wizard, MCP server, vector search, temporal decay, memory flush, lazy skills, token management, cron scheduler, streaming, gates, hybrid memory search (FTS5), SQLite storage, tests (374), CI pipeline.
 
 ## Architecture
 
@@ -17,7 +17,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
                                 ↑              ↑               ↑
                           CronService        Database    spawn_agent → SubAgent
                           HeartbeatService (SQLite+FTS5)  Learner (metrics)
-                                                         Browser Operator → Chrome Extension → Real Browser
+                                                         Browser Operator → Playwright → Real Browser
 ```
 
 ### Key modules (src/)
@@ -35,78 +35,56 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `llm/` — Anthropic native + OpenAI-compatible + ClaudeAgent + Codex + Codex OAuth providers, ProviderRegistry (multi-provider with failover + 5xx + RESOURCE_EXHAUSTED + rate-limit hardening + 422 classification), streaming, extended thinking, prompt caching, SDK utils (structured output), model listing from APIs, SDK timeout (2 min), toolChoice with fallback
 - `mcp/` — MCP server (JSON-RPC, stdio, tool bridge) + MCP client (connect to external servers, auto-discover tools)
 - `memory/` — MEMORY.md + HISTORY.md + daily notes + MemoryIndex (FTS5 + vector hybrid search with temporal decay), embedder (local @xenova/transformers, setImmediate yield points for non-blocking inference)
-- `services/` — CronService (persistent cron scheduler, SQLite, recursion guard, missed job staggering on restart, per-user job ownership via userId, custom session IDs), HeartbeatService (HEARTBEAT.md → CronService sync, per-user HEARTBEAT.md with userId routing), Browser Operator (WS server, Chrome runtime manager, policy enforcement)
+- `services/` — CronService (persistent cron scheduler, SQLite, recursion guard, missed job staggering on restart, per-user job ownership via userId, custom session IDs), HeartbeatService (HEARTBEAT.md → CronService sync, per-user HEARTBEAT.md with userId routing), Browser Operator (Playwright persistent context, AI-native snapshots, policy enforcement)
 - `session/` — JSONL persistence, atomic writes, summarization, per-key mutex locking
 - `skills/` — SKILL.md loader (YAML frontmatter + markdown), lazy loading (stubs + read on demand), mtime-based cache invalidation on skill file writes
 - `invites/` — InviteStore (in-memory, 24h TTL) for Telegram deep-link onboarding
-- `tools/` — 16 built-in tools (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, browser [Playwright], browser_operator [Chrome Extension], heartbeat, self_update, invite), path validation (symlink safety, user-scoped access in family chats)
+- `tools/` — 15 built-in tools (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, browser [Playwright persistent context], heartbeat, self_update, invite), path validation (symlink safety, user-scoped access in family chats)
 - `utils/` — Logger, cross-platform shell config (`getShellConfig`, `killProcessTree`), sanitize (strip leaked LLM control tokens + invisible Unicode), SSRF guard
 - `users/` — User resolver (Telegram userId/username → Janus user), per-user profiles, tool/skill filtering, `ensureUserDir()` (auto-create `.janus/users/{id}/` on first resolution, channel-agnostic), `ensureChatDir()` (auto-create `.janus/chats/{chatId}/`)
 
-### Browser Operator (chrome-extension/)
-Real-browser automation via Chrome Extension. Controls a dedicated Chrome profile through structured snapshots instead of CSS selectors.
+### Browser Operator
+Real-browser automation via Playwright persistent context. Controls a dedicated Chrome profile through AI-native ARIA snapshots with element refs.
 
-**Architecture:** `Agent → browser tool → WS server (127.0.0.1:19816) → Chrome Extension → Web page`
+**Architecture:** `Agent → browser tool → Playwright persistent context → Real Chrome`
 
-- `chrome-extension/src/background.ts` — WS client, exponential backoff reconnect, handshake, tab management, chrome.storage.session persistence
-- `chrome-extension/src/content.ts` — Snapshot engine (viewport-only, max 100 elements, visual reading order, semantic hints, CAPTCHA detection, password masking), actions (click, type, pressKey, scroll), wait conditions
-- `chrome-extension/src/types.ts` — Shared protocol types
-- `chrome-extension/scripts/build.mjs` — esbuild (background + content script)
-- `src/services/browser/browser-types.ts` — Protocol (commands, responses, handshake, snapshot, policy), runtime state machine, tab lifecycle
-- `src/services/browser/browser-ws-server.ts` — WS server, state machine (idle→starting→ready→disconnected→failed), reconnect grace period, EADDRINUSE recovery, tab store, diagnostics
-- `src/services/browser/browser-runtime.ts` — Chrome launcher (auto-detect path, dedicated profile, --load-extension), lazy start, WS server retry on port conflict
+- `src/services/browser/browser-playwright-runtime.ts` — Playwright launcher (persistent context, `_snapshotForAI()`, `aria-ref` locators), lazy start, cookie dismissal
+- `src/services/browser/browser-types.ts` — Commands, responses, errors, policy types, runtime state machine
 - `src/services/browser/browser-policy.ts` — Safety enforcement (dangerous action text blocking, read-only default)
-- `src/tools/builtin/browser-operator.ts` — Single `browser` tool with sub-commands
+- `src/tools/builtin/browser-operator.ts` — Single `browser` tool with sub-commands, idle timer, circuit breaker
 
 **Key design decisions:**
-- Snapshot-centric, not selector-centric (AI-native)
+- AI-native snapshots via Playwright `_snapshotForAI()` (ARIA tree with `[ref=eN]` markers)
+- Actions via `aria-ref` locator engine (`page.locator('aria-ref=e5').click()`)
+- Persistent context (`launchPersistentContext`) for cookie/session persistence
 - Dedicated Chrome profile (never personal browser)
 - Lazy start on first tool call
-- Protocol versioning + capability negotiation
 - Dangerous actions (checkout, payment) blocked by policy
-
-**Setup & usage:**
-
-```bash
-# 1. Build the extension
-cd chrome-extension && npm install && npm run build
-
-# 2. (Dev) Watch mode — auto-rebuild on changes
-cd chrome-extension && npm run watch
-
-# 3. Load extension in Chrome manually (first time only)
-#    - Open chrome://extensions in the Janus Chrome profile
-#    - Enable "Developer mode"
-#    - Click "Load unpacked" → select chrome-extension/ folder
-#    (Or let Janus auto-launch with --load-extension flag)
-```
 
 **How it works at runtime:**
 1. Agent calls `browser({ command: "snapshot" })` (or any browser command)
-2. Janus checks if WS server is running → starts if not (`ws://127.0.0.1:19816`)
-3. Janus checks if Chrome is connected → launches Chrome with dedicated profile if not:
+2. Janus checks if Playwright context is running → launches if not:
    ```
-   chrome --user-data-dir=~/.janus/chrome-profile --load-extension=./chrome-extension --no-first-run
+   chromium.launchPersistentContext('~/.janus/chrome-profile', { headless: false, channel: 'chrome' })
    ```
-4. Extension connects to WS server → sends `hello` (capabilities, browser version)
-5. Janus responds with `welcome` (session ID, policy mode, snapshot config)
-6. Command executes → extension acts on the real page → returns structured result
-7. On disconnect, extension reconnects with exponential backoff (1s→30s cap)
-8. Janus gives 20s grace period before marking runtime as failed
+3. Command executes directly via Playwright API → returns structured result
+4. Snapshots return ARIA tree with `[ref=eN]` markers for element identification
+5. Actions use `page.locator('aria-ref=eN')` to resolve refs to real elements
 
 **Agent workflow example (shopping):**
 ```
 browser({ command: "navigate", args: { url: "https://allegro.pl" } })
-browser({ command: "snapshot" })                    → page map with e1, e2, e3...
-browser({ command: "click", args: { elementId: "e1" } })   → click search input
+browser({ command: "snapshot" })                    → ARIA tree with [ref=e1], [ref=e2]...
+browser({ command: "dismissCookies" })              → structural overlay detection
+browser({ command: "click", args: { elementId: "e1" } })   → click via aria-ref
 browser({ command: "type", args: { elementId: "e1", text: "lavazza 1kg" } })
 browser({ command: "pressKey", args: { key: "Enter" } })
 browser({ command: "waitFor", args: { type: "domStable", stableForMs: 1200 } })
-browser({ command: "snapshot" })                    → product results with titles & prices
+browser({ command: "snapshot" })                    → updated ARIA tree with results
 ```
 
 **Environment variables:**
-- `CHROME_PATH` — override Chrome binary path (auto-detected on macOS/Linux/Windows)
+- `CHROME_PATH` — override Chrome binary path (Playwright auto-detects)
 
 ### Bootstrap files (unique to Janus)
 - `~/.janus/EGO.md` — Agent character (global, static)
@@ -147,10 +125,9 @@ Key sections: `llm` (provider, model, multi-provider, thinking, reasoningEffort,
 
 ## Dependencies
 
-13 runtime: @anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, ws, yaml, zod
-1 optional: playwright (for headless browser tool)
-5 dev: @types/better-sqlite3, @types/ws, tsx, typescript, vitest
-Chrome Extension: esbuild (build tooling)
+12 runtime: @anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod
+1 optional: playwright (for browser operator — real Chrome via Playwright persistent context)
+4 dev: @types/better-sqlite3, tsx, typescript, vitest
 
 ## Testing
 

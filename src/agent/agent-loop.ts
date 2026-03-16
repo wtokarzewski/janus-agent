@@ -265,7 +265,7 @@ export class AgentLoop {
       cronDepth: msg.cronDepth,
       browserChromePath: this.deps.config.browserOperator?.chromePath,
       browserProfileDir: this.deps.config.browserOperator?.profileDir,
-      browserExtensionDir: this.deps.config.browserOperator?.extensionDir,
+      browserHeadless: this.deps.config.browserOperator?.headless,
     });
 
     // Per-request context — passed to execute(), not shared across concurrent lanes

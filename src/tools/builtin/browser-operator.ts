@@ -1,13 +1,12 @@
 /**
  * Browser Operator tool — single tool surface for browser automation.
- * Uses real Chrome via extension, not Playwright.
+ * Uses real Chrome via Playwright persistent context.
  *
  * Usage: browser({ command: "snapshot", args: {} })
  */
 
-import { randomUUID } from 'node:crypto';
 import type { ContextualTool, ToolContext } from '../types.js';
-import { BrowserRuntime } from '../../services/browser/browser-runtime.js';
+import { BrowserPlaywrightRuntime } from '../../services/browser/browser-playwright-runtime.js';
 import { checkPolicy } from '../../services/browser/browser-policy.js';
 import type { BrowserCommandName } from '../../services/browser/browser-types.js';
 import * as log from '../../utils/logger.js';
@@ -25,10 +24,10 @@ let consecutiveFailures = 0;
 
 function resetIdleTimer(): void {
   if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => {
+  idleTimer = setTimeout(async () => {
     if (runtime?.ready) {
       log.info('Browser: idle timeout (30m) — closing Chrome');
-      runtime.stop();
+      await runtime.stop();
       runtime = null;
     }
     idleTimer = null;
@@ -36,33 +35,31 @@ function resetIdleTimer(): void {
 }
 
 // Singleton runtime — shared across tool invocations
-let runtime: BrowserRuntime | null = null;
-let runtimeConfig: { profileDir?: string; extensionDir?: string; chromePath?: string } = {};
+let runtime: BrowserPlaywrightRuntime | null = null;
+let runtimeConfig: { profileDir?: string; chromePath?: string; headless?: boolean } = {};
 
-function getRuntime(): BrowserRuntime {
+function getRuntime(): BrowserPlaywrightRuntime {
   if (!runtime) {
-    runtime = new BrowserRuntime(runtimeConfig);
+    runtime = new BrowserPlaywrightRuntime(runtimeConfig);
   }
   return runtime;
 }
 
 export class BrowserOperatorTool implements ContextualTool {
   name = 'browser';
-  description = 'Control a real Chrome browser through a dedicated extension. Use for web research, shopping, form filling, and any task requiring real browser interaction. Commands: ping, snapshot, click, type, pressKey, scroll, navigate, openTab, focusTab, closeTab, getCurrentUrl, waitFor, extractText, screenshot, dismissCookies, status, closeBrowser. The browser uses structured page snapshots — request a snapshot first, then act on element references (e1, e2, etc.). Use dismissCookies after navigating to a new site to clear GDPR/cookie banners. Chrome stays open between tasks. Use closeBrowser when done or it auto-closes after 30 min idle.';
+  description = 'Control a real Chrome browser via Playwright. Use for web research, shopping, form filling, and any task requiring real browser interaction. Commands: ping, snapshot, click, type, pressKey, scroll, navigate, openTab, focusTab, closeTab, getCurrentUrl, waitFor, extractText, screenshot, dismissCookies, status, closeBrowser. The browser uses structured page snapshots — request a snapshot first, then act on element references (e1, e2, etc.). Use dismissCookies after navigating to a new site to clear GDPR/cookie banners. Chrome stays open between tasks. Use closeBrowser when done or it auto-closes after 30 min idle.';
 
   setContext(ctx: ToolContext): void {
-    // Only update fields that are explicitly provided (ignore undefined to avoid
-    // killing Chrome when agent-loop calls setContext without browser fields)
     const newConfig = { ...runtimeConfig };
     if (ctx.browserProfileDir !== undefined) newConfig.profileDir = ctx.browserProfileDir;
-    if (ctx.browserExtensionDir !== undefined) newConfig.extensionDir = ctx.browserExtensionDir;
     if (ctx.browserChromePath !== undefined) newConfig.chromePath = ctx.browserChromePath;
+    if (ctx.browserHeadless !== undefined) newConfig.headless = ctx.browserHeadless;
 
-    // Only reset runtime if config actually changed (don't kill Chrome on every message)
+    // Only reset runtime if config actually changed
     const configChanged = runtime && (
       newConfig.profileDir !== runtimeConfig.profileDir ||
-      newConfig.extensionDir !== runtimeConfig.extensionDir ||
-      newConfig.chromePath !== runtimeConfig.chromePath
+      newConfig.chromePath !== runtimeConfig.chromePath ||
+      newConfig.headless !== runtimeConfig.headless
     );
     if (configChanged) {
       runtime!.stop();
@@ -81,7 +78,7 @@ export class BrowserOperatorTool implements ContextualTool {
       },
       args: {
         type: 'object',
-        description: 'Command arguments. Varies by command. Examples: navigate({url}), click({elementId, snapshotVersion}), type({elementId, text, clear}), pressKey({key}), scroll({deltaY}), waitFor({type, ...}).',
+        description: 'Command arguments. Varies by command. Examples: navigate({url}), click({elementId}), type({elementId, text, clear}), pressKey({key}), scroll({deltaY}), waitFor({type, ...}).',
       },
     },
     required: ['command'],
@@ -97,16 +94,16 @@ export class BrowserOperatorTool implements ContextualTool {
 
     const rt = getRuntime();
 
-    // Status is a read-only diagnostic — no runtime launch or policy check needed
+    // Status is a read-only diagnostic — no runtime launch needed
     if (command === 'status') {
       return JSON.stringify(rt.getStatus(), null, 2);
     }
 
-    // Close browser — explicit user request to shut down Chrome
+    // Close browser — explicit shutdown
     if (command === 'closeBrowser') {
       consecutiveFailures = 0;
       if (rt.ready) {
-        rt.stop();
+        await rt.stop();
         runtime = null;
         if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
         return 'Browser closed.';
@@ -115,9 +112,9 @@ export class BrowserOperatorTool implements ContextualTool {
       return 'Browser is not running. Failure counter reset.';
     }
 
-    // Circuit breaker: stop retrying after consecutive failures
+    // Circuit breaker
     if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-      return `Error: Browser is unavailable after ${MAX_CONSECUTIVE_FAILURES} consecutive failures. The Chrome extension cannot connect. Use web_fetch or web_search as alternatives. Call browser({ command: "closeBrowser" }) to reset the failure counter.`;
+      return `Error: Browser is unavailable after ${MAX_CONSECUTIVE_FAILURES} consecutive failures. Use web_fetch or web_search as alternatives. Call browser({ command: "closeBrowser" }) to reset.`;
     }
 
     // Ensure runtime is up (lazy start)
@@ -130,56 +127,35 @@ export class BrowserOperatorTool implements ContextualTool {
       return `Error: Browser runtime failed to start: ${err instanceof Error ? err.message : String(err)}${suffix}`;
     }
 
-    // Build protocol command
-    const browserCommand = {
-      id: randomUUID(),
-      command: command as BrowserCommandName,
-      args: cmdArgs,
-    };
-
     // Policy check
-    const policy = checkPolicy(browserCommand);
+    const policy = checkPolicy({ id: '', command: command as BrowserCommandName, args: cmdArgs });
     if (!policy.allowed) {
       log.info(`Browser policy blocked: ${policy.reason}`);
       return `Error: Blocked by safety policy. ${policy.reason}`;
     }
 
-    // Send to extension + reset idle timer
+    // Execute command
     log.info(`Browser: ${command} ${JSON.stringify(cmdArgs).slice(0, 200)}`);
     resetIdleTimer();
-    let response = await rt.server.send(browserCommand);
 
-    // Auto-retry once on extension_unavailable (service worker may need to wake up)
-    if (!response.ok && response.error?.code === 'extension_unavailable') {
-      log.info('Browser: extension unavailable, waiting for reconnection...');
-      try {
-        await rt.ensureRunning();
-        const retryCommand = { ...browserCommand, id: randomUUID() };
-        response = await rt.server.send(retryCommand);
-      } catch {
-        // Fall through to error handling below
-      }
-    }
-
-    if (!response.ok) {
+    try {
+      const result = await rt.execute(command as BrowserCommandName, cmdArgs);
+      consecutiveFailures = 0;
+      // Snapshot returns a string directly, everything else is an object
+      if (typeof result === 'string') return result;
+      return JSON.stringify(result, null, 2);
+    } catch (err) {
       consecutiveFailures++;
-      const err = response.error;
-      const hint = err?.suggestedNextStep ? ` Suggestion: ${err.suggestedNextStep}` : '';
+      const msg = err instanceof Error ? err.message : String(err);
       const remaining = MAX_CONSECUTIVE_FAILURES - consecutiveFailures;
       const breaker = remaining <= 0 ? ' Browser will be disabled on next call — use web_fetch/web_search instead.' : '';
-      return `Error: ${err?.message ?? 'Unknown error'} [${err?.code ?? 'unknown'}]${hint}${breaker}`;
+      return `Error: ${msg}${breaker}`;
     }
-
-    // Success — reset failure counter
-    consecutiveFailures = 0;
-
-    // Format result for agent
-    return JSON.stringify(response.result, null, 2);
   }
 }
 
 /** Cleanup runtime on process exit. */
-export function stopBrowserRuntime(): void {
-  runtime?.stop();
+export async function stopBrowserRuntime(): Promise<void> {
+  await runtime?.stop();
   runtime = null;
 }

@@ -1,44 +1,38 @@
 import { describe, it, expect } from 'vitest';
-import { BrowserTool } from '../../src/tools/builtin/browser.js';
+import { BrowserOperatorTool } from '../../src/tools/builtin/browser-operator.js';
 
-describe('BrowserTool', () => {
-  const tool = new BrowserTool();
+describe('BrowserOperatorTool', () => {
+  const tool = new BrowserOperatorTool();
 
   it('has correct name and parameters', () => {
     expect(tool.name).toBe('browser');
-    expect(tool.parameters.required).toEqual(['url']);
+    expect(tool.parameters.required).toEqual(['command']);
     const props = tool.parameters.properties as Record<string, unknown>;
-    expect(props).toHaveProperty('url');
-    expect(props).toHaveProperty('wait_for');
-    expect(props).toHaveProperty('click');
-    expect(props).toHaveProperty('fill');
-    expect(props).toHaveProperty('extract');
-    expect(props).toHaveProperty('timeout_ms');
+    expect(props).toHaveProperty('command');
+    expect(props).toHaveProperty('args');
   });
 
-  it('rejects empty URL', async () => {
-    const result = await tool.execute({});
-    expect(result).toBe('Error: No URL provided');
+  it('rejects unknown command', async () => {
+    const result = await tool.execute({ command: 'invalidCmd' });
+    expect(result).toContain('Error: Unknown browser command');
+    expect(result).toContain('invalidCmd');
   });
 
-  it('rejects invalid URL', async () => {
-    const result = await tool.execute({ url: 'not-a-url' });
-    expect(result).toContain('Error: Invalid URL');
+  it('returns status without launching runtime', async () => {
+    const result = await tool.execute({ command: 'status' });
+    const status = JSON.parse(result);
+    expect(status.runtimeState).toBe('idle');
   });
 
-  it('rejects non-http URL', async () => {
-    const result = await tool.execute({ url: 'ftp://example.com' });
-    expect(result).toBe('Error: Only http/https URLs are supported');
+  it('closeBrowser resets failure counter when not running', async () => {
+    const result = await tool.execute({ command: 'closeBrowser' });
+    expect(result).toBe('Browser is not running. Failure counter reset.');
   });
 
-  it('returns helpful error when playwright is not installed', async () => {
-    // In test environment, playwright may or may not be installed.
-    // If not installed, we expect the helpful error message.
-    // If installed, we'd get a real response (which is also fine).
-    const result = await tool.execute({ url: 'https://example.com' });
-    // Either a real result (JSON) or the install hint
-    const isInstallHint = result.includes('Playwright is not installed');
-    const isValidResult = result.startsWith('{') || result.startsWith('Error:');
-    expect(isInstallHint || isValidResult).toBe(true);
+  it('lists all valid commands in description', () => {
+    expect(tool.description).toContain('snapshot');
+    expect(tool.description).toContain('navigate');
+    expect(tool.description).toContain('click');
+    expect(tool.description).toContain('dismissCookies');
   });
 });
