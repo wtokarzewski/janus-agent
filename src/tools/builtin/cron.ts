@@ -69,8 +69,8 @@ export class CronTool implements ContextualTool {
   private canAccess(job: { userId: string | null }, reqCtx?: RequestContext): boolean {
     // System jobs (no userId) are visible to all
     if (!job.userId) return true;
-    // No user context → allow (system/cron calls)
-    if (!reqCtx?.userId) return true;
+    // No user context — deny access to user-owned jobs
+    if (!reqCtx?.userId) return false;
     // Own job
     if (job.userId === reqCtx.userId) return true;
     // Family member's job (in family group chat)
@@ -89,9 +89,10 @@ export class CronTool implements ContextualTool {
     switch (action) {
       case 'list': {
         const includeDisabled = args.include_disabled === true;
+        // Listing is always scoped to own + system — no family exposure
         const jobs = this.cronService.listJobsForUser(
           reqCtx?.userId,
-          reqCtx?.familyUserIds,
+          undefined,
           includeDisabled,
         );
         return JSON.stringify(jobs, null, 2);

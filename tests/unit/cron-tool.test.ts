@@ -74,7 +74,7 @@ describe('CronTool', () => {
     expect(wojtekJobs.map((j: { name: string }) => j.name).sort()).toEqual(['system', 'wojtek-task']);
   });
 
-  it('should include family members in list when familyUserIds set', async () => {
+  it('should NOT expose family members jobs in list (privacy)', async () => {
     await tool.execute(
       { action: 'add', name: 'wojtek-task', schedule_kind: 'every', schedule_value: '1000', task: 'w' },
       { userId: 'wojtek' },
@@ -88,14 +88,31 @@ describe('CronTool', () => {
       { userId: 'maciek' },
     );
 
-    // Family chat: wojtek sees wojtek + monika, but not maciek
+    // Family chat: listing still only shows own jobs, not family members
     const result = await tool.execute(
       { action: 'list' },
       { userId: 'wojtek', familyUserIds: ['wojtek', 'monika', 'zuzia'] },
     );
     const jobs = JSON.parse(result);
-    expect(jobs).toHaveLength(2);
-    expect(jobs.map((j: { name: string }) => j.name).sort()).toEqual(['monika-task', 'wojtek-task']);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].name).toBe('wojtek-task');
+  });
+
+  it('should allow family member access via status (targeted query)', async () => {
+    const addResult = await tool.execute(
+      { action: 'add', name: 'monika-task', schedule_kind: 'every', schedule_value: '1000', task: 'm' },
+      { userId: 'monika' },
+    );
+    const { id } = JSON.parse(addResult);
+
+    // Wojtek can access monika's job via status in family chat
+    const statusResult = await tool.execute(
+      { action: 'status', id },
+      { userId: 'wojtek', familyUserIds: ['wojtek', 'monika', 'zuzia'] },
+    );
+    expect(statusResult).not.toContain('Access denied');
+    const job = JSON.parse(statusResult);
+    expect(job.name).toBe('monika-task');
   });
 
   it('should deny access to another users job', async () => {
@@ -116,6 +133,26 @@ describe('CronTool', () => {
 
     const runsResult = await tool.execute({ action: 'runs', id }, { userId: 'wojtek' });
     expect(runsResult).toContain('Access denied');
+  });
+
+  it('should deny access to user-owned jobs when no userId in context', async () => {
+    const addResult = await tool.execute(
+      { action: 'add', name: 'private', schedule_kind: 'every', schedule_value: '1000', task: 'secret' },
+      { userId: 'wojtek' },
+    );
+    const { id } = JSON.parse(addResult);
+
+    // No reqCtx → deny access to user-owned jobs
+    const statusResult = await tool.execute({ action: 'status', id });
+    expect(statusResult).toContain('Access denied');
+
+    // System jobs still accessible without userId
+    const sysResult = await tool.execute(
+      { action: 'add', name: 'system', schedule_kind: 'every', schedule_value: '1000', task: 'sys' },
+    );
+    const sysJob = JSON.parse(sysResult);
+    const sysStatus = await tool.execute({ action: 'status', id: sysJob.id });
+    expect(sysStatus).not.toContain('Access denied');
   });
 
   it('should return error for add with missing fields', async () => {
