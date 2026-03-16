@@ -81,6 +81,9 @@ export class BrowserPlaywrightRuntime {
       const launchOpts: Record<string, unknown> = {
         headless: this.headless,
         timeout: LAUNCH_TIMEOUT_MS,
+        args: [
+          '--disable-blink-features=AutomationControlled',
+        ],
       };
 
       // Use real Chrome if available
@@ -94,6 +97,11 @@ export class BrowserPlaywrightRuntime {
       log.info(`Browser:   profile=${this.profileDir}`);
 
       this.context = await chromium.launchPersistentContext(this.profileDir, launchOpts);
+
+      // Remove navigator.webdriver flag to avoid bot detection
+      await this.context.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      });
 
       this.context.on('close', () => {
         log.info('Browser: context closed');
