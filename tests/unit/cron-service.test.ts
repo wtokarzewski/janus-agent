@@ -272,6 +272,11 @@ describe('HeartbeatService → CronService sync', () => {
     expect(morningJob).toBeTruthy();
     expect(morningJob!.scheduleKind).toBe('cron');
     expect(morningJob!.scheduleValue).toBe('0 9 * * *');
+    // Cron tasks should get system timezone
+    expect(morningJob!.scheduleTz).toBeTruthy();
+
+    // 'every' tasks don't need timezone (interval-based)
+    expect(statusJob!.scheduleTz).toBeNull();
 
     ac.abort();
   });

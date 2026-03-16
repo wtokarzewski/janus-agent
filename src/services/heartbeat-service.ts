@@ -12,6 +12,7 @@ export interface HeartbeatTask {
   lastRun: number;
   scheduleKind: 'every' | 'cron';
   scheduleValue: string;
+  scheduleTz?: string;
   userId?: string;
 }
 
@@ -70,6 +71,7 @@ export class HeartbeatService {
           name: jobName,
           scheduleKind: task.scheduleKind,
           scheduleValue: task.scheduleValue,
+          scheduleTz: task.scheduleTz,
           task: task.description,
           enabled: true,
           userId: task.userId,
@@ -165,8 +167,18 @@ export class HeartbeatService {
 
 const CRON_EXPR_RE = /^[\d*,\-/]+\s+[\d*,\-/]+\s+[\d*,\-/]+\s+[\d*,\-/]+\s+[\d*,\-/]+$/;
 
+/** Detect system IANA timezone (e.g. "Europe/Warsaw"). */
+function getSystemTimezone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseHeartbeatMd(content: string): HeartbeatTask[] {
   const tasks: HeartbeatTask[] = [];
+  const systemTz = getSystemTimezone();
   const sections = content.split(/^## /m).filter(Boolean);
 
   for (const section of sections) {
@@ -207,6 +219,7 @@ export function parseHeartbeatMd(content: string): HeartbeatTask[] {
         lastRun: 0,
         scheduleKind: 'cron',
         scheduleValue: `${minute} ${hour} * * *`,
+        scheduleTz: systemTz,
       });
       continue;
     }
@@ -233,6 +246,7 @@ export function parseHeartbeatMd(content: string): HeartbeatTask[] {
         lastRun: 0,
         scheduleKind: 'cron',
         scheduleValue: scheduleRaw,
+        scheduleTz: systemTz,
       });
     } else {
       log.debug(`Heartbeat: unrecognized schedule format for "${name}": ${scheduleRaw}`);
