@@ -65,7 +65,13 @@ export class ContextBuilder {
       if (userSection) parts.push(userSection);
     }
 
-    // 1c. Shared chat files directory (group chats — Telegram group IDs start with '-')
+    // 1c. Known users (id + name only — no sensitive data)
+    if (this.deps.config.users.length > 0) {
+      const userLines = this.deps.config.users.map(u => `- ${u.id} (${u.name})`);
+      parts.push(`<known_users>\n${userLines.join('\n')}\n</known_users>`);
+    }
+
+    // 1d. Shared chat files directory (group chats — Telegram group IDs start with '-')
     if (opts.chatId && opts.chatId.startsWith('-')) {
       const safeChatId = sanitizeChatId(opts.chatId);
       const chatFilesDir = resolve(this.deps.config.workspace.dir, '.janus', 'chats', safeChatId, 'files');
@@ -335,13 +341,13 @@ ${toolList}
         }
       }
 
-      // Always include recent daily notes in full
+      // Always include recent daily notes in full (per-user when userId available)
       const recentDays = this.deps.config.memory?.recentDays ?? 3;
       for (let d = 0; d < recentDays; d++) {
         const date = new Date();
         date.setDate(date.getDate() - d);
         const dateStr = date.toISOString().slice(0, 10);
-        const dayNote = await this.deps.memory.readDaily(dateStr);
+        const dayNote = await this.deps.memory.readDaily(dateStr, userId);
         if (dayNote.trim()) {
           const label = d === 0 ? 'today' : dateStr;
           parts.push(`<memory_chunk source="${label}" section="daily_note">\n${dayNote.trim()}\n</memory_chunk>`);
@@ -354,7 +360,7 @@ ${toolList}
     }
 
     // Fallback: full dump (no index, no results, or no user message)
-    const ctx = await this.deps.memory.getContext();
+    const ctx = await this.deps.memory.getContext(userId);
     const parts: string[] = [];
 
     if (ctx.memory) parts.push(`<!-- MEMORY.md -->\n${ctx.memory}`);

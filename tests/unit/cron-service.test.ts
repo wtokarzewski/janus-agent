@@ -153,12 +153,13 @@ describe('CronService per-user filtering', () => {
     expect(familyJobs.map(j => j.name).sort()).toEqual(['monika-job', 'system-job', 'wojtek-job']);
   });
 
-  it('should return all jobs when no userId given', () => {
-    service.addJob({ name: 'a', scheduleKind: 'every', scheduleValue: '1000', task: 'a' });
-    service.addJob({ name: 'b', scheduleKind: 'every', scheduleValue: '1000', task: 'b', userId: 'wojtek' });
+  it('should return only system jobs when no userId given', () => {
+    service.addJob({ name: 'system', scheduleKind: 'every', scheduleValue: '1000', task: 'a' });
+    service.addJob({ name: 'personal', scheduleKind: 'every', scheduleValue: '1000', task: 'b', userId: 'wojtek' });
 
-    const allJobs = service.listJobsForUser(undefined);
-    expect(allJobs).toHaveLength(2);
+    const jobs = service.listJobsForUser(undefined);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].name).toBe('system');
   });
 });
 

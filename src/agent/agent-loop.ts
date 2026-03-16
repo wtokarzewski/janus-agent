@@ -765,7 +765,7 @@ export class AgentLoop {
     if (messagesToFlush.length === 0) { state.flushing = false; return; }
     try {
       // Build context: session summary + current MEMORY.md
-      const currentMemory = await this.deps.memory.readMemory();
+      const currentMemory = await this.deps.memory.readMemory(userId);
       const sessionSummary = session.metadata.summary ?? '';
       const contextParts: string[] = [];
       const userName = this.flushState.get(sessionKey)?.userName;
@@ -827,9 +827,9 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
         await this.deps.memory.appendDaily(`## Session notes\n${facts}`, userId, scope);
       }
 
-      // MEMORY.md — holistic update (merge new facts into existing)
+      // MEMORY.md — holistic update (merge new facts into existing, per-user when userId available)
       if (memoryUpdate && memoryUpdate !== 'UNCHANGED' && memoryUpdate !== 'NONE') {
-        await this.deps.memory.writeMemory(memoryUpdate);
+        await this.deps.memory.writeMemory(memoryUpdate, userId);
       }
 
       // Fallback: if XML parsing failed, treat whole response as daily notes

@@ -173,7 +173,12 @@ export class CronService {
    * If familyUserIds is provided, also includes those users' jobs.
    */
   listJobsForUser(userId?: string, familyUserIds?: string[], includeDisabled = false): CronJob[] {
-    if (!userId) return this.listJobs(includeDisabled);
+    if (!userId) {
+      // No user context — only return system jobs (no owner)
+      const enabledClause = includeDisabled ? '' : ' AND enabled = 1';
+      const sql = `SELECT * FROM cron_jobs WHERE user_id IS NULL${enabledClause} ORDER BY created_at`;
+      return this.db.db.prepare(sql).all().map(rowToJob);
+    }
 
     const enabledClause = includeDisabled ? '' : ' AND enabled = 1';
 
