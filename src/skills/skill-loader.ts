@@ -133,7 +133,7 @@ export class SkillLoader {
 
   private parseSkillMd(content: string, filePath: string): SkillDefinition | null {
     // Split YAML frontmatter from markdown body
-    const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+    const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
     if (!match) return null;
 
     const [, yamlStr, body] = match;
