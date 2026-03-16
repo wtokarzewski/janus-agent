@@ -148,8 +148,8 @@ export class MemoryIndex {
     try {
       const { embed } = await import('./embedder.js');
       const chunks = this.db.prepare(
-        'SELECT id, content FROM memory_chunks WHERE source = ?',
-      ).all(source) as Array<{ id: number; content: string }>;
+        'SELECT id, content FROM memory_chunks WHERE source = ? AND owner = ? AND scope = ?',
+      ).all(source, owner, scope) as Array<{ id: number; content: string }>;
 
       const updateStmt = this.db.prepare('UPDATE memory_chunks SET embedding = ? WHERE id = ?');
       for (const chunk of chunks) {
@@ -202,8 +202,8 @@ export class MemoryIndex {
       if (!file.content.trim()) continue;
       this.indexFile(file.source, file.content, file.owner ?? 'shared', file.scope ?? 'global', file.scopeId ?? null);
       const count = this.db.prepare(
-        'SELECT COUNT(*) as cnt FROM memory_chunks WHERE source = ?',
-      ).get(file.source) as { cnt: number };
+        'SELECT COUNT(*) as cnt FROM memory_chunks WHERE source = ? AND owner = ? AND scope = ?',
+      ).get(file.source, file.owner ?? 'shared', file.scope ?? 'global') as { cnt: number };
       totalChunks += count.cnt;
     }
     log.info(`Indexed ${totalChunks} chunks from ${files.length} file(s)`);
