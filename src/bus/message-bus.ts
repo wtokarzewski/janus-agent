@@ -56,6 +56,11 @@ export class MessageBus {
     return this.handlers.size > 0;
   }
 
+  /** Get registered channel names (for dynamic channel resolution). */
+  get registeredChannels(): string[] {
+    return [...this.handlers.keys()];
+  }
+
   /** Send directly to a channel handler, bypassing the queue. Used for streaming and typing. */
   streamTo(channel: string, chatId: string, type: 'chunk' | 'stream_end' | 'typing', content = ''): void {
     const handler = this.handlers.get(channel);
