@@ -46,6 +46,10 @@ export class CronTool implements ContextualTool {
         type: 'boolean',
         description: 'Whether the job is enabled.',
       },
+      user_id: {
+        type: 'string',
+        description: 'Owner user ID. For update: reassign job ownership. For add: override auto-detected userId.',
+      },
       limit: {
         type: 'number',
         description: 'Limit for run history (default: 20).',
@@ -113,7 +117,7 @@ export class CronTool implements ContextualTool {
           scheduleTz: args.schedule_tz ? String(args.schedule_tz) : undefined,
           task,
           enabled: args.enabled !== false,
-          userId: reqCtx?.userId,
+          userId: args.user_id ? String(args.user_id) : reqCtx?.userId,
         });
         return JSON.stringify(job, null, 2);
       }
@@ -132,6 +136,7 @@ export class CronTool implements ContextualTool {
           if (args.schedule_tz !== undefined) patch.scheduleTz = String(args.schedule_tz);
           if (args.task !== undefined) patch.task = String(args.task);
           if (args.enabled !== undefined) patch.enabled = Boolean(args.enabled);
+          if (args.user_id !== undefined) patch.userId = String(args.user_id);
           const job = this.cronService.updateJob(id, patch);
           return JSON.stringify(job, null, 2);
         } catch (err) {

@@ -54,6 +54,25 @@ describe('CronTool', () => {
     expect(job.userId).toBe('wojtek');
   });
 
+  it('should reassign userId via update', async () => {
+    const addResult = await tool.execute(
+      { action: 'add', name: 'reassign-test', schedule_kind: 'every', schedule_value: '1000', task: 't' },
+    );
+    const { id } = JSON.parse(addResult);
+    expect(JSON.parse(addResult).userId).toBeNull();
+
+    const updateResult = await tool.execute({ action: 'update', id, user_id: 'wojtek' });
+    expect(JSON.parse(updateResult).userId).toBe('wojtek');
+  });
+
+  it('should override reqCtx userId with explicit user_id in add', async () => {
+    const result = await tool.execute(
+      { action: 'add', name: 'override-test', schedule_kind: 'every', schedule_value: '1000', task: 't', user_id: 'maciek' },
+      { userId: 'wojtek' },
+    );
+    expect(JSON.parse(result).userId).toBe('maciek');
+  });
+
   it('should filter list by userId', async () => {
     // Add system job (no user)
     await tool.execute({ action: 'add', name: 'system', schedule_kind: 'every', schedule_value: '1000', task: 's' });
