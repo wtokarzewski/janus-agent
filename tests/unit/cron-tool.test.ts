@@ -73,6 +73,26 @@ describe('CronTool', () => {
     expect(JSON.parse(result).userId).toBe('maciek');
   });
 
+  it('should create system job with user_id "system"', async () => {
+    const result = await tool.execute(
+      { action: 'add', name: 'sys-task', schedule_kind: 'every', schedule_value: '1000', task: 't', user_id: 'system' },
+      { userId: 'wojtek' },
+    );
+    expect(JSON.parse(result).userId).toBeNull();
+  });
+
+  it('should reset userId to null via update with "system"', async () => {
+    const addResult = await tool.execute(
+      { action: 'add', name: 'reset-test', schedule_kind: 'every', schedule_value: '1000', task: 't' },
+      { userId: 'wojtek' },
+    );
+    const { id } = JSON.parse(addResult);
+    expect(JSON.parse(addResult).userId).toBe('wojtek');
+
+    const updateResult = await tool.execute({ action: 'update', id, user_id: 'system' }, { userId: 'wojtek' });
+    expect(JSON.parse(updateResult).userId).toBeNull();
+  });
+
   it('should filter list by userId', async () => {
     // Add system job (no user)
     await tool.execute({ action: 'add', name: 'system', schedule_kind: 'every', schedule_value: '1000', task: 's' });
