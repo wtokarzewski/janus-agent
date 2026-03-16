@@ -24,7 +24,7 @@ export interface CronJobInput {
   scheduleTz?: string;
   task: string;
   enabled?: boolean;
-  userId?: string;
+  userId?: string | null;
   /** Optional custom session ID — cron uses same session across runs instead of per-job UUID. */
   sessionId?: string;
 }
