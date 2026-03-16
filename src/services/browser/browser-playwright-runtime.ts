@@ -233,17 +233,26 @@ export class BrowserPlaywrightRuntime {
   }
 
   private async handleWaitFor(page: Pw, args: Record<string, unknown>): Promise<unknown> {
-    const type = String(args.type ?? 'domStable');
-    const timeoutMs = Number(args.timeoutMs ?? COMMAND_TIMEOUT_MS);
+    const rawType = String(args.type ?? 'domStable');
+    // Accept common aliases (agent may use shortened names without SKILL.md)
+    const typeAliases: Record<string, string> = {
+      idle: 'domStable', stable: 'domStable', load: 'domStable',
+      timeout: 'timeoutOnly', delay: 'timeoutOnly', wait: 'timeoutOnly',
+      url: 'urlMatches', urlMatch: 'urlMatches',
+      text: 'textVisible', textMatch: 'textVisible',
+      element: 'elementExists',
+    };
+    const type = typeAliases[rawType] ?? rawType;
+    const timeoutMs = Number(args.timeoutMs ?? args.timeout ?? COMMAND_TIMEOUT_MS);
 
     switch (type) {
       case 'urlMatches': {
-        const pattern = String(args.pattern ?? '');
+        const pattern = String(args.pattern ?? args.value ?? '');
         await page.waitForURL(`**/*${pattern}*`, { timeout: timeoutMs });
         return { matched: true, url: page.url() };
       }
       case 'textVisible': {
-        const text = String(args.text ?? '');
+        const text = String(args.text ?? args.value ?? '');
         await page.locator(`text=${text}`).first().waitFor({ state: 'visible', timeout: timeoutMs });
         return { visible: true, text };
       }
@@ -259,11 +268,12 @@ export class BrowserPlaywrightRuntime {
         return { stable: true, url: page.url() };
       }
       case 'timeoutOnly': {
-        await page.waitForTimeout(timeoutMs);
-        return { waited: timeoutMs };
+        const waitMs = Number(args.timeoutMs ?? args.timeout ?? 5000);
+        await page.waitForTimeout(waitMs);
+        return { waited: waitMs };
       }
       default:
-        throw new Error(`Unknown waitFor type: ${type}`);
+        throw new Error(`Unknown waitFor type: "${rawType}". Valid: domStable, urlMatches, textVisible, elementExists, timeoutOnly`);
     }
   }
 
