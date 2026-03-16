@@ -246,7 +246,7 @@ export class AgentLoop {
     }
   }
 
-  private async processMessage(msg: InboundMessage): Promise<OutboundMessage & { streamed?: boolean }> {
+  private async processMessage(msg: InboundMessage, externalReqCtx?: Partial<RequestContext>): Promise<OutboundMessage & { streamed?: boolean }> {
     const sessionKey = `${msg.channel}:${msg.chatId}`;
 
     // 1. Resolve user profile (if multi-user)
@@ -289,6 +289,7 @@ export class AgentLoop {
       userToolAllow: userProfile?.tools?.allow,
       userToolDeny: userProfile?.tools?.deny,
       toolPolicy: userProfile?.tools?.policy,
+      sentTargets: externalReqCtx?.sentTargets ?? [],
     };
 
     // 3. Get session + build system prompt
@@ -429,8 +430,11 @@ export class AgentLoop {
   private async processSystemMessage(msg: InboundMessage): Promise<void> {
     log.info(`System message: ${msg.content.slice(0, 100)}`);
 
+    // Track targets the message tool sent to during this turn (for dedup)
+    const sentTargets: Array<{ channel: string; chatId: string }> = [];
+
     // Process as a regular message but with system session key
-    const response = await this.processMessage(msg);
+    const response = await this.processMessage(msg, { sentTargets });
 
     // Suppress no-op / internal summary responses from heartbeat/cron
     const trimmed = response.content.trim();
@@ -451,6 +455,10 @@ export class AgentLoop {
           if (identity?.channelUserId) {
             response.channel = identity.channel;
             response.chatId = identity.channelUserId;
+            if (sentTargets.some(t => t.channel === response.channel && t.chatId === response.chatId)) {
+              log.debug(`Suppressing system response — message tool already delivered to ${response.channel}:${response.chatId}`);
+              return;
+            }
           } else {
             log.warn(`Cron response for user "${msg.user.userId}" has no channel identity — suppressing`);
             return;
@@ -461,6 +469,7 @@ export class AgentLoop {
             for (const user of this.deps.config.users) {
               const identity = user.identities.find(i => i.channelUserId);
               if (identity?.channelUserId) {
+                if (sentTargets.some(t => t.channel === identity.channel && t.chatId === identity.channelUserId)) continue;
                 await this.deps.bus.publishOutbound({
                   ...response,
                   channel: identity.channel,
@@ -482,6 +491,11 @@ export class AgentLoop {
         const registeredChannel = this.findChannelForChat(msg.chatId);
         response.channel = registeredChannel;
         response.chatId = msg.chatId;
+      }
+
+      if (sentTargets.some(t => t.channel === response.channel && t.chatId === response.chatId)) {
+        log.debug(`Suppressing system response — message tool already delivered to ${response.channel}:${response.chatId}`);
+        return;
       }
 
       await this.deps.bus.publishOutbound(response, new AbortController().signal).catch(err => {

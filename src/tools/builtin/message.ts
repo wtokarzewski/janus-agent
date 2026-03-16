@@ -1,4 +1,4 @@
-import type { Tool } from '../types.js';
+import type { Tool, RequestContext } from '../types.js';
 import type { MessageBus } from '../../bus/message-bus.js';
 
 /**
@@ -24,7 +24,7 @@ export class MessageTool implements Tool {
     this.bus = bus;
   }
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
     const channel = String(args.channel ?? '');
     const chatId = String(args.chat_id ?? '');
     const content = String(args.content ?? '');
@@ -39,6 +39,8 @@ export class MessageTool implements Tool {
       content,
       timestamp: new Date(),
     });
+
+    reqCtx?.sentTargets?.push({ channel, chatId });
 
     return `Message sent to ${channel}:${chatId}`;
   }
