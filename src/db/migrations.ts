@@ -99,4 +99,9 @@ export const migrations: string[] = [
   `
   ALTER TABLE cron_jobs ADD COLUMN session_id TEXT;
   `,
+
+  // Migration 8: chat_id for group chat cron jobs
+  `
+  ALTER TABLE cron_jobs ADD COLUMN chat_id TEXT;
+  `,
 ];
