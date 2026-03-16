@@ -76,10 +76,15 @@ describe('System message no-op suppression', () => {
   it('should NOT suppress meaningful system responses', async () => {
     const mock = new MockProvider([{ content: 'I completed the scheduled task and updated the report.' }]);
     const { deps, bus } = createDeps(mock);
+    // Add user with Telegram identity so cron routing can find a target
+    deps.config.users = [{
+      id: 'alice', name: 'Alice',
+      identities: [{ channel: 'telegram', channelUserId: '123' }],
+    }];
     const agent = new AgentLoop(deps);
 
     const published: OutboundMessage[] = [];
-    bus.registerHandler('cli', async (msg) => { published.push(msg); });
+    bus.registerHandler('telegram', async (msg) => { published.push(msg); });
 
     const ac = new AbortController();
 
@@ -93,6 +98,7 @@ describe('System message no-op suppression', () => {
       content: 'Generate daily report',
       author: 'system',
       timestamp: new Date(),
+      user: { userId: 'alice', name: 'Alice' },
     };
     await bus.publishInbound(msg, ac.signal);
 
@@ -101,7 +107,7 @@ describe('System message no-op suppression', () => {
     ac.abort();
     await Promise.allSettled([agentPromise, dispatcherPromise]);
 
-    // Meaningful response should NOT be suppressed
+    // Meaningful response should NOT be suppressed — routed to user's Telegram
     expect(published.length).toBeGreaterThan(0);
     expect(published[0].content).toContain('completed the scheduled task');
   });
