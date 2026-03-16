@@ -10,7 +10,7 @@ import type { SkillLoader } from '../skills/skill-loader.js';
 import type { JanusConfig } from '../config/schema.js';
 import type { MemoryStore } from '../memory/memory-store.js';
 import type { GateService } from '../gates/types.js';
-import { findUserProfile, deriveChannelAllowlist } from '../users/user-resolver.js';
+import { findUserProfile } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 import { stripControlTokens } from '../utils/sanitize.js';
 
@@ -444,38 +444,33 @@ export class AgentLoop {
     if (!response.streamed && msg.chatId !== 'internal') {
       // Route cron/heartbeat responses to the correct channel
       if (msg.chatId.startsWith('cron:') || msg.chatId.startsWith('heartbeat')) {
-        // Per-user routing: find the user's Telegram chatId
+        // Per-user routing: find user's channel identity
         if (msg.user?.userId) {
           const userProfile = findUserProfile(msg.user.userId, this.deps.config);
-          const tgIdentity = userProfile?.identities.find(
-            i => i.channel === 'telegram' && i.channelUserId,
-          );
-          if (tgIdentity?.channelUserId) {
-            response.channel = 'telegram';
-            response.chatId = tgIdentity.channelUserId;
+          const identity = userProfile?.identities.find(i => i.channelUserId);
+          if (identity?.channelUserId) {
+            response.channel = identity.channel;
+            response.chatId = identity.channelUserId;
           } else {
-            log.warn(`Cron response for user "${msg.user.userId}" has no Telegram identity — suppressing`);
+            log.warn(`Cron response for user "${msg.user.userId}" has no channel identity — suppressing`);
             return;
           }
         } else {
-          // No userId — in multi-user mode, broadcast to all users
-          const tgEnabled = this.deps.config.telegram?.enabled
-            || (this.deps.config.telegram?.allowlist?.length ?? 0) > 0
-            || deriveChannelAllowlist('telegram', this.deps.config).length > 0;
-          if (tgEnabled && this.deps.config.users.length > 0) {
+          // No userId — broadcast to all users via their configured channels
+          if (this.deps.config.users.length > 0 && this.deps.bus.hasHandlers) {
             for (const user of this.deps.config.users) {
-              const tgId = user.identities.find(i => i.channel === 'telegram' && i.channelUserId);
-              if (tgId?.channelUserId) {
+              const identity = user.identities.find(i => i.channelUserId);
+              if (identity?.channelUserId) {
                 await this.deps.bus.publishOutbound({
                   ...response,
-                  channel: 'telegram',
-                  chatId: tgId.channelUserId,
+                  channel: identity.channel,
+                  chatId: identity.channelUserId,
                 }, new AbortController().signal).catch(() => {});
               }
             }
             return;
           }
-          if (!tgEnabled) {
+          if (!this.deps.bus.hasHandlers) {
             response.channel = 'cli';
           } else {
             log.warn(`Cron response has no userId and no users configured — suppressing`);
@@ -483,8 +478,9 @@ export class AgentLoop {
           }
         }
       } else if (msg.channel === 'system' && !msg.chatId.startsWith('cron:') && !msg.chatId.startsWith('heartbeat')) {
-        // Group chat cron job — chatId is already a real chat ID, route to telegram
-        response.channel = 'telegram';
+        // Group chat cron job — chatId is a real chat ID, find the registered channel
+        const registeredChannel = this.findChannelForChat(msg.chatId);
+        response.channel = registeredChannel;
         response.chatId = msg.chatId;
       }
 
@@ -492,6 +488,13 @@ export class AgentLoop {
         log.warn(`Failed to publish system message response: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
+  }
+
+  /** Resolve which registered channel can deliver to a given chatId. */
+  private findChannelForChat(_chatId: string): string {
+    // Use the first registered messaging channel (non-CLI)
+    const channels = this.deps.bus.registeredChannels;
+    return channels.find(c => c !== 'cli') ?? channels[0] ?? 'cli';
   }
 
   /**
