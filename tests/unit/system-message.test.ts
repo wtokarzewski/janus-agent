@@ -14,6 +14,7 @@ import { ContextBuilder } from '../../src/context/context-builder.js';
 import { SkillLearner } from '../../src/learner/learner.js';
 import { MockProvider } from '../helpers/mock-llm.js';
 import { createTestConfig } from '../helpers/test-fixtures.js';
+import { MessageTool } from '../../src/tools/builtin/message.js';
 import type { LearnerStorage, ExecutionRecord } from '../../src/learner/types.js';
 import type { InboundMessage, OutboundMessage } from '../../src/bus/types.js';
 
@@ -110,5 +111,109 @@ describe('System message no-op suppression', () => {
     // Meaningful response should NOT be suppressed — routed to user's Telegram
     expect(published.length).toBeGreaterThan(0);
     expect(published[0].content).toContain('completed the scheduled task');
+  });
+});
+
+describe('Duplicate cron response suppression via sentTargets', () => {
+  it('should suppress response when message tool already sent to same target', async () => {
+    const mock = new MockProvider([
+      {
+        content: '',
+        toolCalls: [{
+          id: 'tc1',
+          type: 'function',
+          function: {
+            name: 'message',
+            arguments: JSON.stringify({ channel: 'telegram', chat_id: '123', content: 'Report ready' }),
+          },
+        }],
+      },
+      { content: 'I sent the report to your Telegram.' },
+    ]);
+    const { deps, bus } = createDeps(mock);
+    // Register MessageTool so the agent can execute it
+    deps.tools.register(new MessageTool(bus));
+    deps.config.users = [{
+      id: 'alice', name: 'Alice',
+      identities: [{ channel: 'telegram', channelUserId: '123' }],
+    }];
+    const agent = new AgentLoop(deps);
+
+    const published: OutboundMessage[] = [];
+    bus.registerHandler('telegram', async (msg) => { published.push(msg); });
+
+    const ac = new AbortController();
+    const dispatcherPromise = bus.startDispatcher(ac.signal);
+
+    const msg: InboundMessage = {
+      id: 'cron-dup-1',
+      channel: 'system',
+      chatId: 'cron:daily-report',
+      content: 'Generate daily report',
+      author: 'system',
+      timestamp: new Date(),
+      user: { userId: 'alice', name: 'Alice' },
+    };
+    await bus.publishInbound(msg, ac.signal);
+
+    const agentPromise = agent.run(ac.signal);
+    await new Promise(r => setTimeout(r, 500));
+    ac.abort();
+    await Promise.allSettled([agentPromise, dispatcherPromise]);
+
+    // Only 1 message (from message tool), the LLM summary response should be suppressed
+    expect(published).toHaveLength(1);
+    expect(published[0].content).toBe('Report ready');
+  });
+
+  it('should NOT suppress response when message tool sent to different target', async () => {
+    const mock = new MockProvider([
+      {
+        content: '',
+        toolCalls: [{
+          id: 'tc2',
+          type: 'function',
+          function: {
+            name: 'message',
+            arguments: JSON.stringify({ channel: 'telegram', chat_id: '456', content: 'Notification for Bob' }),
+          },
+        }],
+      },
+      { content: 'I notified Bob and here is your summary.' },
+    ]);
+    const { deps, bus } = createDeps(mock);
+    deps.tools.register(new MessageTool(bus));
+    deps.config.users = [
+      { id: 'alice', name: 'Alice', identities: [{ channel: 'telegram', channelUserId: '123' }] },
+      { id: 'bob', name: 'Bob', identities: [{ channel: 'telegram', channelUserId: '456' }] },
+    ];
+    const agent = new AgentLoop(deps);
+
+    const published: OutboundMessage[] = [];
+    bus.registerHandler('telegram', async (msg) => { published.push(msg); });
+
+    const ac = new AbortController();
+    const dispatcherPromise = bus.startDispatcher(ac.signal);
+
+    const msg: InboundMessage = {
+      id: 'cron-diff-1',
+      channel: 'system',
+      chatId: 'cron:daily-report',
+      content: 'Generate daily report',
+      author: 'system',
+      timestamp: new Date(),
+      user: { userId: 'alice', name: 'Alice' },
+    };
+    await bus.publishInbound(msg, ac.signal);
+
+    const agentPromise = agent.run(ac.signal);
+    await new Promise(r => setTimeout(r, 500));
+    ac.abort();
+    await Promise.allSettled([agentPromise, dispatcherPromise]);
+
+    // 2 messages: message tool → 456 (Bob) + system response → 123 (Alice)
+    expect(published).toHaveLength(2);
+    expect(published.some(m => m.chatId === '456' && m.content === 'Notification for Bob')).toBe(true);
+    expect(published.some(m => m.chatId === '123' && m.content.includes('summary'))).toBe(true);
   });
 });
