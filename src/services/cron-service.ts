@@ -25,6 +25,8 @@ export interface CronJobInput {
   task: string;
   enabled?: boolean;
   userId?: string | null;
+  /** Target chat ID for group chat jobs (e.g. Telegram group). */
+  chatId?: string;
   /** Optional custom session ID — cron uses same session across runs instead of per-job UUID. */
   sessionId?: string;
 }
@@ -33,6 +35,7 @@ export interface CronJob {
   id: string;
   name: string;
   userId: string | null;
+  chatId: string | null;
   sessionId: string | null;
   scheduleKind: ScheduleKind;
   scheduleValue: string;
@@ -121,9 +124,9 @@ export class CronService {
     });
 
     this.db.db.prepare(`
-      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at, user_id, session_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt, input.userId ?? null, input.sessionId ?? null);
+      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at, user_id, chat_id, session_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt, input.userId ?? null, input.chatId ?? null, input.sessionId ?? null);
 
     return this.getJob(id)!;
   }
@@ -142,6 +145,7 @@ export class CronService {
     if (patch.task !== undefined) { updates.push('task = ?'); values.push(patch.task); }
     if (patch.enabled !== undefined) { updates.push('enabled = ?'); values.push(patch.enabled ? 1 : 0); }
     if (patch.userId !== undefined) { updates.push('user_id = ?'); values.push(patch.userId); }
+    if (patch.chatId !== undefined) { updates.push('chat_id = ?'); values.push(patch.chatId); }
 
     if (updates.length > 0) {
       values.push(id);
@@ -169,28 +173,31 @@ export class CronService {
 
   /**
    * List jobs visible to a specific user.
-   * Returns: system/global jobs (user_id IS NULL) + user's own jobs.
-   * If familyUserIds is provided, also includes those users' jobs.
+   * Returns: system jobs (no owner/chat) + user's own + group chat jobs.
    */
-  listJobsForUser(userId?: string, familyUserIds?: string[], includeDisabled = false): CronJob[] {
+  listJobsForUser(userId?: string, familyUserIds?: string[], includeDisabled = false, chatId?: string): CronJob[] {
+    const enabledClause = includeDisabled ? '' : ' AND enabled = 1';
+
     if (!userId) {
-      // No user context — only return system jobs (no owner)
-      const enabledClause = includeDisabled ? '' : ' AND enabled = 1';
-      const sql = `SELECT * FROM cron_jobs WHERE user_id IS NULL${enabledClause} ORDER BY created_at`;
+      const sql = `SELECT * FROM cron_jobs WHERE user_id IS NULL AND chat_id IS NULL${enabledClause} ORDER BY created_at`;
       return this.db.db.prepare(sql).all().map(rowToJob);
     }
 
-    const enabledClause = includeDisabled ? '' : ' AND enabled = 1';
+    const visibleIds = [...new Set<string>([userId, ...(familyUserIds ?? [])])];
+    const userPlaceholders = visibleIds.map(() => '?').join(', ');
+    const params: unknown[] = [...visibleIds];
 
-    // Collect all user IDs whose jobs should be visible
-    const visibleIds = new Set<string>([userId]);
-    if (familyUserIds) {
-      for (const id of familyUserIds) visibleIds.add(id);
+    const conditions = [
+      `(user_id IS NULL AND chat_id IS NULL)`,
+      `user_id IN (${userPlaceholders})`,
+    ];
+    if (chatId) {
+      conditions.push(`chat_id = ?`);
+      params.push(chatId);
     }
 
-    const placeholders = [...visibleIds].map(() => '?').join(', ');
-    const sql = `SELECT * FROM cron_jobs WHERE (user_id IS NULL OR user_id IN (${placeholders}))${enabledClause} ORDER BY created_at`;
-    return this.db.db.prepare(sql).all(...visibleIds).map(rowToJob);
+    const sql = `SELECT * FROM cron_jobs WHERE (${conditions.join(' OR ')})${enabledClause} ORDER BY created_at`;
+    return this.db.db.prepare(sql).all(...params).map(rowToJob);
   }
 
   getJob(id: string): CronJob | null {
@@ -293,10 +300,14 @@ export class CronService {
     log.info(`Cron: firing job "${job.name}" (${job.id})`);
 
     try {
+      // Determine chatId: group chat > session > job ID
+      const chatId = job.chatId
+        ?? (job.sessionId ? `cron:${job.sessionId}` : `cron:${job.id}`);
+
       await this.bus.publishInbound({
         id: `cron-${job.id}-${Date.now()}`,
         channel: 'system',
-        chatId: job.sessionId ? `cron:${job.sessionId}` : `cron:${job.id}`,
+        chatId,
         content: `[Cron job: ${job.name}]\n\n${job.task}`,
         author: 'system',
         timestamp: startedAt,
@@ -387,6 +398,7 @@ function rowToJob(row: unknown): CronJob {
     id: String(r.id),
     name: String(r.name),
     userId: r.user_id ? String(r.user_id) : null,
+    chatId: r.chat_id ? String(r.chat_id) : null,
     sessionId: r.session_id ? String(r.session_id) : null,
     scheduleKind: String(r.schedule_kind) as ScheduleKind,
     scheduleValue: String(r.schedule_value),
