@@ -56,8 +56,8 @@ export class MessageBus {
     return this.handlers.size > 0;
   }
 
-  /** Stream a chunk directly to a channel handler, bypassing the queue. */
-  streamTo(channel: string, chatId: string, type: 'chunk' | 'stream_end', content = ''): void {
+  /** Send directly to a channel handler, bypassing the queue. Used for streaming and typing. */
+  streamTo(channel: string, chatId: string, type: 'chunk' | 'stream_end' | 'typing', content = ''): void {
     const handler = this.handlers.get(channel);
     if (!handler) return;
 

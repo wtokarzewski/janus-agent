@@ -432,21 +432,18 @@ export class AgentLoop {
     // Process as a regular message but with system session key
     const response = await this.processMessage(msg);
 
-    // Suppress no-op responses from heartbeat/cron (avoid noisy messages to user)
-    const isNoOp = /^(HEARTBEAT_OK|no.?op|nothing to do|all good)/i.test(response.content.trim());
-    if (isNoOp) {
-      log.debug(`Suppressing no-op system response: "${response.content.slice(0, 50)}"`);
+    // Suppress no-op / internal summary responses from heartbeat/cron
+    const trimmed = response.content.trim();
+    const isNoOp = /^(HEARTBEAT_OK|no.?op|nothing to do|all good)/i.test(trimmed);
+    const isSummary = /^(\*\*)?run summary/i.test(trimmed) || /^(task|job) (completed|done|finished)/i.test(trimmed);
+    if (isNoOp || isSummary) {
+      log.debug(`Suppressing system response: "${trimmed.slice(0, 80)}"`);
       return;
     }
 
     if (!response.streamed && msg.chatId !== 'internal') {
       // Route cron/heartbeat responses to the correct user channel
       if (msg.chatId.startsWith('cron:') || msg.chatId.startsWith('heartbeat')) {
-        const tgAllowlist = this.deps.config.telegram?.allowlist?.length
-          ? this.deps.config.telegram.allowlist
-          : deriveChannelAllowlist('telegram', this.deps.config);
-        const tgEnabled = this.deps.config.telegram?.enabled || tgAllowlist.length > 0;
-
         // Per-user routing: find the user's Telegram chatId
         if (msg.user?.userId) {
           const userProfile = findUserProfile(msg.user.userId, this.deps.config);
@@ -457,13 +454,22 @@ export class AgentLoop {
             response.channel = 'telegram';
             response.chatId = tgIdentity.channelUserId;
           } else {
-            response.channel = tgEnabled ? 'telegram' : 'cli';
-            response.chatId = tgAllowlist[0] ?? 'default';
+            // User exists but no Telegram identity — suppress to avoid misrouting
+            log.warn(`Cron response for user "${msg.user.userId}" has no Telegram identity — suppressing`);
+            return;
           }
         } else {
-          // Global task: existing behavior
-          response.channel = tgEnabled ? 'telegram' : 'cli';
-          response.chatId = tgAllowlist[0] ?? 'default';
+          // No userId — in multi-user (telegram) mode, suppress to prevent misrouting.
+          // In CLI mode (single-user), route to CLI as there's no wrong recipient.
+          const tgAllowlist = this.deps.config.telegram?.allowlist?.length
+            ? this.deps.config.telegram.allowlist
+            : deriveChannelAllowlist('telegram', this.deps.config);
+          const tgEnabled = this.deps.config.telegram?.enabled || tgAllowlist.length > 0;
+          if (tgEnabled) {
+            log.warn(`Cron response has no userId — suppressing to prevent misrouting in multi-user mode`);
+            return;
+          }
+          response.channel = 'cli';
         }
       }
 
@@ -621,6 +627,14 @@ export class AgentLoop {
           this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
         }
         return { content: lastContent, iterations: i + 1, toolCalls: totalToolCalls, totalTokens, outcome: 'success' };
+      }
+
+      // End current stream and show typing while tools execute
+      if (streamCtx) {
+        if (this.deps.config.streaming?.enabled ?? true) {
+          this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
+        }
+        this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'typing');
       }
 
       // Add assistant message with tool_calls to context
