@@ -335,13 +335,13 @@ ${toolList}
         }
       }
 
-      // Always include recent daily notes in full
+      // Always include recent daily notes in full (per-user when userId available)
       const recentDays = this.deps.config.memory?.recentDays ?? 3;
       for (let d = 0; d < recentDays; d++) {
         const date = new Date();
         date.setDate(date.getDate() - d);
         const dateStr = date.toISOString().slice(0, 10);
-        const dayNote = await this.deps.memory.readDaily(dateStr);
+        const dayNote = await this.deps.memory.readDaily(dateStr, userId);
         if (dayNote.trim()) {
           const label = d === 0 ? 'today' : dateStr;
           parts.push(`<memory_chunk source="${label}" section="daily_note">\n${dayNote.trim()}\n</memory_chunk>`);
@@ -354,7 +354,7 @@ ${toolList}
     }
 
     // Fallback: full dump (no index, no results, or no user message)
-    const ctx = await this.deps.memory.getContext();
+    const ctx = await this.deps.memory.getContext(userId);
     const parts: string[] = [];
 
     if (ctx.memory) parts.push(`<!-- MEMORY.md -->\n${ctx.memory}`);
