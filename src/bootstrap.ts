@@ -38,7 +38,6 @@ import { WebFetchTool } from './tools/builtin/web-fetch.js';
 import { WebSearchTool } from './tools/builtin/web-search.js';
 import { WebSearchDDGTool } from './tools/builtin/web-search-ddg.js';
 import { SelfUpdateTool } from './tools/builtin/self-update.js';
-import { BrowserTool } from './tools/builtin/browser.js';
 import { BrowserOperatorTool } from './tools/builtin/browser-operator.js';
 import { MCPClient, createMCPProxyTool } from './mcp/client.js';
 import * as log from './utils/logger.js';
@@ -120,7 +119,6 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   tools.register(new HeartbeatTool());
   // Web tools
   tools.register(new WebFetchTool());
-  tools.register(new BrowserTool());
   tools.register(new BrowserOperatorTool());
   const webSearchApiKey = config.tools.webSearchApiKey ?? process.env.BRAVE_API_KEY;
   if (webSearchApiKey) {
@@ -138,7 +136,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
     webFetchMaxBytes: config.tools.webFetchMaxBytes,
     browserChromePath: config.browserOperator?.chromePath,
     browserProfileDir: config.browserOperator?.profileDir,
-    browserExtensionDir: config.browserOperator?.extensionDir,
+    browserHeadless: config.browserOperator?.headless,
   });
 
   // 4. Memory

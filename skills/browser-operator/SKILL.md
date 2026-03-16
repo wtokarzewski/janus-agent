@@ -1,13 +1,13 @@
 ---
 name: browser-operator
-description: "Real browser automation via Chrome Extension. Use when a real browser session is needed — blocked sites (403, CAPTCHA), JS-heavy pages, shopping flows, multi-step navigation, or form filling."
-version: "1.0.0"
+description: "Real browser automation via Playwright. Use when a real browser session is needed — blocked sites (403, CAPTCHA), JS-heavy pages, shopping flows, multi-step navigation, or form filling."
+version: "2.0.0"
 always: false
 ---
 
 # Browser Operator
 
-Control a real Chrome browser through a dedicated extension. The browser uses a persistent profile with real cookies — sites treat it as a normal user, not a bot.
+Control a real Chrome browser via Playwright. The browser uses a persistent profile with real cookies — sites treat it as a normal user, not a bot.
 
 ## When to use
 
@@ -82,33 +82,35 @@ browser({ command: "ping" })
 
 ## Understanding snapshots
 
-Snapshots return structured page maps, not raw HTML. Each element has an ID (e1, e2, e3...) you use for actions.
+Snapshots use Playwright's AI-native snapshot format. Each element has a ref (e1, e2, e3...) you use for actions.
 
-Key fields per element:
-- `id` — reference for click/type (e.g. "e12")
-- `kind` — actionable, input, navigation, content
-- `text` — visible text
-- `semanticHints` — ["search_input", "product_price", "cookie_accept", etc.]
-- `interactive` — can you click/type here?
+Example snapshot output:
+```
+- generic [ref=e2]:
+  - heading "Example Domain" [level=1] [ref=e3]
+  - paragraph [ref=e4]: Some text content here.
+  - link "Learn more" [ref=e5] [cursor=pointer]:
+    - /url: https://example.com/more
+```
 
-Key page state:
-- `state.captchaVisible` — if true, STOP and tell the user
-- `state.requiresUserAttention` — if true, tell the user (login gate, CAPTCHA, etc.)
-- `state.modalOpen` — handle the modal first before acting on page behind it
+Key things to look for:
+- `[ref=eN]` — reference for click/type (e.g. "e5")
+- Element roles — heading, link, button, textbox, etc.
+- Text content — visible text next to elements
+- URL annotations — `/url:` for links
 
 ## Rules
 
-1. **Always snapshot before acting.** Element IDs are only valid for the current snapshot. Never click/type without seeing the page first.
+1. **Always snapshot before acting.** Element refs are only valid for the current snapshot. Never click/type without seeing the page first.
 2. **After navigate and click — resnapshot.** The page changed, your old references are stale.
-3. **When `requiresUserAttention` or `captchaVisible` → STOP.** Tell the user what's blocking and give a direct link. Don't try to solve CAPTCHAs or bypass login gates.
-4. **Use `waitFor`, never fixed sleeps.** After navigation or click, always `waitFor({ type: "domStable" })` before snapshotting.
-5. **Avoid long blind action chains.** As a rule of thumb, after a few actions on the same page state, resnapshot and reconsider.
-6. **Read the page through snapshot, don't guess.** If you're unsure what's on the page, snapshot. Don't assume structure.
-7. **Handle blockers first.** Cookie banners, modals, overlays — dismiss them before acting on the page behind them. Look for `cookie_accept` hint.
-8. **Don't try to circumvent policy.** Checkout/payment buttons are blocked. Don't try workarounds.
-9. **Keep workflows short.** If a task takes too many browser actions, give the user a link and let them finish manually.
-10. **Prefer snapshot over extractText.** Snapshot gives structure and element references. extractText gives raw text but no actionability.
-11. **If the browser runtime behaves unexpectedly**, call `browser({ command: "status" })` before retrying multiple actions.
+3. **Use `waitFor`, never fixed sleeps.** After navigation or click, always `waitFor({ type: "domStable" })` before snapshotting.
+4. **Avoid long blind action chains.** After a few actions on the same page state, resnapshot and reconsider.
+5. **Read the page through snapshot, don't guess.** If you're unsure what's on the page, snapshot. Don't assume structure.
+6. **Handle blockers first.** Cookie banners, modals, overlays — use dismissCookies or dismiss them before acting on the page behind them.
+7. **Don't try to circumvent policy.** Checkout/payment buttons are blocked. Don't try workarounds.
+8. **Keep workflows short.** If a task takes too many browser actions, give the user a link and let them finish manually.
+9. **Prefer snapshot over extractText.** Snapshot gives structure and element references. extractText gives raw text but no actionability.
+10. **If the browser runtime behaves unexpectedly**, call `browser({ command: "status" })` before retrying multiple actions.
 
 ## Shopping workflow example
 
@@ -118,11 +120,10 @@ browser({ command: "navigate", args: { url: "https://allegro.pl" } })
 browser({ command: "waitFor", args: { type: "domStable", stableForMs: 1500 } })
 browser({ command: "snapshot" })
 
-# 2. Handle cookie banner if present (look for cookie_accept hint)
-# If e3 has semanticHints: ["cookie_accept"] → click it
-browser({ command: "click", args: { elementId: "e3" } })
+# 2. Handle cookie banner if present
+browser({ command: "dismissCookies" })
 
-# 3. Find search input (look for search_input hint)
+# 3. Find search input from snapshot refs
 browser({ command: "click", args: { elementId: "e1" } })
 browser({ command: "type", args: { elementId: "e1", text: "lavazza crema 1kg", clear: true } })
 browser({ command: "pressKey", args: { key: "Enter" } })
@@ -131,9 +132,7 @@ browser({ command: "pressKey", args: { key: "Enter" } })
 browser({ command: "waitFor", args: { type: "domStable", stableForMs: 1500, timeoutMs: 10000 } })
 browser({ command: "snapshot" })
 
-# 5. Extract product info from snapshot
-# Look for elements with product_title and product_price hints
-# Group by groupId if available
+# 5. Extract product info from snapshot refs
 # Return structured results to user
 ```
 
@@ -141,16 +140,15 @@ browser({ command: "snapshot" })
 
 - **Element not found:** Request a new snapshot — the page likely changed.
 - **Timeout:** The page might be slow. Try `waitFor` with longer timeout, or take a screenshot to debug.
-- **Extension unavailable:** Browser runtime is not running. The tool will auto-start it.
-- **Stale snapshot:** You used an old element ID. Resnapshot.
+- **Browser unavailable:** Runtime failed to start. Check that Chrome/Chromium and Playwright are installed.
 - **Unexpected behavior:** Call `browser({ command: "status" })` to check runtime health before retrying.
 
 ## Tab management
 
 ```
 browser({ command: "openTab", args: { url: "https://example.com" } })
-browser({ command: "focusTab", args: { tabId: 123 } })
-browser({ command: "closeTab", args: { tabId: 123 } })
+browser({ command: "focusTab", args: { tabId: 0 } })
+browser({ command: "closeTab", args: { tabId: 1 } })
 ```
 
-Use sparingly. Prefer single-tab workflows.
+Tab IDs are zero-based page indices. Use sparingly. Prefer single-tab workflows.
