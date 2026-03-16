@@ -88,10 +88,11 @@ export class CronTool implements ContextualTool {
 
     switch (action) {
       case 'list': {
+        const includeDisabled = args.include_disabled === true;
         const jobs = this.cronService.listJobsForUser(
           reqCtx?.userId,
           reqCtx?.familyUserIds,
-          true,
+          includeDisabled,
         );
         return JSON.stringify(jobs, null, 2);
       }

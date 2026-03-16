@@ -135,6 +135,12 @@
     "recentDays": 3
   },
 
+  "browserOperator": {
+    "chromePath": "",
+    "profileDir": "",
+    "headless": false
+  },
+
   "mcp": {
     "servers": [
       {

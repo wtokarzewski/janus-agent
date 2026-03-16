@@ -65,8 +65,7 @@ Three auth modes (mutually exclusive):
 | `cron` | Create, list, update, delete persistent cron jobs. |
 | `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards, CAPTCHA detection, Jina Reader option, SSRF guard). |
 | `web_search` | Web search (Brave API or DuckDuckGo fallback, in-memory cache 15min TTL). |
-| `browser` | Headless Chromium via Playwright (optional dep). Fallback for JS-heavy pages. |
-| `browser` (operator) | **Real Chrome** via dedicated extension + WebSocket. Snapshot-centric. Auto-launches Chrome with dedicated profile. 30min idle timeout. Safety policy blocks checkout/payment. |
+| `browser` | **Real Chrome** via Playwright persistent context. AI-native snapshots with element refs. Auto-launches Chrome with dedicated profile. 30min idle timeout. Safety policy blocks checkout/payment. |
 | `heartbeat` | Manage periodic heartbeat tasks. |
 | `self_update` | Check/apply updates (git pull, npm install, test, self-respawn, auto-revert). |
 | `invite` | Generate Telegram invite links for new user onboarding. |
@@ -82,17 +81,16 @@ Three auth modes (mutually exclusive):
 
 ### Browser Operator
 
-Real-browser automation via Chrome Extension. Controls a dedicated Chrome profile through structured snapshots.
+Real-browser automation via Playwright. Controls a dedicated Chrome profile through AI-native snapshots.
 
-- **Architecture:** Agent → browser tool → WS server (127.0.0.1:19816) → Chrome Extension → web page
-- **Snapshot engine** — Viewport-only, max 100 elements, visual reading order, semantic hints (search_input, product_price, cookie_accept), CAPTCHA detection, password masking, schemaVersion
-- **Actions** — click (with URL change detection), type (with value verification), pressKey, scroll, navigate, waitFor (domStable, urlMatches, textVisible, elementExists)
-- **Runtime** — State machine (idle→starting→ready→disconnected→failed), reconnect grace period (20s), exponential backoff in extension (1s→30s), chrome.storage.session persistence
-- **Lifecycle** — Lazy start on first call, Chrome stays alive between tasks (setContext preserves runtime across messages), closeBrowser for explicit shutdown, 30min idle auto-close, EADDRINUSE recovery with retry
+- **Architecture:** Agent → browser tool → Playwright persistent context → real Chrome
+- **Snapshot engine** — Playwright `_snapshotForAI()` — AI-native ARIA snapshots with element refs (e1, e2, e3...), semantic roles, text content, URL annotations
+- **Actions** — click, type, pressKey, scroll, navigate, waitFor (domStable, urlMatches, textVisible, elementExists) — all via `aria-ref` locators
+- **Runtime** — State machine (idle→launching→ready→failed), Playwright manages Chrome lifecycle
+- **Lifecycle** — Lazy start on first call, persistent context keeps cookies/sessions, closeBrowser for explicit shutdown, 30min idle auto-close
 - **Safety** — Dangerous action text blocking (checkout, payment, buy now), read-only default policy
-- **Popup UI** — Extension toolbar icon with real-time status (connected/disconnected), session info, capabilities
-- **Config** — `browserOperator` section in janus.json (chromePath, profileDir, extensionDir, wsPort)
-- **Protocol** — Versioned handshake (protocolVersion + capabilities negotiation), tab lifecycle store
+- **Cookie dismissal** — Structural overlay detection (no hardcoded text), largest-button heuristic
+- **Config** — `browserOperator` section in janus.json (chromePath, profileDir, headless)
 
 ## Memory System
 
@@ -282,7 +280,6 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
 - **Tests** — 374 tests across 38 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
-- **Chrome Extension build** — esbuild pipeline for Browser Operator extension (background + content + popup). `npm run build` / `npm run watch` in chrome-extension/.
 
 ## Commands
 

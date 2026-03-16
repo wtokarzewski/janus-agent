@@ -180,7 +180,7 @@ export async function runGateway(): Promise<void> {
   }
 
   await app.agent.flushAllSessions();
-  stopBrowserRuntime();
+  await stopBrowserRuntime();
   ac.abort();
   await Promise.allSettled([agentPromise, dispatcherPromise]);
 }

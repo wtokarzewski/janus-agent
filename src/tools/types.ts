@@ -25,7 +25,7 @@ export interface ToolContext {
   // Browser operator
   browserChromePath?: string;
   browserProfileDir?: string;
-  browserExtensionDir?: string;
+  browserHeadless?: boolean;
 }
 
 /** Per-request context — passed to execute(), not shared across lanes. */

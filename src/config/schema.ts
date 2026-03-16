@@ -130,10 +130,8 @@ const BrowserOperatorSchema = z.object({
   chromePath: z.string().optional(),
   /** Path to dedicated Janus Chrome profile. Default: ~/.janus/chrome-profile */
   profileDir: z.string().optional(),
-  /** Path to chrome-extension/ folder. Default: ./chrome-extension */
-  extensionDir: z.string().optional(),
-  /** WebSocket server port. Default: 19816 */
-  wsPort: z.number().default(19816),
+  /** Run browser in headless mode. Default: false (visible Chrome window). */
+  headless: z.boolean().default(false),
 });
 
 const MCPServerSpecSchema = z.object({
