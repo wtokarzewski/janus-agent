@@ -99,7 +99,17 @@ export class CronTool implements ContextualTool {
           undefined,
           includeDisabled,
         );
-        return JSON.stringify(jobs, null, 2);
+        // Compact format to avoid truncation with many jobs
+        const compact = jobs.map(j => ({
+          id: j.id,
+          name: j.name,
+          userId: j.userId,
+          schedule: `${j.scheduleKind}:${j.scheduleValue}`,
+          tz: j.scheduleTz,
+          enabled: j.enabled,
+          nextRunAt: j.nextRunAt,
+        }));
+        return JSON.stringify(compact, null, 2);
       }
 
       case 'add': {
