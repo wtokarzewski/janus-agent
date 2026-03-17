@@ -260,7 +260,7 @@ export async function createProvider(opts: {
       apiBase: opts.apiBase,
       defaultHeaders: {
         'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
-        'user-agent': 'claude-cli/2.1.62',
+        'user-agent': 'claude-cli/2.1.76',
         'x-app': 'cli',
       },
       tokenStore: opts.tokenStore,
