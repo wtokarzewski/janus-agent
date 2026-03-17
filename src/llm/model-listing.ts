@@ -39,11 +39,17 @@ export async function fetchAnthropicModels(token: string, isOAuth: boolean): Pro
 /**
  * Fetch models from OpenAI API.
  * Filters out non-chat models and sorts by creation date (newest first).
+ * When accountId is provided (ChatGPT OAuth), includes the chatgpt-account-id header.
  */
-export async function fetchOpenAIModels(token: string): Promise<ModelInfo[]> {
-  const res = await fetch('https://api.openai.com/v1/models', {
-    headers: { 'authorization': `Bearer ${token}` },
-  });
+export async function fetchOpenAIModels(token: string, accountId?: string): Promise<ModelInfo[]> {
+  const headers: Record<string, string> = {
+    'authorization': `Bearer ${token}`,
+  };
+  if (accountId) {
+    headers['chatgpt-account-id'] = accountId;
+  }
+
+  const res = await fetch('https://api.openai.com/v1/models', { headers });
   if (!res.ok) return [];
 
   const data = await res.json() as { data: { id: string; created: number }[] };
