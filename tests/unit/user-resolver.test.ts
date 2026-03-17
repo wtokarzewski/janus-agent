@@ -1,14 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { resolveUser, autoIdentifyUser, loadProfileMd, findUserProfile, deriveChannelAllowlist } from '../../src/users/user-resolver.js';
 import { JanusConfigSchema, type JanusConfig } from '../../src/config/schema.js';
+import { resolveLLM } from '../../src/config/config.js';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 function makeConfig(overrides?: Partial<Record<string, unknown>>): JanusConfig {
-  return JanusConfigSchema.parse({
+  const raw = JanusConfigSchema.parse({
     ...overrides,
   });
+  return { ...raw, resolved: resolveLLM(raw) };
 }
 
 describe('resolveUser', () => {

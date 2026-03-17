@@ -37,9 +37,19 @@ function resolveModel(name: string): string {
 
 export class ClaudeAgentProvider implements LLMProvider {
   private defaultModel: string;
+  private tokenStore?: import('../auth/types.js').TokenStore;
 
-  constructor(config: { model: string }) {
+  constructor(config: { model: string; tokenStore?: import('../auth/types.js').TokenStore }) {
     this.defaultModel = resolveModel(config.model);
+    this.tokenStore = config.tokenStore;
+  }
+
+  /** Refresh OAuth token in env before each call (if using OAuth). */
+  private async ensureFreshToken(): Promise<void> {
+    if (!this.tokenStore) return;
+    const { getAnthropicToken } = await import('../auth/anthropic-oauth.js');
+    const token = await getAnthropicToken(this.tokenStore);
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = token;
   }
 
   private buildOptions(request: ChatRequest) {
@@ -109,6 +119,7 @@ export class ClaudeAgentProvider implements LLMProvider {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
+    await this.ensureFreshToken();
     const query = await getQuery();
     const { prompt, options, model, hasTools } = this.buildOptions(request);
 
@@ -153,6 +164,7 @@ export class ClaudeAgentProvider implements LLMProvider {
   }
 
   async chatStream(request: ChatRequest, onChunk: StreamCallback): Promise<ChatResponse> {
+    await this.ensureFreshToken();
     const query = await getQuery();
     const { prompt, options, model, hasTools } = this.buildOptions(request);
 
@@ -165,18 +177,35 @@ export class ClaudeAgentProvider implements LLMProvider {
     let lastAssistantText = '';
 
     for await (const msg of q) {
-      log.debug(`LLM [claude-agent] stream event: type=${msg.type} subtype=${'subtype' in msg ? msg.subtype : '-'}`);
+      const msgType = msg.type;
+      const msgSubtype = 'subtype' in msg ? msg.subtype : '-';
+      log.info(`LLM [claude-agent] event: type=${msgType} subtype=${msgSubtype} keys=${Object.keys(msg).join(',')}`);
 
-      if (msg.type === 'stream_event') {
+      // Stream text chunks to caller
+      if (msgType === 'stream_event') {
         const event = (msg as { event?: { type?: string; delta?: { type?: string; text?: string } } }).event;
+        log.info(`LLM [claude-agent] stream_event: event.type=${event?.type} delta.type=${event?.delta?.type} text="${event?.delta?.text?.slice(0, 50) ?? ''}"`);
         if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
           onChunk(event.delta.text);
         }
       }
 
-      if (msg.type === 'assistant') {
+      // Also extract text from assistant messages (SDK may send complete text here instead of stream_events)
+      if (msgType === 'assistant') {
         const text = this.extractAssistantText(msg);
-        if (text) lastAssistantText = text;
+        log.info(`LLM [claude-agent] assistant text (${text.length} chars): "${text.slice(0, 100)}"`);
+        if (text) {
+          // If we haven't streamed anything yet, emit the full text as a chunk
+          if (!lastAssistantText && text) {
+            onChunk(text);
+          }
+          lastAssistantText = text;
+        }
+      }
+
+      if (msgType === 'result') {
+        const r = msg as Record<string, unknown>;
+        log.info(`LLM [claude-agent] result: subtype=${msgSubtype} result="${String(r.result ?? '').slice(0, 100)}"`);
       }
 
       if (msg.type === 'result') {

@@ -174,11 +174,18 @@ export class TelegramChannel {
       if (modelMatch) {
         const newModel = modelMatch[1]?.trim();
         if (newModel) {
-          config.llm.model = newModel;
-          await saveConfig({ llm: { model: newModel } });
-          await ctx.reply(`Model changed to: ${newModel}`);
+          const primary = config.resolved.providers[0];
+          if (primary) {
+            await saveConfig({ llm: { slots: { default: { [primary.name]: newModel } } } });
+          } else {
+            await saveConfig({ llm: { model: newModel } });
+          }
+          await ctx.reply(`Model changed to: ${newModel}\nRestart to apply.`);
         } else {
-          await ctx.reply(`Current model: ${config.llm.model}\nProvider: ${config.llm.provider}`);
+          const { getSlotModel } = await import('../config/config.js');
+          const slot = getSlotModel(config.resolved, 'default');
+          const display = slot ? `${slot.model} (${slot.provider})` : 'not configured';
+          await ctx.reply(`Current model: ${display}`);
         }
         return;
       }

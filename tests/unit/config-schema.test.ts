@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { JanusConfigSchema } from '../../src/config/schema.js';
+import { resolveLLM } from '../../src/config/config.js';
 
 describe('JanusConfigSchema', () => {
   it('should produce all defaults from empty object', () => {
     const config = JanusConfigSchema.parse({});
 
-    expect(config.llm.provider).toBe('openrouter');
     expect(config.llm.maxTokens).toBe(4096);
     expect(config.llm.temperature).toBe(0.3);
     expect(config.agent.maxIterations).toBe(30);
@@ -40,28 +40,24 @@ describe('JanusConfigSchema', () => {
     expect(config.tools.execDenyPatterns).toEqual(['rm -rf /']);
   });
 
-  it('should accept empty providers array', () => {
-    const config = JanusConfigSchema.parse({
-      llm: { providers: [] },
-    });
-    expect(config.llm.providers).toEqual([]);
-  });
-
-  it('should accept valid provider specs', () => {
+  it('should accept new providers object format', () => {
     const config = JanusConfigSchema.parse({
       llm: {
-        providers: [{
-          name: 'test',
-          provider: 'openai',
-          model: 'gpt-4o',
-          apiKey: 'sk-test',
-          purpose: ['chat'],
-          priority: 1,
-        }],
+        providers: {
+          anthropic: { auth: 'oauth', priority: 0 },
+          openrouter: { priority: 1 },
+        },
+        slots: {
+          default: { anthropic: 'claude-sonnet-4-6', openrouter: 'anthropic/claude-sonnet-4-6' },
+          background: null,
+        },
       },
     });
-    expect(config.llm.providers![0].name).toBe('test');
-    expect(config.llm.providers![0].purpose).toEqual(['chat']);
+    expect(config.llm.providers).toBeDefined();
+    expect(config.llm.providers!.anthropic.priority).toBe(0);
+    expect(config.llm.providers!.anthropic.auth).toBe('oauth');
+    expect(config.llm.slots!.default).toEqual({ anthropic: 'claude-sonnet-4-6', openrouter: 'anthropic/claude-sonnet-4-6' });
+    expect(config.llm.slots!.background).toBeNull();
   });
 
   it('should accept auth field with valid values', () => {
@@ -147,5 +143,102 @@ describe('JanusConfigSchema', () => {
     });
     expect(config.users[0].tools?.policy?.contentRating).toBe('PG');
     expect(config.users[0].tools?.policy?.maxRecencyDays).toBe(30);
+  });
+});
+
+describe('resolveLLM', () => {
+  it('should resolve new providers+slots format', () => {
+    const raw = JanusConfigSchema.parse({
+      llm: {
+        providers: {
+          anthropic: { auth: 'oauth', priority: 0 },
+          openrouter: { priority: 1 },
+        },
+        slots: {
+          default: { anthropic: 'claude-sonnet-4-6', openrouter: 'anthropic/claude-sonnet-4-6' },
+          background: { anthropic: 'claude-haiku-4-5-20251001' },
+        },
+      },
+    });
+    const resolved = resolveLLM(raw);
+
+    expect(resolved.providers).toHaveLength(2);
+    expect(resolved.providers[0].name).toBe('anthropic');
+    expect(resolved.providers[0].auth).toBe('oauth');
+    expect(resolved.providers[0].priority).toBe(0);
+    expect(resolved.providers[1].name).toBe('openrouter');
+    expect(resolved.providers[1].priority).toBe(1);
+
+    expect(resolved.slots).toHaveLength(2);
+    const defaultSlot = resolved.slots.find(s => s.name === 'default')!;
+    expect(defaultSlot.entries).toHaveLength(2);
+    expect(defaultSlot.entries[0].provider).toBe('anthropic');
+    expect(defaultSlot.entries[0].model).toBe('claude-sonnet-4-6');
+    expect(defaultSlot.entries[1].provider).toBe('openrouter');
+
+    const bgSlot = resolved.slots.find(s => s.name === 'background')!;
+    expect(bgSlot.entries).toHaveLength(1);
+    expect(bgSlot.entries[0].model).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('should resolve null slot to empty entries', () => {
+    const raw = JanusConfigSchema.parse({
+      llm: {
+        providers: { anthropic: { priority: 0 } },
+        slots: { default: { anthropic: 'claude-sonnet-4-6' }, background: null },
+      },
+    });
+    const resolved = resolveLLM(raw);
+    const bgSlot = resolved.slots.find(s => s.name === 'background')!;
+    expect(bgSlot.entries).toEqual([]);
+  });
+
+  it('should resolve legacy flat config', () => {
+    const raw = JanusConfigSchema.parse({
+      llm: { provider: 'anthropic', model: 'claude-sonnet-4-6', auth: 'oauth' },
+    });
+    const resolved = resolveLLM(raw);
+
+    expect(resolved.providers).toHaveLength(1);
+    expect(resolved.providers[0].name).toBe('anthropic');
+    expect(resolved.providers[0].auth).toBe('oauth');
+
+    expect(resolved.slots).toHaveLength(1);
+    expect(resolved.slots[0].name).toBe('default');
+    expect(resolved.slots[0].entries[0].model).toBe('claude-sonnet-4-6');
+  });
+
+  it('should resolve empty config', () => {
+    const raw = JanusConfigSchema.parse({});
+    const resolved = resolveLLM(raw);
+    expect(resolved.providers).toHaveLength(0);
+    expect(resolved.slots[0].entries).toHaveLength(0);
+  });
+
+  it('should sort slot entries by provider priority', () => {
+    const raw = JanusConfigSchema.parse({
+      llm: {
+        providers: {
+          openrouter: { priority: 1 },
+          anthropic: { priority: 0 },
+        },
+        slots: {
+          default: { openrouter: 'anthropic/claude-sonnet-4-6', anthropic: 'claude-sonnet-4-6' },
+        },
+      },
+    });
+    const resolved = resolveLLM(raw);
+    const defaultSlot = resolved.slots.find(s => s.name === 'default')!;
+    // anthropic has priority 0, should be first
+    expect(defaultSlot.entries[0].provider).toBe('anthropic');
+    expect(defaultSlot.entries[1].provider).toBe('openrouter');
+  });
+
+  it('should infer cli auth for subscription providers', () => {
+    const raw = JanusConfigSchema.parse({
+      llm: { provider: 'claude-agent', model: 'claude-sonnet-4-6' },
+    });
+    const resolved = resolveLLM(raw);
+    expect(resolved.providers[0].auth).toBe('cli');
   });
 });

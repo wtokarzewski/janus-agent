@@ -126,14 +126,22 @@ export class CLIChannel {
       const modelMatch = content.match(/^\/model(?:\s+(.+))?$/i);
       if (modelMatch) {
         const newModel = modelMatch[1]?.trim();
-        const { loadConfig, saveConfig } = await import('../config/config.js');
+        const { loadConfig, saveConfig, getSlotModel } = await import('../config/config.js');
         const currentConfig = await loadConfig();
         if (newModel) {
-          await saveConfig({ llm: { model: newModel } });
+          // Update model in default slot for the primary provider
+          const primary = currentConfig.resolved.providers[0];
+          if (primary) {
+            await saveConfig({ llm: { slots: { default: { [primary.name]: newModel } } } });
+          } else {
+            await saveConfig({ llm: { model: newModel } });
+          }
           console.log(chalk.green(`  Model changed to: ${newModel}\n`));
           console.log(chalk.gray('  Restart Janus to apply.\n'));
         } else {
-          console.log(`  Model: ${chalk.bold(currentConfig.llm.model)}\n  Provider: ${currentConfig.llm.provider}\n`);
+          const slot = getSlotModel(currentConfig.resolved, 'default');
+          const display = slot ? `${slot.model} (${slot.provider})` : 'not configured';
+          console.log(`  Model: ${chalk.bold(display)}\n`);
         }
         this.rl?.prompt();
         return;
