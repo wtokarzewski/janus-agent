@@ -1,8 +1,8 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 374 passing tests.
+Canonical list of implemented, working features. Verified against source code and 387 passing tests.
 
-**Last updated:** 2026-03-15
+**Last updated:** 2026-03-18
 
 ---
 
@@ -39,16 +39,18 @@ Three auth modes (mutually exclusive):
 | `codex` | Subscription (ChatGPT Plus/Pro) | @openai/codex-sdk |
 | `codex` (OAuth) | Subscription, native OAuth | Responses API (PKCE) |
 
-- **Native OAuth (PKCE)** — Browser-based login for Anthropic + Codex with auto-refresh. File-based token storage (`~/.janus/auth.json`, 0o600).
+- **Native OAuth (PKCE)** — Browser-based login for Anthropic + Codex with auto-refresh. Credential storage (`~/.janus/auth.json`, 0o600) — both OAuth tokens and API keys.
+- **Anthropic OAuth identity** — Injects required "You are Claude Code" system prompt + beta headers (`claude-code-20250219`, `oauth-2025-04-20`) for subscription OAuth tokens.
 - **Extended thinking** — `llm.thinking.enabled` + `budgetTokens`. Thinking levels: off/minimal/low/medium/high.
 - **Prompt caching** — `cache_control: ephemeral` on system prompt + last tool def. Timestamp in dynamic session tail for cache stability.
-- **Multi-provider failover** — Priority-ordered list, automatic failover on error. Purpose-based routing (chat, summarize, flush). RESOURCE_EXHAUSTED/overload detection, rate-limit hardening (rate_limit, too many requests), HTTP 422 classification (billing vs format errors).
+- **Multi-provider failover** — Priority-ordered providers, automatic failover on error. Purpose-based routing via slots (default, background). RESOURCE_EXHAUSTED/overload detection, rate-limit hardening (rate_limit, too many requests), HTTP 422 classification (billing vs format errors).
+- **Providers + Slots config** — `providers` object (auth, priority per provider) + `slots` (default/background with per-provider model mapping). Credentials separated to `auth.json`. Legacy flat config auto-normalized at load time.
+- **Background slot** — Cheap models for cron/heartbeat/summarization (e.g., claude-haiku, gpt-5.4-mini). Falls back to default slot when not configured.
 - **toolChoice support** — `auto`/`none`/`required` with automatic fallback if provider rejects. Wired through Anthropic (required→any mapping) and OpenAI providers.
-- **Multi-provider OAuth** — `providers[]` array with per-provider `auth` field (api_key/oauth/cli). Shared `FileTokenStore` across providers. Supports mixed auth (e.g., Anthropic OAuth primary + Codex OAuth fallback).
 - **Dynamic model listing** — Setup wizard fetches models from provider APIs (Anthropic `/v1/models`, OpenAI `/v1/models`). Filters non-chat models from OpenAI. Falls back to manual input on fetch failure.
 - **Streaming** — `chatStream()` on Anthropic + OpenAI-compatible providers. Real-time chunk delivery via MessageBus to CLI and Telegram.
 - **Structured output** — Subscription providers use JSON schema enforcement via `sdk-utils.ts` (~99% reliability + fallback parsing).
-- **Setup wizard** — Interactive first-run config. Detects API key vs subscription. Fallback provider selection. `/config` command for reconfiguration.
+- **Setup wizard** — Interactive first-run config. Generates providers+slots format. Detects API key vs subscription. Fallback provider selection. `/config` command for reconfiguration.
 
 ## Tools (16)
 
@@ -249,11 +251,11 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 
 ## Configuration
 
-`janus.json` (workspace) + `~/.janus/config.json` (user) + env vars. Zod-validated.
+`janus.json` (workspace) + `~/.janus/config.json` (user) + env vars. Zod-validated. Credentials in `.janus/auth.json` (separated from config).
 
 | Section | Key settings |
 |---------|-------------|
-| `llm` | provider, model, apiKey, apiBase, maxTokens, temperature (default 0.3), toolChoice, providers[] |
+| `llm` | providers (object), slots (default/background), maxTokens, temperature (default 0.3), thinking, reasoningEffort |
 | `agent` | maxIterations (30), tokenBudget (750K), contextWindow (1M), summarizationThreshold (40), toolRetries, lanes |
 | `workspace` | dir, memoryDir, sessionsDir, skillsDir |
 | `tools` | execTimeout, execDenyPatterns[], maxFileSize |
@@ -264,7 +266,7 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 | `gates` | enabled, execPatterns[] |
 | `voice` | enabled, provider (groq), apiKey, language, maxDurationSec |
 | `memory` | vectorSearch, vectorWeight, textWeight, recentDays |
-| `browserOperator` | chromePath, profileDir, extensionDir, wsPort (19816) |
+| `browserOperator` | chromePath, profileDir, headless |
 | `users[]` | id, name, identities[], tools{allow,deny}, skills{allow,deny} |
 | `ownerIds` | User IDs with elevated privileges (owner-only tools) |
 | `family` | id, name, groupChatIds[] |
@@ -279,7 +281,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 374 tests across 38 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 387 tests across 38 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 
 ## Commands
 
