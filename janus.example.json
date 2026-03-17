@@ -20,6 +20,7 @@
         "provider": "anthropic",
         "model": "claude-sonnet-4-6",
         "auth": "oauth",
+        "logLevel": "normal",
         "purpose": ["chat"],
         "priority": 0
       },
@@ -28,6 +29,7 @@
         "provider": "codex",
         "model": "gpt-5.4",
         "auth": "oauth",
+        "logLevel": "normal",
         "purpose": ["chat"],
         "priority": 1
       }

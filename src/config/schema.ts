@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+const LogLevelSchema = z.enum(['minimal', 'normal', 'verbose']).default('normal');
+export type LogLevel = z.infer<typeof LogLevelSchema>;
+
 const ProviderSpecSchema = z.object({
   name: z.string(),
   provider: z.string(),
@@ -9,6 +12,7 @@ const ProviderSpecSchema = z.object({
   auth: z.enum(['api_key', 'oauth', 'cli']).optional(),
   purpose: z.array(z.string()).optional(),
   priority: z.number().optional(),
+  logLevel: LogLevelSchema.optional(),
 });
 
 export type ProviderSpec = z.infer<typeof ProviderSpecSchema>;

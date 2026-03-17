@@ -59,4 +59,5 @@ export interface ProviderEntry {
   model: string;
   purpose: string[];
   priority: number;
+  logLevel?: 'minimal' | 'normal' | 'verbose';
 }

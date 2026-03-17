@@ -9,6 +9,7 @@ import * as log from '../utils/logger.js';
  * - Purpose routing: different providers for 'chat', 'summarize', 'classify'
  * - Failover: if primary provider fails, tries next by priority
  * - Backward compatible: wraps a single provider if no multi-provider config
+ * - Per-provider logLevel: minimal (errors only), normal (default), verbose (full error details)
  */
 export class ProviderRegistry implements LLMProvider {
   private entries: ProviderEntry[] = [];
@@ -49,7 +50,7 @@ export class ProviderRegistry implements LLMProvider {
         return await entry.provider.chat(req);
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        log.warn(`Provider "${entry.name}" (${entry.model}) failed: ${lastError.message}`);
+        logProviderError(entry, 'chat', lastError, request);
 
         if (!isFailoverCandidate(lastError)) throw lastError;
 
@@ -88,7 +89,7 @@ export class ProviderRegistry implements LLMProvider {
         return response;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        log.warn(`Provider "${entry.name}" (${entry.model}) stream failed: ${lastError.message}`);
+        logProviderError(entry, 'stream', lastError, request);
 
         if (!isFailoverCandidate(lastError)) throw lastError;
 
@@ -111,4 +112,55 @@ export class ProviderRegistry implements LLMProvider {
 
     return matched.length > 0 ? matched : this.entries;
   }
+}
+
+/**
+ * Universal provider error logger — one function for all providers.
+ *
+ * Levels:
+ * - minimal: single-line warn (provider + message)
+ * - normal:  same as minimal (default)
+ * - verbose: full error details (status, headers, body, request context)
+ */
+function logProviderError(entry: ProviderEntry, method: string, err: Error, request: ChatRequest): void {
+  const level = entry.logLevel ?? 'normal';
+  const prefix = `Provider "${entry.name}" (${entry.model})`;
+
+  // All levels: basic failure message
+  log.warn(`${prefix} ${method} failed: ${err.message}`);
+
+  if (level !== 'verbose') return;
+
+  // Verbose: extract everything we can from the SDK error object
+  const e = err as unknown as Record<string, unknown>;
+
+  const details: string[] = [];
+
+  // HTTP status
+  if (e.status != null) details.push(`status: ${e.status}`);
+
+  // Error type/code (Anthropic: error.type, OpenAI: code)
+  if (e.code) details.push(`code: ${e.code}`);
+  const errorBody = e.error as Record<string, unknown> | undefined;
+  if (errorBody?.type) details.push(`type: ${errorBody.type}`);
+
+  // Request ID from headers (Anthropic: request-id, OpenAI: x-request-id)
+  const headers = e.headers as Record<string, string> | undefined;
+  if (headers) {
+    const requestId = headers['request-id'] ?? headers['x-request-id'] ?? headers['cf-ray'];
+    if (requestId) details.push(`request_id: ${requestId}`);
+  }
+
+  // Full error body
+  if (errorBody) {
+    details.push(`error_body: ${JSON.stringify(errorBody)}`);
+  }
+
+  // Request context (not the content — just shape)
+  details.push(`messages: ${request.messages.length}`);
+  details.push(`tools: ${request.tools?.length ?? 0}`);
+  const systemMsg = request.messages.find(m => m.role === 'system');
+  if (systemMsg) details.push(`system_prompt_len: ${systemMsg.content.length}`);
+
+  log.error(`${prefix} VERBOSE:\n  ${details.join('\n  ')}`);
 }
