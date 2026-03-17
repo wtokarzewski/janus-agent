@@ -101,18 +101,23 @@ export async function saveConfig(
   const merged = deepMerge(existing, updates);
 
   // Prevent conflicting LLM config formats:
-  // if providers[] is present, remove top-level provider fields and vice versa
-  const llm = (merged as Record<string, unknown>).llm as Record<string, unknown> | undefined;
-  if (llm) {
-    const hasProviders = llm.providers && Array.isArray(llm.providers) && (llm.providers as unknown[]).length > 0;
-    const hasTopLevel = llm.provider && llm.provider !== 'openrouter'; // openrouter is Zod default, not explicit
-    if (hasProviders && hasTopLevel) {
-      // providers[] wins — remove top-level provider fields
-      delete llm.provider;
-      delete llm.apiKey;
-      delete llm.apiBase;
-      delete llm.auth;
-      delete llm.model;
+  // look at what's NEW (updates), not what's merged, to decide which format to keep
+  const updatedLlm = (updates as Record<string, unknown>).llm as Record<string, unknown> | undefined;
+  const mergedLlm = (merged as Record<string, unknown>).llm as Record<string, unknown> | undefined;
+  if (updatedLlm && mergedLlm) {
+    const updatingProviders = updatedLlm.providers && Array.isArray(updatedLlm.providers);
+    const updatingTopLevel = 'provider' in updatedLlm || 'apiKey' in updatedLlm;
+
+    if (updatingProviders) {
+      // New config uses providers[] — remove stale top-level fields
+      delete mergedLlm.provider;
+      delete mergedLlm.apiKey;
+      delete mergedLlm.apiBase;
+      delete mergedLlm.auth;
+      delete mergedLlm.model;
+    } else if (updatingTopLevel) {
+      // New config uses top-level — remove stale providers[]
+      delete mergedLlm.providers;
     }
   }
 
