@@ -91,8 +91,31 @@ export async function saveConfig(
   const dir = resolve(path, '..');
   await mkdir(dir, { recursive: true });
 
+  // Backup existing config before overwriting
   const existing = await loadJSON(path);
+  if (existing && Object.keys(existing).length > 0) {
+    const backupPath = path + '.bak';
+    await writeFile(backupPath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
+  }
+
   const merged = deepMerge(existing, updates);
+
+  // Prevent conflicting LLM config formats:
+  // if providers[] is present, remove top-level provider fields and vice versa
+  const llm = (merged as Record<string, unknown>).llm as Record<string, unknown> | undefined;
+  if (llm) {
+    const hasProviders = llm.providers && Array.isArray(llm.providers) && (llm.providers as unknown[]).length > 0;
+    const hasTopLevel = llm.provider && llm.provider !== 'openrouter'; // openrouter is Zod default, not explicit
+    if (hasProviders && hasTopLevel) {
+      // providers[] wins — remove top-level provider fields
+      delete llm.provider;
+      delete llm.apiKey;
+      delete llm.apiBase;
+      delete llm.auth;
+      delete llm.model;
+    }
+  }
+
   await writeFile(path, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
 }
 
