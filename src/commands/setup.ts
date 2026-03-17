@@ -211,16 +211,18 @@ async function setupSubscription(rl: ReadlineIO): Promise<ProviderSetupResult> {
 }
 
 async function setupFallbackProvider(rl: ReadlineIO, primary: ProviderSetupResult): Promise<ProviderSetupResult> {
-  const options: { label: string; setup: () => Promise<ProviderSetupResult> }[] = [];
+  const primaryKey = `${primary.provider}:${primary.auth ?? 'api_key'}`;
 
-  // Don't offer the same provider type as fallback
-  if (primary.provider !== 'anthropic') {
-    options.push({ label: 'Anthropic OAuth', setup: () => setupAnthropicOAuth(rl) });
-  }
-  if (primary.provider !== 'codex') {
-    options.push({ label: 'OpenAI (Codex) OAuth', setup: () => setupCodexOAuth(rl) });
-  }
-  options.push({ label: 'API Key', setup: () => setupApiKey(rl) });
+  // Offer all auth options, excluding the exact same provider+auth combo as primary
+  const all: { key: string; label: string; setup: () => Promise<ProviderSetupResult> }[] = [
+    { key: 'anthropic:oauth', label: 'Anthropic OAuth', setup: () => setupAnthropicOAuth(rl) },
+    { key: 'codex:oauth', label: 'OpenAI (Codex) OAuth', setup: () => setupCodexOAuth(rl) },
+    { key: 'claude-agent:cli', label: 'Claude Code CLI', setup: () => setupClaudeAgent(rl) },
+    { key: 'codex:cli', label: 'Codex CLI', setup: () => setupCodex(rl) },
+    { key: ':api_key', label: 'API Key', setup: () => setupApiKey(rl) },
+  ];
+
+  const options = all.filter(o => o.key !== primaryKey);
 
   console.log('\n  Fallback provider type?');
   for (let i = 0; i < options.length; i++) {
