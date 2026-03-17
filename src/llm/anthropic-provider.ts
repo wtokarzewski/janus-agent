@@ -87,12 +87,24 @@ export class AnthropicProvider implements LLMProvider {
       params.temperature = request.temperature ?? 0.7;
     }
 
+    // OAuth tokens require Claude Code identity in system prompt
+    const systemBlocks: Anthropic.TextBlockParam[] = [];
+    if (this.useOAuth) {
+      systemBlocks.push({
+        type: 'text' as const,
+        text: "You are Claude Code, Anthropic's official CLI for Claude.",
+        cache_control: { type: 'ephemeral' as const },
+      });
+    }
     if (systemMsg) {
-      params.system = [{
+      systemBlocks.push({
         type: 'text' as const,
         text: systemMsg.content,
         cache_control: { type: 'ephemeral' as const },
-      }];
+      });
+    }
+    if (systemBlocks.length > 0) {
+      params.system = systemBlocks;
     }
 
     if (request.tools && request.tools.length > 0) {
@@ -202,12 +214,24 @@ export class AnthropicProvider implements LLMProvider {
       params.temperature = request.temperature ?? 0.7;
     }
 
+    // OAuth tokens require Claude Code identity in system prompt
+    const streamSystemBlocks: Anthropic.TextBlockParam[] = [];
+    if (this.useOAuth) {
+      streamSystemBlocks.push({
+        type: 'text' as const,
+        text: "You are Claude Code, Anthropic's official CLI for Claude.",
+        cache_control: { type: 'ephemeral' as const },
+      });
+    }
     if (systemMsg) {
-      params.system = [{
+      streamSystemBlocks.push({
         type: 'text' as const,
         text: systemMsg.content,
         cache_control: { type: 'ephemeral' as const },
-      }];
+      });
+    }
+    if (streamSystemBlocks.length > 0) {
+      params.system = streamSystemBlocks;
     }
 
     if (request.tools && request.tools.length > 0) {

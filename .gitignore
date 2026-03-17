@@ -195,6 +195,9 @@ janus.json
 # Google Workspace (gogcli) credentials
 gog-config/
 
+# Config backups
+*.bak
+
 # Safety net — these should never be in the repo
 .claude/settings.local.json
 *.docx

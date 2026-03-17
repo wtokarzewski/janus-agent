@@ -3,7 +3,28 @@ import { z } from 'zod';
 const LogLevelSchema = z.enum(['minimal', 'normal', 'verbose']).default('normal');
 export type LogLevel = z.infer<typeof LogLevelSchema>;
 
-const ProviderSpecSchema = z.object({
+// --- NEW: providers + slots config ---
+
+/** Provider entry: auth method, priority, optional apiBase */
+const ProviderEntrySchema = z.object({
+  auth: z.enum(['api_key', 'oauth', 'cli']).optional(),
+  priority: z.number(),
+  apiBase: z.string().optional(),
+  logLevel: LogLevelSchema.optional(),
+});
+
+/** Slot: maps provider name → model ID, or null to use default slot */
+const SlotSchema = z.nullable(z.record(z.string(), z.string()));
+
+const ThinkingSchema = z.object({
+  enabled: z.boolean().default(false),
+  budgetTokens: z.number().default(10_000),
+  level: z.enum(['off', 'minimal', 'low', 'medium', 'high']).optional(),
+});
+
+// --- LEGACY: flat single-provider config (for backward compat during migration) ---
+
+const LegacyProviderSpecSchema = z.object({
   name: z.string(),
   provider: z.string(),
   model: z.string(),
@@ -15,27 +36,63 @@ const ProviderSpecSchema = z.object({
   logLevel: LogLevelSchema.optional(),
 });
 
-export type ProviderSpec = z.infer<typeof ProviderSpecSchema>;
-
-const ThinkingSchema = z.object({
-  enabled: z.boolean().default(false),
-  budgetTokens: z.number().default(10_000),
-  level: z.enum(['off', 'minimal', 'low', 'medium', 'high']).optional(),
-});
+export type LegacyProviderSpec = z.infer<typeof LegacyProviderSpecSchema>;
 
 const LLMSchema = z.object({
-  provider: z.enum(['openrouter', 'anthropic', 'openai', 'deepseek', 'groq', 'claude-agent', 'codex']).default('openrouter'),
+  // NEW format: providers + slots
+  providers: z.record(z.string(), ProviderEntrySchema).optional(),
+  slots: z.record(z.string(), SlotSchema).optional(),
+
+  // LEGACY flat fields (kept for backward compat — normalized at load time)
+  provider: z.enum(['openrouter', 'anthropic', 'openai', 'deepseek', 'groq', 'claude-agent', 'codex']).optional(),
   auth: z.enum(['api_key', 'oauth', 'cli']).optional(),
   apiKey: z.string().optional(),
   apiBase: z.string().optional(),
-  model: z.string().default('anthropic/claude-sonnet-4-5-20250929'),
+  model: z.string().optional(),
+
+  // LEGACY providers[] array
+  /** @deprecated Use providers object + slots instead */
+  legacyProviders: z.array(LegacyProviderSpecSchema).optional(),
+
+  // Shared LLM settings (format-independent)
   maxTokens: z.number().default(4096),
   temperature: z.number().default(0.3),
   toolTemperature: z.number().optional(),
   reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
   thinking: ThinkingSchema.optional(),
-  providers: z.array(ProviderSpecSchema).optional(),
 });
+
+// --- Resolved types (computed at load time, used by runtime) ---
+
+export interface ResolvedProvider {
+  name: string;           // provider key (e.g. "anthropic", "openrouter")
+  auth: 'api_key' | 'oauth' | 'cli';
+  priority: number;
+  apiBase?: string;
+  logLevel?: LogLevel;
+}
+
+export interface ResolvedSlot {
+  name: string;           // slot key (e.g. "default", "background")
+  entries: Array<{
+    provider: string;     // provider key
+    model: string;        // model ID for this provider
+    priority: number;     // inherited from provider
+  }>;
+}
+
+export interface ResolvedLLM {
+  providers: ResolvedProvider[];
+  slots: ResolvedSlot[];
+  // Shared settings
+  maxTokens: number;
+  temperature: number;
+  toolTemperature?: number;
+  reasoningEffort?: 'low' | 'medium' | 'high';
+  thinking?: { enabled: boolean; budgetTokens: number; level?: 'off' | 'minimal' | 'low' | 'medium' | 'high' };
+}
+
+// --- Rest of config schemas (unchanged) ---
 
 const LanesSchema = z.object({
   user: z.number().default(6),
@@ -92,9 +149,7 @@ const TelegramSchema = z.object({
   enabled: z.boolean().default(false),
   token: z.string().optional(),
   allowlist: z.array(z.string()).default([]),
-  /** Reject messages from users not in allowlist (explicit or derived from users[]). Default: true. */
   denyByDefault: z.boolean().default(true),
-  /** How the bot responds in group chats: 'all' = every message, 'mention' = only when @mentioned. */
   groupPolicy: z.enum(['all', 'mention']).default('all'),
 });
 
@@ -130,11 +185,8 @@ const VoiceSchema = z.object({
 });
 
 const BrowserOperatorSchema = z.object({
-  /** Path to Chrome/Chromium binary. Auto-detected if not set. */
   chromePath: z.string().optional(),
-  /** Path to dedicated Janus Chrome profile. Default: ~/.janus/chrome-profile */
   profileDir: z.string().optional(),
-  /** Run browser in headless mode. Default: false (visible Chrome window). */
   headless: z.boolean().default(false),
 });
 
@@ -225,9 +277,13 @@ export const JanusConfigSchema = z.object({
   browserOperator: BrowserOperatorSchema.optional().transform(v => BrowserOperatorSchema.parse(v ?? {})),
   autoUpdate: AutoUpdateSchema.optional().transform(v => AutoUpdateSchema.parse(v ?? {})),
   users: z.array(UserProfileSchema).default([]),
-  /** User IDs with owner privileges (owner-only tools, admin actions). Defaults to first user. */
   ownerIds: z.array(z.string()).default([]),
   family: FamilySchema.optional(),
 });
 
-export type JanusConfig = z.infer<typeof JanusConfigSchema>;
+export type RawJanusConfig = z.infer<typeof JanusConfigSchema>;
+
+/** Full config with resolved LLM providers/slots (computed at load time) */
+export type JanusConfig = RawJanusConfig & {
+  resolved: ResolvedLLM;
+};

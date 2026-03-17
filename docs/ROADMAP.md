@@ -1,14 +1,14 @@
 # Roadmap
 
-## Current State (Phase 9 complete)
+## Current State (Phase 10 in progress)
 
-- **Codebase:** ~11,200 LOC TypeScript (83 src files), 373 tests across 38 files, CI
+- **Codebase:** ~13,200 LOC TypeScript, 387 tests across 38 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
-- **Tools:** 15 (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
-- **Skills:** 6 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace)
+- **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
+- **Skills:** 9 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace, github, skill-creator, browser-operator)
 - **Channels:** 2 (CLI, Telegram) + MCP server + MCP client
-- **DB:** SQLite (WAL, 6 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron)
+- **DB:** SQLite (WAL, 7 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron, cron session IDs)
 
 See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 
@@ -108,6 +108,14 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Browser lifecycle fix: setContext preserves runtime across messages, EADDRINUSE recovery with retry
 - Silent summarization: ⏳ indicator instead of verbose notifications that confused users mid-task
 - 374 tests across 38 files
+
+### Phase 10: Browser Operator + Config Architecture
+- Browser Operator: Playwright migration (replaced Chrome Extension + WS server with Playwright persistent context, ~200 lines replaces ~2000 lines)
+- Config architecture: providers+slots (providers object + slots for model routing, credentials separated to auth.json)
+- Background slot: cheap models for cron/heartbeat/summarization (haiku, gpt-5.4-mini)
+- Anthropic OAuth fix: required "You are Claude Code" system prompt + beta headers
+- Legacy config auto-normalization (backward compatible)
+- 387 tests across 38 files
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed

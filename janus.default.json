@@ -1,8 +1,12 @@
 {
   "llm": {
-    "provider": "anthropic",
-    "model": "claude-sonnet-4-6",
-    "apiKey": "",
+    "providers": {
+      "anthropic": { "priority": 0 }
+    },
+    "slots": {
+      "default": { "anthropic": "claude-sonnet-4-6" },
+      "background": null
+    },
     "maxTokens": 4096,
     "temperature": 0.7
   },
