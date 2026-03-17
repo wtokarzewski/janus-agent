@@ -61,6 +61,7 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
           },
         });
         console.log(chalk.green('\n  ✓ Fallback provider saved to janus.json\n'));
+        await verifyProvider(fallback);
         return;
       }
     }
@@ -106,6 +107,9 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
     }
 
     console.log(chalk.green('\n  ✓ Configuration saved to janus.json\n'));
+
+    // Verify the provider actually works
+    await verifyProvider(primary);
   } finally {
     if (!io) rl.close();
   }
@@ -476,5 +480,49 @@ async function askNonEmpty(rl: ReadlineIO, prompt: string): Promise<string> {
     const answer = (await rl.question(prompt)).trim();
     if (answer) return answer;
     console.log(chalk.red('  Value cannot be empty.'));
+  }
+}
+
+/**
+ * Verify that the configured provider actually works by sending a test request.
+ * Non-blocking — logs warning on failure, doesn't throw.
+ */
+async function verifyProvider(result: ProviderSetupResult): Promise<void> {
+  console.log(chalk.gray('  Verifying connection...'));
+
+  try {
+    const { createProvider } = await import('../llm/openai-compatible-provider.js');
+    const { FileTokenStore } = await import('../auth/token-store.js');
+
+    const isOAuth = result.auth === 'oauth';
+    const tokenStore = isOAuth ? new FileTokenStore() : undefined;
+
+    const provider = await createProvider({
+      provider: result.provider,
+      apiKey: result.apiKey ?? '',
+      model: result.model,
+      auth: result.auth as 'api_key' | 'oauth' | 'cli' | undefined,
+      tokenStore,
+    });
+
+    const response = await provider.chat({
+      model: result.model,
+      messages: [
+        { role: 'system', content: 'Respond with OK.' },
+        { role: 'user', content: 'ping' },
+      ],
+      maxTokens: 16,
+    });
+
+    if (response.content) {
+      console.log(chalk.green(`  ✓ Provider "${result.provider}" responds (model: ${result.model})`));
+    } else {
+      console.log(chalk.yellow(`  ⚠ Provider responded but with empty content`));
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(chalk.red(`  ✗ Provider verification failed: ${msg}`));
+    console.log(chalk.yellow('  Config saved but provider may not work. Check credentials and try again.'));
+    console.log(chalk.gray(`  Backup saved to janus.json.bak`));
   }
 }
