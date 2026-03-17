@@ -556,8 +556,11 @@ export class AgentLoop {
       const thinkingLevel = thinkingConfig?.level;
       const thinkingEnabled = thinkingLevel ? thinkingLevel !== 'off' : thinkingConfig?.enabled;
       const thinkingBudget = thinkingLevel ? (THINKING_LEVEL_BUDGETS[thinkingLevel] ?? 10000) : (thinkingConfig?.budgetTokens ?? 10000);
+      // When using providers[], let ProviderRegistry pick the model from the entry.
+      // Only set model explicitly for legacy single-provider config.
+      const hasProviders = this.deps.config.llm.providers && this.deps.config.llm.providers.length > 0;
       const chatRequest = {
-        model: this.deps.config.llm.model,
+        model: hasProviders ? '' : this.deps.config.llm.model,
         messages,
         tools: tools.length > 0 ? tools : undefined,
         temperature: i > 0 && this.deps.config.llm.toolTemperature != null
@@ -816,7 +819,7 @@ export class AgentLoop {
       const flushStart = Date.now();
 
       const flushResponse = await withTimeout(this.deps.llm.chat({
-        model: this.deps.config.llm.model,
+        model: (this.deps.config.llm.providers?.length ? '' : this.deps.config.llm.model),
         messages: [
           { role: 'system', content: `You are a memory manager. Extract and preserve important information from conversation messages.
 
@@ -976,7 +979,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     log.info(`[${sessionKey}] Summarization: LLM call start`);
     const llmStart = Date.now();
     const summaryResponse = await withTimeout(this.deps.llm.chat({
-      model: this.deps.config.llm.model,
+      model: (this.deps.config.llm.providers?.length ? '' : this.deps.config.llm.model),
       messages: [
         { role: 'system', content: 'Summarize this conversation concisely. Focus on: 1) what task the user requested, 2) what progress was made, 3) what remains to be done, 4) key decisions and context. If the user had an active task in progress, make sure to preserve what it was and where it stopped.' },
         { role: 'user', content: toSummarize.map(m => `${m.role}: ${'content' in m ? m.content : ''}`).join('\n') },
