@@ -19,16 +19,15 @@
         "name": "primary",
         "provider": "anthropic",
         "model": "claude-sonnet-4-6",
-        "apiKey": "sk-ant-...",
-        "apiBase": "",
+        "auth": "oauth",
         "purpose": ["chat"],
         "priority": 0
       },
       {
         "name": "fallback",
-        "provider": "openai",
-        "model": "gpt-4o",
-        "apiKey": "sk-...",
+        "provider": "codex",
+        "model": "gpt-5.4",
+        "auth": "oauth",
         "purpose": ["chat"],
         "priority": 1
       }
