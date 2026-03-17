@@ -93,17 +93,6 @@ export async function saveConfig(
 
   const existing = await loadJSON(path);
   const merged = deepMerge(existing, updates);
-
-  // When saving providers[], clean up legacy top-level provider fields to avoid conflicts
-  const llm = (merged as Record<string, unknown>).llm as Record<string, unknown> | undefined;
-  if (llm?.providers && Array.isArray(llm.providers) && (llm.providers as unknown[]).length > 0) {
-    delete llm.provider;
-    delete llm.apiKey;
-    delete llm.apiBase;
-    delete llm.auth;
-    delete llm.model;
-  }
-
   await writeFile(path, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
 }
 

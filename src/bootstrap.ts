@@ -87,7 +87,6 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
       });
     }
   } else {
-    // Legacy single-provider config (top-level llm.provider/apiKey/auth)
     const apiKey = config.llm.apiKey ?? '';
     const isSubscription = ['claude-agent', 'codex'].includes(config.llm.provider);
     const auth = config.llm.auth ?? (isSubscription ? 'cli' : 'api_key');
@@ -95,7 +94,6 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
     const tokenStore = isOAuth ? new FileTokenStore() : undefined;
 
     if (apiKey || isSubscription || isOAuth) {
-      log.warn('Using legacy single-provider config (llm.provider/apiKey/auth). Migrate to llm.providers[] array — see janus.example.json.');
       llm.register({
         name: 'default',
         provider: await createProvider({
