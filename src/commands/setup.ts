@@ -98,11 +98,14 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
         },
       });
     } else {
-      // Save as single provider config
-      const config: Record<string, unknown> = { llm: { provider: primary.provider, model: primary.model } };
-      if (primary.apiKey) (config.llm as Record<string, unknown>).apiKey = primary.apiKey;
-      if (primary.auth) (config.llm as Record<string, unknown>).auth = primary.auth;
-      await saveConfig(config);
+      // Save as providers[] even for single provider (consistent format)
+      await saveConfig({
+        llm: {
+          providers: [
+            { name: 'primary', ...primary, priority: 0 },
+          ],
+        },
+      });
     }
 
     console.log(chalk.green('\n  ✓ Configuration saved to janus.json\n'));

@@ -1,10 +1,5 @@
 {
   "llm": {
-    "provider": "anthropic",
-    "model": "claude-sonnet-4-6",
-    "apiKey": "sk-ant-...",
-    "apiBase": "",
-    "auth": "api_key",
     "maxTokens": 4096,
     "temperature": 0.7,
     "toolTemperature": 0.3,
@@ -19,18 +14,16 @@
         "name": "primary",
         "provider": "anthropic",
         "model": "claude-sonnet-4-6",
-        "auth": "oauth",
+        "apiKey": "sk-ant-...",
         "logLevel": "normal",
-        "purpose": ["chat"],
         "priority": 0
       },
       {
         "name": "fallback",
         "provider": "codex",
-        "model": "gpt-5.4",
+        "model": "gpt-5.3-codex",
         "auth": "oauth",
         "logLevel": "normal",
-        "purpose": ["chat"],
         "priority": 1
       }
     ]
