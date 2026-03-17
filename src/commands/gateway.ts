@@ -22,9 +22,10 @@ import * as log from '../utils/logger.js';
 export async function runGateway(): Promise<void> {
   const config = await loadConfig();
 
+  const hasProviders = config.llm.providers && config.llm.providers.length > 0;
   const isSubscription = ['claude-agent', 'codex'].includes(config.llm.provider);
   const isOAuth = config.llm.auth === 'oauth';
-  if (!isSubscription && !isOAuth && !config.llm.apiKey) {
+  if (!hasProviders && !isSubscription && !isOAuth && !config.llm.apiKey) {
     console.error('Error: No API key found. Set OPENROUTER_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, or GROQ_API_KEY (or use a subscription/OAuth provider).');
     process.exit(1);
   }
