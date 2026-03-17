@@ -45,16 +45,16 @@ export class ProviderRegistry implements LLMProvider {
     for (const entry of candidates) {
       try {
         const req = { ...request, model: request.model || entry.model };
-        log.debug(`Provider "${entry.name}": attempting ${purpose ?? 'chat'} request`);
+        log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} request`);
         return await entry.provider.chat(req);
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        log.warn(`Provider "${entry.name}" failed: ${lastError.message}`);
+        log.warn(`Provider "${entry.name}" (${entry.model}) failed: ${lastError.message}`);
 
         if (!isFailoverCandidate(lastError)) throw lastError;
 
         if (candidates.length > 1) {
-          log.info(`Failing over to next provider...`);
+          log.info(`Failing over from "${entry.name}" (${entry.model}) to next provider...`);
         }
       }
     }
@@ -74,7 +74,7 @@ export class ProviderRegistry implements LLMProvider {
     for (const entry of candidates) {
       try {
         const req = { ...request, model: request.model || entry.model };
-        log.debug(`Provider "${entry.name}": attempting ${purpose ?? 'chat'} stream request`);
+        log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} stream request`);
 
         if (entry.provider.chatStream) {
           return await entry.provider.chatStream(req, onChunk);
@@ -88,12 +88,12 @@ export class ProviderRegistry implements LLMProvider {
         return response;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        log.warn(`Provider "${entry.name}" stream failed: ${lastError.message}`);
+        log.warn(`Provider "${entry.name}" (${entry.model}) stream failed: ${lastError.message}`);
 
         if (!isFailoverCandidate(lastError)) throw lastError;
 
         if (candidates.length > 1) {
-          log.info(`Failing over to next provider...`);
+          log.info(`Failing over from "${entry.name}" (${entry.model}) to next provider...`);
         }
       }
     }

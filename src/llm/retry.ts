@@ -99,9 +99,12 @@ export function isFailoverCandidate(err: Error): boolean {
   // Network errors
   if (msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('fetch failed')) return true;
 
-  // Client error keywords — failing over won't help
-  const clientErrors = ['invalid_api_key', 'authentication_error', 'invalid_request', 'malformed', 'invalid_model'];
-  if (clientErrors.some(e => msg.includes(e))) return false;
+  // Auth errors — failing over won't help (credentials are per-provider, but the request won't change)
+  if (msg.includes('invalid_api_key') || msg.includes('authentication_error')) return false;
+
+  // Request format errors — DO failover, different providers accept different formats
+  // (invalid_request from Anthropic may succeed on OpenAI and vice versa)
+  if (msg.includes('invalid_request') || msg.includes('malformed')) return true;
 
   // 422: distinguish format errors (failover may help) from billing errors (won't help) (L9)
   if (status === 422) {
