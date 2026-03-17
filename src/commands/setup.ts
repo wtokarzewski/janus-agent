@@ -11,7 +11,7 @@
 
 import * as readline from 'node:readline';
 import chalk from 'chalk';
-import { saveConfig } from '../config/config.js';
+import { loadConfig, saveConfig } from '../config/config.js';
 
 export interface SetupOptions {
   reconfigure?: boolean;
@@ -39,8 +39,30 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
   try {
     console.log(chalk.bold('\n  Janus — Setup\n'));
 
-    if (opts?.reconfigure) {
-      console.log(chalk.gray('  Reconfiguring LLM provider.\n'));
+    // Detect existing primary provider
+    const existingPrimary = await detectExistingPrimary();
+
+    if (opts?.reconfigure && existingPrimary) {
+      console.log(chalk.gray(`  Current primary: ${existingPrimary.provider} (${existingPrimary.model})\n`));
+      console.log('  What do you want to configure?');
+      console.log('  1. Everything from scratch');
+      console.log('  2. Add/replace fallback only\n');
+
+      const scope = await askChoice(rl, '  Select [1-2]: ', ['1', '2']);
+
+      if (scope === '2') {
+        const fallback = await setupFallbackProvider(rl, existingPrimary);
+        await saveConfig({
+          llm: {
+            providers: [
+              { name: 'primary', ...existingPrimary, priority: 0 },
+              { name: 'fallback', ...fallback, priority: 1 },
+            ],
+          },
+        });
+        console.log(chalk.green('\n  ✓ Fallback provider saved to janus.json\n'));
+        return;
+      }
     }
 
     console.log('  How do you want to connect to AI?');
@@ -86,6 +108,42 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
     console.log(chalk.green('\n  ✓ Configuration saved to janus.json\n'));
   } finally {
     if (!io) rl.close();
+  }
+}
+
+/**
+ * Detect existing primary provider from config.
+ * Checks multi-provider (providers[]) first, then single-provider fields.
+ */
+async function detectExistingPrimary(): Promise<ProviderSetupResult | null> {
+  try {
+    const config = await loadConfig();
+    const llm = config.llm;
+
+    // Multi-provider: find the primary (lowest priority or name=primary)
+    if (llm.providers && llm.providers.length > 0) {
+      const primary = llm.providers.find(p => p.name === 'primary')
+        ?? llm.providers.sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))[0];
+      return {
+        provider: primary.provider,
+        model: primary.model,
+        ...(primary.apiKey ? { apiKey: primary.apiKey } : {}),
+        ...(primary.auth ? { auth: primary.auth } : {}),
+      };
+    }
+
+    // Single-provider
+    if (llm.provider) {
+      return {
+        provider: llm.provider,
+        model: llm.model,
+        ...(llm.apiKey ? { apiKey: llm.apiKey } : {}),
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -270,22 +328,35 @@ async function setupCodexOAuth(rl: ReadlineIO): Promise<ProviderSetupResult> {
 
   console.log(chalk.green('  ✓ Authenticated via OAuth'));
 
-  // Fetch models from API using the new token
+  // Try fetching models with ChatGPT OAuth token + accountId header.
+  // Falls back to curated list if the API rejects the token.
   let token = '';
+  let accountId: string | undefined;
   try {
     const result = await getCodexToken(store);
     token = result.token;
+    accountId = result.accountId;
   } catch {
-    // token stays empty, will fall back to manual input
+    // token stays empty, will fall back to curated list
   }
 
-  const model = await pickModelFromApi(rl, 'openai', token, false, 'o3');
+  const model = await pickModelFromApi(rl, 'codex', token, false, 'gpt-5.4', accountId);
   return { provider: 'codex', auth: 'oauth', model };
 }
 
+/** Curated fallback models for Codex OAuth when API fetch fails. */
+const CODEX_FALLBACK_MODELS: { id: string; name: string }[] = [
+  { id: 'gpt-5.4', name: 'GPT-5.4' },
+  { id: 'gpt-5.3-codex', name: 'GPT-5.3-Codex' },
+  { id: 'gpt-5.2-codex', name: 'GPT-5.2-Codex' },
+  { id: 'gpt-5.2', name: 'GPT-5.2' },
+  { id: 'gpt-5.1-codex-max', name: 'GPT-5.1-Codex-Max' },
+  { id: 'gpt-5.1-codex-mini', name: 'GPT-5.1-Codex-Mini' },
+];
+
 /**
  * Try to fetch models from provider API and let user pick.
- * Falls back to manual input if fetch fails.
+ * Falls back to curated list (codex) or manual input if fetch fails.
  */
 async function pickModelFromApi(
   rl: ReadlineIO,
@@ -293,8 +364,13 @@ async function pickModelFromApi(
   token: string,
   isOAuth: boolean,
   defaultModel: string,
+  accountId?: string,
 ): Promise<string> {
   if (!token) {
+    // No token — use curated list for codex, manual input for others
+    if (provider === 'codex') {
+      return pickFromList(rl, CODEX_FALLBACK_MODELS, defaultModel);
+    }
     const input = await rl.question(`  Model [${defaultModel}]: `);
     return input.trim() || defaultModel;
   }
@@ -308,39 +384,54 @@ async function pickModelFromApi(
     if (provider === 'anthropic' || provider === 'openrouter') {
       models = await fetchAnthropicModels(token, isOAuth);
     } else {
-      models = await fetchOpenAIModels(token);
+      models = await fetchOpenAIModels(token, accountId);
     }
 
     if (models.length === 0) {
-      console.log(chalk.yellow('  Could not fetch models.'));
+      console.log(chalk.yellow('  Could not fetch models from API.'));
+      if (provider === 'codex') {
+        return pickFromList(rl, CODEX_FALLBACK_MODELS, defaultModel);
+      }
       const input = await rl.question(`  Model [${defaultModel}]: `);
       return input.trim() || defaultModel;
     }
 
-    console.log('\n  Available models:');
-    const display = models.slice(0, 15);
-    for (let i = 0; i < display.length; i++) {
-      const label = display[i].name !== display[i].id
-        ? `${display[i].name} (${display[i].id})`
-        : display[i].id;
-      console.log(`  ${i + 1}. ${label}`);
-    }
-    console.log(`  0. Enter manually\n`);
-
-    const valid = [...display.map((_, i) => String(i + 1)), '0'];
-    const choice = await askChoice(rl, '  Select: ', valid);
-
-    if (choice === '0') {
-      const input = await rl.question(`  Model [${defaultModel}]: `);
-      return input.trim() || defaultModel;
-    }
-
-    return display[parseInt(choice, 10) - 1].id;
+    return pickFromList(rl, models, defaultModel);
   } catch {
-    console.log(chalk.yellow('  Could not fetch models.'));
+    console.log(chalk.yellow('  Could not fetch models from API.'));
+    if (provider === 'codex') {
+      return pickFromList(rl, CODEX_FALLBACK_MODELS, defaultModel);
+    }
     const input = await rl.question(`  Model [${defaultModel}]: `);
     return input.trim() || defaultModel;
   }
+}
+
+/** Display a model list and let user pick, with manual entry option. */
+async function pickFromList(
+  rl: ReadlineIO,
+  models: { id: string; name: string }[],
+  defaultModel: string,
+): Promise<string> {
+  console.log('\n  Available models:');
+  const display = models.slice(0, 15);
+  for (let i = 0; i < display.length; i++) {
+    const label = display[i].name !== display[i].id
+      ? `${display[i].name} (${display[i].id})`
+      : display[i].id;
+    console.log(`  ${i + 1}. ${label}`);
+  }
+  console.log(`  0. Enter manually\n`);
+
+  const valid = [...display.map((_, i) => String(i + 1)), '0'];
+  const choice = await askChoice(rl, '  Select: ', valid);
+
+  if (choice === '0') {
+    const input = await rl.question(`  Model [${defaultModel}]: `);
+    return input.trim() || defaultModel;
+  }
+
+  return display[parseInt(choice, 10) - 1].id;
 }
 
 async function checkClaudeAuth(): Promise<boolean> {
