@@ -164,11 +164,8 @@ export class ContextBuilder {
     const workspace = resolve(this.deps.config.workspace.dir);
     const toolList = tools.map(t => `- ${t.name}: ${t.description}`).join('\n');
 
-    // Anthropic OAuth requires system prompt starting with Claude Code identity prefix
-    const oauthPrefix = (this.deps.config.llm.auth === 'oauth'
-      && this.deps.config.llm.provider === 'anthropic')
-      ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n"
-      : '';
+    // Anthropic OAuth identity prefix is now injected by AnthropicProvider itself
+    const oauthPrefix = '';
 
     return `<identity>
 ${oauthPrefix}You are Janus, a universal AI agent.

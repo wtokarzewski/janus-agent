@@ -5,7 +5,7 @@
 
 import { resolve } from 'node:path';
 import type { JanusConfig } from './config/schema.js';
-import { FileTokenStore } from './auth/token-store.js';
+import { FileTokenStore, loadApiKey } from './auth/token-store.js';
 import { MessageBus } from './bus/message-bus.js';
 import { createProvider } from './llm/openai-compatible-provider.js';
 import { ProviderRegistry } from './llm/provider-registry.js';
@@ -68,42 +68,59 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   const bus = new MessageBus();
 
   const llm = new ProviderRegistry();
-  if (config.llm.providers && config.llm.providers.length > 0) {
+  const { resolved } = config;
+  if (resolved.providers.length > 0) {
     const sharedTokenStore = new FileTokenStore();
-    for (const spec of config.llm.providers) {
-      const isSubscription = ['claude-agent', 'codex'].includes(spec.provider);
-      const auth = spec.auth ?? (isSubscription ? 'cli' : 'api_key');
-      const isOAuth = auth === 'oauth';
-      llm.register({
-        name: spec.name,
-        provider: await createProvider({
-          provider: spec.provider, apiKey: spec.apiKey, model: spec.model,
-          apiBase: spec.apiBase, auth, tokenStore: isOAuth ? sharedTokenStore : undefined,
-        }),
-        model: spec.model,
-        purpose: spec.purpose ?? [],
-        priority: spec.priority ?? 0,
-        logLevel: spec.logLevel,
-      });
-    }
-  } else {
-    const apiKey = config.llm.apiKey ?? '';
-    const isSubscription = ['claude-agent', 'codex'].includes(config.llm.provider);
-    const auth = config.llm.auth ?? (isSubscription ? 'cli' : 'api_key');
-    const isOAuth = auth === 'oauth';
-    const tokenStore = isOAuth ? new FileTokenStore() : undefined;
+    // Register each provider+slot combination
+    const defaultSlot = resolved.slots.find(s => s.name === 'default');
+    const backgroundSlot = resolved.slots.find(s => s.name === 'background');
 
-    if (apiKey || isSubscription || isOAuth) {
-      llm.register({
-        name: 'default',
-        provider: await createProvider({
-          provider: config.llm.provider, apiKey, model: config.llm.model,
-          apiBase: config.llm.apiBase, auth, tokenStore,
-        }),
-        model: config.llm.model,
-        purpose: [],
-        priority: 0,
-      });
+    // Register default slot entries (primary purpose)
+    if (defaultSlot) {
+      for (const entry of defaultSlot.entries) {
+        const rp = resolved.providers.find(p => p.name === entry.provider);
+        if (!rp) continue;
+        const isOAuth = rp.auth === 'oauth';
+        const apiKey = isOAuth ? '' : (loadApiKey(entry.provider) ?? config.llm.apiKey ?? '');
+        llm.register({
+          name: entry.provider,
+          provider: await createProvider({
+            provider: entry.provider, apiKey, model: entry.model,
+            apiBase: rp.apiBase, auth: rp.auth, tokenStore: isOAuth ? sharedTokenStore : undefined,
+          }),
+          model: entry.model,
+          purpose: [],
+          priority: rp.priority,
+          logLevel: rp.logLevel,
+        });
+      }
+    }
+
+    // Register background slot entries (for cron/heartbeat/summarization)
+    if (backgroundSlot && backgroundSlot.entries.length > 0) {
+      for (const entry of backgroundSlot.entries) {
+        const rp = resolved.providers.find(p => p.name === entry.provider);
+        if (!rp) continue;
+        const isOAuth = rp.auth === 'oauth';
+        const apiKey = isOAuth ? '' : (loadApiKey(entry.provider) ?? config.llm.apiKey ?? '');
+        // Check if this provider+model is already registered in default slot
+        const alreadyRegistered = defaultSlot?.entries.some(
+          e => e.provider === entry.provider && e.model === entry.model,
+        );
+        if (!alreadyRegistered) {
+          llm.register({
+            name: `${entry.provider}-background`,
+            provider: await createProvider({
+              provider: entry.provider, apiKey, model: entry.model,
+              apiBase: rp.apiBase, auth: rp.auth, tokenStore: isOAuth ? sharedTokenStore : undefined,
+            }),
+            model: entry.model,
+            purpose: ['background', 'summarize', 'cron', 'heartbeat'],
+            priority: rp.priority,
+            logLevel: rp.logLevel,
+          });
+        }
+      }
     }
   }
 

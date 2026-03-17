@@ -1,10 +1,19 @@
 {
   "llm": {
-    "provider": "anthropic",
-    "model": "claude-sonnet-4-6",
-    "apiKey": "sk-ant-...",
-    "apiBase": "",
-    "auth": "api_key",
+    "providers": {
+      "anthropic": { "auth": "oauth", "priority": 0 },
+      "openrouter": { "priority": 1 }
+    },
+    "slots": {
+      "default": {
+        "anthropic": "claude-sonnet-4-6",
+        "openrouter": "anthropic/claude-sonnet-4-6"
+      },
+      "background": {
+        "anthropic": "claude-haiku-4-5-20251001",
+        "openrouter": "anthropic/claude-haiku-4-5-20251001"
+      }
+    },
     "maxTokens": 4096,
     "temperature": 0.7,
     "toolTemperature": 0.3,
@@ -13,27 +22,7 @@
       "enabled": false,
       "budgetTokens": 10000,
       "level": "medium"
-    },
-    "providers": [
-      {
-        "name": "primary",
-        "provider": "anthropic",
-        "model": "claude-sonnet-4-6",
-        "auth": "oauth",
-        "logLevel": "normal",
-        "purpose": ["chat"],
-        "priority": 0
-      },
-      {
-        "name": "fallback",
-        "provider": "codex",
-        "model": "gpt-5.4",
-        "auth": "oauth",
-        "logLevel": "normal",
-        "purpose": ["chat"],
-        "priority": 1
-      }
-    ]
+    }
   },
 
   "agent": {

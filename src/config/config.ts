@@ -1,13 +1,16 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { resolve } from 'node:path';
-import { JanusConfigSchema, type JanusConfig } from './schema.js';
+import { JanusConfigSchema, type JanusConfig, type RawJanusConfig, type ResolvedLLM, type ResolvedProvider, type ResolvedSlot } from './schema.js';
 import * as log from '../utils/logger.js';
 
+const SUBSCRIPTION_PROVIDERS = ['claude-agent', 'codex'];
+
 /**
- * Load config with priority: CLI flags > env vars > workspace json > user json > defaults
+ * Load config with priority: CLI flags > env vars > workspace json > user json > defaults.
+ * Normalizes legacy config formats into resolved providers + slots.
  */
-export async function loadConfig(overrides?: Partial<JanusConfig>): Promise<JanusConfig> {
+export async function loadConfig(overrides?: Partial<RawJanusConfig>): Promise<JanusConfig> {
   // 1. Try workspace config
   const workspaceConfig = await loadJSON(resolve('.', 'janus.json'));
 
@@ -29,10 +32,148 @@ export async function loadConfig(overrides?: Partial<JanusConfig>): Promise<Janu
     delete envLlm.apiKey;
   }
 
+  // Remap legacy "providers" array field to "legacyProviders" before Zod parse
+  for (const source of [userConfig, workspaceConfig, envConfig, overrides ?? {}]) {
+    const llm = (source as Record<string, unknown>)?.llm as Record<string, unknown> | undefined;
+    if (llm && Array.isArray(llm.providers)) {
+      llm.legacyProviders = llm.providers;
+      delete llm.providers;
+    }
+  }
+
   const merged = deepMerge(userConfig, workspaceConfig, envConfig, overrides ?? {});
 
-  return JanusConfigSchema.parse(merged);
+  const raw = JanusConfigSchema.parse(merged);
+  const resolved = resolveLLM(raw);
+  return { ...raw, resolved };
 }
+
+/**
+ * Normalize any config format (new providers+slots, legacy flat, legacy providers[])
+ * into a canonical ResolvedLLM structure.
+ */
+export function resolveLLM(config: RawJanusConfig): ResolvedLLM {
+  const llm = config.llm;
+
+  let providers: ResolvedProvider[];
+  let slots: ResolvedSlot[];
+
+  if (llm.providers && llm.slots) {
+    // NEW format: providers object + slots object
+    providers = Object.entries(llm.providers)
+      .map(([name, entry]) => ({
+        name,
+        auth: entry.auth ?? inferAuth(name),
+        priority: entry.priority,
+        apiBase: entry.apiBase,
+        logLevel: entry.logLevel,
+      }))
+      .sort((a, b) => a.priority - b.priority);
+
+    slots = Object.entries(llm.slots).map(([slotName, mapping]) => ({
+      name: slotName,
+      entries: mapping
+        ? Object.entries(mapping)
+            .map(([providerName, model]) => {
+              const provEntry = llm.providers![providerName];
+              return {
+                provider: providerName,
+                model,
+                priority: provEntry?.priority ?? 99,
+              };
+            })
+            .sort((a, b) => a.priority - b.priority)
+        : [], // null slot → empty entries (falls back to default)
+    }));
+  } else if (llm.legacyProviders && llm.legacyProviders.length > 0) {
+    // LEGACY providers[] array → convert
+    providers = llm.legacyProviders.map(spec => ({
+      name: spec.provider,
+      auth: spec.auth ?? inferAuth(spec.provider),
+      priority: spec.priority ?? 0,
+      apiBase: spec.apiBase,
+      logLevel: spec.logLevel,
+    }));
+    // Deduplicate providers (same provider name → keep lowest priority)
+    const seen = new Map<string, ResolvedProvider>();
+    for (const p of providers) {
+      const existing = seen.get(p.name);
+      if (!existing || p.priority < existing.priority) seen.set(p.name, p);
+    }
+    providers = [...seen.values()].sort((a, b) => a.priority - b.priority);
+
+    // Build default slot from legacy specs
+    const defaultEntries = llm.legacyProviders.map(spec => ({
+      provider: spec.provider,
+      model: spec.model,
+      priority: spec.priority ?? 0,
+    })).sort((a, b) => a.priority - b.priority);
+
+    slots = [{ name: 'default', entries: defaultEntries }];
+  } else if (llm.provider) {
+    // LEGACY flat config → single provider, single slot
+    const providerName = llm.provider;
+    providers = [{
+      name: providerName,
+      auth: llm.auth ?? inferAuth(providerName),
+      priority: 0,
+      apiBase: llm.apiBase,
+    }];
+    slots = [{
+      name: 'default',
+      entries: [{
+        provider: providerName,
+        model: llm.model ?? 'claude-sonnet-4-6',
+        priority: 0,
+      }],
+    }];
+  } else {
+    // No config at all
+    providers = [];
+    slots = [{ name: 'default', entries: [] }];
+  }
+
+  return {
+    providers,
+    slots,
+    maxTokens: llm.maxTokens,
+    temperature: llm.temperature,
+    toolTemperature: llm.toolTemperature,
+    reasoningEffort: llm.reasoningEffort,
+    thinking: llm.thinking,
+  };
+}
+
+/** Infer auth mode from provider name */
+function inferAuth(provider: string): 'api_key' | 'oauth' | 'cli' {
+  if (SUBSCRIPTION_PROVIDERS.includes(provider)) return 'cli';
+  return 'api_key';
+}
+
+/** Get the model for a given slot, falling back to "default" slot */
+export function getSlotModel(resolved: ResolvedLLM, slotName: string): { provider: string; model: string } | null {
+  // Find requested slot
+  let slot = resolved.slots.find(s => s.name === slotName);
+  // Fall back to default
+  if (!slot || slot.entries.length === 0) {
+    slot = resolved.slots.find(s => s.name === 'default');
+  }
+  if (!slot || slot.entries.length === 0) return null;
+  // Return highest priority (lowest number) entry
+  return { provider: slot.entries[0].provider, model: slot.entries[0].model };
+}
+
+/** Check if any provider is configured */
+export function hasAnyProvider(resolved: ResolvedLLM): boolean {
+  return resolved.providers.length > 0 && resolved.slots.some(s => s.entries.length > 0);
+}
+
+/** Check if a specific provider uses OAuth */
+export function isProviderOAuth(resolved: ResolvedLLM, providerName: string): boolean {
+  return resolved.providers.some(p => p.name === providerName && p.auth === 'oauth');
+}
+
+// --- Env vars ---
 
 function loadEnvVars(): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -68,6 +209,8 @@ function loadEnvVars(): Record<string, unknown> {
   return result;
 }
 
+// --- File I/O ---
+
 async function loadJSON(path: string): Promise<Record<string, unknown>> {
   try {
     const content = await readFile(path, 'utf-8');
@@ -100,24 +243,36 @@ export async function saveConfig(
 
   const merged = deepMerge(existing, updates);
 
-  // Prevent conflicting LLM config formats:
-  // look at what's NEW (updates), not what's merged, to decide which format to keep
+  // Clean up: if updating with new format (providers object + slots),
+  // remove legacy fields
   const updatedLlm = (updates as Record<string, unknown>).llm as Record<string, unknown> | undefined;
   const mergedLlm = (merged as Record<string, unknown>).llm as Record<string, unknown> | undefined;
   if (updatedLlm && mergedLlm) {
-    const updatingProviders = updatedLlm.providers && Array.isArray(updatedLlm.providers);
-    const updatingTopLevel = 'provider' in updatedLlm || 'apiKey' in updatedLlm;
+    const updatingNewFormat = updatedLlm.providers && !Array.isArray(updatedLlm.providers);
+    const updatingLegacy = 'provider' in updatedLlm || 'apiKey' in updatedLlm;
+    const updatingLegacyArray = Array.isArray(updatedLlm.providers);
 
-    if (updatingProviders) {
-      // New config uses providers[] — remove stale top-level fields
+    if (updatingNewFormat) {
+      // New format → remove ALL legacy fields
       delete mergedLlm.provider;
       delete mergedLlm.apiKey;
       delete mergedLlm.apiBase;
       delete mergedLlm.auth;
       delete mergedLlm.model;
-    } else if (updatingTopLevel) {
-      // New config uses top-level — remove stale providers[]
+      delete mergedLlm.legacyProviders;
+    } else if (updatingLegacy) {
+      // Legacy flat → remove new format and legacy array
       delete mergedLlm.providers;
+      delete mergedLlm.slots;
+      delete mergedLlm.legacyProviders;
+    } else if (updatingLegacyArray) {
+      // Legacy array → remove flat and new format
+      delete mergedLlm.provider;
+      delete mergedLlm.apiKey;
+      delete mergedLlm.apiBase;
+      delete mergedLlm.auth;
+      delete mergedLlm.model;
+      delete mergedLlm.slots;
     }
   }
 
@@ -125,7 +280,7 @@ export async function saveConfig(
 }
 
 /**
- * Watch config files for changes and reload (I1).
+ * Watch config files for changes and reload.
  * Debounces rapid changes (e.g. editor save + format).
  * Returns cleanup function to stop watching.
  */

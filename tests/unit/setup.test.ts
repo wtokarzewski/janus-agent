@@ -23,6 +23,12 @@ vi.mock('../../src/llm/model-listing.js', () => ({
   fetchOpenAIModels: vi.fn().mockResolvedValue([]),
 }));
 
+// Mock saveApiKey to avoid writing to disk in tests
+vi.mock('../../src/auth/token-store.js', () => ({
+  saveApiKey: vi.fn(),
+  FileTokenStore: vi.fn(),
+}));
+
 function createMockIO(answers: string[]) {
   let idx = 0;
   return {
@@ -54,9 +60,11 @@ describe('Setup Wizard', () => {
 
     expect(saveConfig).toHaveBeenCalledWith({
       llm: {
-        provider: 'openrouter',
-        apiKey: 'sk-test-key',
-        model: 'anthropic/claude-sonnet-4-5-20250929',
+        providers: { openrouter: { priority: 0 } },
+        slots: {
+          default: { openrouter: 'anthropic/claude-sonnet-4-5-20250929' },
+          background: null,
+        },
       },
     });
   });
@@ -75,9 +83,11 @@ describe('Setup Wizard', () => {
 
     expect(saveConfig).toHaveBeenCalledWith({
       llm: {
-        provider: 'anthropic',
-        apiKey: 'sk-ant-test',
-        model: 'claude-opus-4-5-20250929',
+        providers: { anthropic: { priority: 0 } },
+        slots: {
+          default: { anthropic: 'claude-opus-4-5-20250929' },
+          background: null,
+        },
       },
     });
   });
@@ -96,9 +106,11 @@ describe('Setup Wizard', () => {
 
     expect(saveConfig).toHaveBeenCalledWith({
       llm: {
-        provider: 'deepseek',
-        apiKey: 'ds-key',
-        model: 'deepseek-chat',
+        providers: { deepseek: { priority: 0 } },
+        slots: {
+          default: { deepseek: 'deepseek-chat' },
+          background: null,
+        },
       },
     });
   });
@@ -133,9 +145,11 @@ describe('Setup Wizard', () => {
 
     expect(saveConfig).toHaveBeenCalledWith({
       llm: {
-        provider: 'openai',
-        apiKey: 'sk-oai',
-        model: 'gpt-4o',
+        providers: { openai: { priority: 0 } },
+        slots: {
+          default: { openai: 'gpt-4o' },
+          background: null,
+        },
       },
     });
     // question called 6 times (invalid + mode + provider + key + model + fallback)
@@ -157,9 +171,11 @@ describe('Setup Wizard', () => {
 
     expect(saveConfig).toHaveBeenCalledWith({
       llm: {
-        provider: 'openrouter',
-        apiKey: 'sk-valid',
-        model: 'anthropic/claude-sonnet-4-5-20250929',
+        providers: { openrouter: { priority: 0 } },
+        slots: {
+          default: { openrouter: 'anthropic/claude-sonnet-4-5-20250929' },
+          background: null,
+        },
       },
     });
     expect(io.question).toHaveBeenCalledTimes(6);
@@ -187,7 +203,13 @@ describe('Setup Wizard', () => {
     try {
       await runSetup(undefined, io);
       expect(saveConfig).toHaveBeenCalledWith({
-        llm: { provider: 'claude-agent', model: 'claude-sonnet-4-6' },
+        llm: {
+          providers: { 'claude-agent': { priority: 0 } },
+          slots: {
+            default: { 'claude-agent': 'claude-sonnet-4-6' },
+            background: null,
+          },
+        },
       });
     } catch {
       // May fail due to auth check — that's OK, we're testing the flow structure

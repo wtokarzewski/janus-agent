@@ -54,10 +54,17 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
         const fallback = await setupFallbackProvider(rl, existingPrimary);
         await saveConfig({
           llm: {
-            providers: [
-              { name: 'primary', ...existingPrimary, priority: 0 },
-              { name: 'fallback', ...fallback, priority: 1 },
-            ],
+            providers: {
+              [existingPrimary.provider]: buildProviderEntry(existingPrimary, 0),
+              [fallback.provider]: buildProviderEntry(fallback, 1),
+            },
+            slots: {
+              default: {
+                [existingPrimary.provider]: existingPrimary.model,
+                [fallback.provider]: fallback.model,
+              },
+              background: null,
+            },
           },
         });
         console.log(chalk.green('\n  ✓ Fallback provider saved to janus.json\n'));
@@ -89,21 +96,33 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
 
     if (fallbackChoice === '1') {
       const fallback = await setupFallbackProvider(rl, primary);
-      // Save as multi-provider config
       await saveConfig({
         llm: {
-          providers: [
-            { name: 'primary', ...primary, priority: 0 },
-            { name: 'fallback', ...fallback, priority: 1 },
-          ],
+          providers: {
+            [primary.provider]: buildProviderEntry(primary, 0),
+            [fallback.provider]: buildProviderEntry(fallback, 1),
+          },
+          slots: {
+            default: {
+              [primary.provider]: primary.model,
+              [fallback.provider]: fallback.model,
+            },
+            background: null,
+          },
         },
       });
     } else {
-      // Save as single provider config
-      const config: Record<string, unknown> = { llm: { provider: primary.provider, model: primary.model } };
-      if (primary.apiKey) (config.llm as Record<string, unknown>).apiKey = primary.apiKey;
-      if (primary.auth) (config.llm as Record<string, unknown>).auth = primary.auth;
-      await saveConfig(config);
+      await saveConfig({
+        llm: {
+          providers: {
+            [primary.provider]: buildProviderEntry(primary, 0),
+          },
+          slots: {
+            default: { [primary.provider]: primary.model },
+            background: null,
+          },
+        },
+      });
     }
 
     console.log(chalk.green('\n  ✓ Configuration saved to janus.json\n'));
@@ -122,26 +141,28 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
 async function detectExistingPrimary(): Promise<ProviderSetupResult | null> {
   try {
     const config = await loadConfig();
-    const llm = config.llm;
+    const { resolved } = config;
 
-    // Multi-provider: find the primary (lowest priority or name=primary)
-    if (llm.providers && llm.providers.length > 0) {
-      const primary = llm.providers.find(p => p.name === 'primary')
-        ?? llm.providers.sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))[0];
-      return {
-        provider: primary.provider,
-        model: primary.model,
-        ...(primary.apiKey ? { apiKey: primary.apiKey } : {}),
-        ...(primary.auth ? { auth: primary.auth } : {}),
-      };
+    // Use resolved providers — works for all config formats
+    if (resolved.providers.length > 0 && resolved.slots.length > 0) {
+      const defaultSlot = resolved.slots.find(s => s.name === 'default');
+      if (defaultSlot && defaultSlot.entries.length > 0) {
+        const primary = defaultSlot.entries[0];
+        const rp = resolved.providers.find(p => p.name === primary.provider);
+        return {
+          provider: primary.provider,
+          model: primary.model,
+          ...(rp?.auth ? { auth: rp.auth } : {}),
+        };
+      }
     }
 
-    // Single-provider
-    if (llm.provider) {
+    // Legacy single-provider fallback
+    if (config.llm.provider) {
       return {
-        provider: llm.provider,
-        model: llm.model,
-        ...(llm.apiKey ? { apiKey: llm.apiKey } : {}),
+        provider: config.llm.provider,
+        model: config.llm.model ?? 'claude-sonnet-4-6',
+        ...(config.llm.apiKey ? { apiKey: config.llm.apiKey } : {}),
       };
     }
 
@@ -156,6 +177,13 @@ interface ProviderSetupResult {
   model: string;
   apiKey?: string;
   auth?: string;
+}
+
+/** Build a provider entry for the new config format */
+function buildProviderEntry(result: ProviderSetupResult, priority: number): Record<string, unknown> {
+  const entry: Record<string, unknown> = { priority };
+  if (result.auth) entry.auth = result.auth;
+  return entry;
 }
 
 async function setupApiKey(rl: ReadlineIO): Promise<ProviderSetupResult> {
@@ -180,10 +208,14 @@ async function setupApiKey(rl: ReadlineIO): Promise<ProviderSetupResult> {
 
   const apiKey = await askNonEmpty(rl, '  API Key: ');
 
+  // Save API key to auth.json (credentials separated from config)
+  const { saveApiKey } = await import('../auth/token-store.js');
+  saveApiKey(provider, apiKey);
+
   // Try fetching models from API
   const model = await pickModelFromApi(rl, provider, apiKey, false, defaultModel);
 
-  return { provider, model, apiKey };
+  return { provider, model };
 }
 
 async function setupSubscription(rl: ReadlineIO): Promise<ProviderSetupResult> {
@@ -293,12 +325,13 @@ async function setupCodex(rl: ReadlineIO): Promise<ProviderSetupResult> {
 
   // Codex CLI uses specific model names
   console.log('\n  Model?');
-  console.log('  1. gpt-5.3-codex (recommended)');
-  console.log('  2. gpt-5.2-codex');
-  console.log('  3. gpt-5-codex-mini\n');
+  console.log('  1. gpt-5.4 (recommended)');
+  console.log('  2. gpt-5.4-mini');
+  console.log('  3. gpt-5.3-codex');
+  console.log('  4. gpt-5.2\n');
 
-  const modelChoice = await askChoice(rl, '  Select [1-3]: ', ['1', '2', '3']);
-  const modelMap: Record<string, string> = { '1': 'gpt-5.3-codex', '2': 'gpt-5.2-codex', '3': 'gpt-5-codex-mini' };
+  const modelChoice = await askChoice(rl, '  Select [1-4]: ', ['1', '2', '3', '4']);
+  const modelMap: Record<string, string> = { '1': 'gpt-5.4', '2': 'gpt-5.4-mini', '3': 'gpt-5.3-codex', '4': 'gpt-5.2' };
   const model = modelMap[modelChoice];
 
   return { provider: 'codex', model };
@@ -353,6 +386,7 @@ async function setupCodexOAuth(rl: ReadlineIO): Promise<ProviderSetupResult> {
 /** Curated fallback models for Codex OAuth when API fetch fails. */
 const CODEX_FALLBACK_MODELS: { id: string; name: string }[] = [
   { id: 'gpt-5.4', name: 'GPT-5.4' },
+  { id: 'gpt-5.4-mini', name: 'GPT-5.4-Mini' },
   { id: 'gpt-5.3-codex', name: 'GPT-5.3-Codex' },
   { id: 'gpt-5.2-codex', name: 'GPT-5.2-Codex' },
   { id: 'gpt-5.2', name: 'GPT-5.2' },

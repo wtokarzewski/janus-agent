@@ -45,3 +45,39 @@ export class FileTokenStore implements TokenStore {
     writeFileSync(this.path, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
   }
 }
+
+/**
+ * Save an API key to auth.json (credentials separated from config).
+ * Stored as { type: "api_key", key: "..." } alongside OAuth tokens.
+ */
+export function saveApiKey(provider: string, apiKey: string): void {
+  const path = defaultPath();
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(readFileSync(path, 'utf-8'));
+  } catch {
+    // file doesn't exist yet
+  }
+  data[provider] = { type: 'api_key', key: apiKey };
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
+}
+
+/**
+ * Load an API key from auth.json.
+ * Returns the key string or null if not found.
+ */
+export function loadApiKey(provider: string): string | null {
+  try {
+    const data = JSON.parse(readFileSync(defaultPath(), 'utf-8'));
+    const entry = data[provider];
+    if (!entry) return null;
+    // API key entry
+    if (entry.type === 'api_key') return entry.key;
+    // OAuth token — return access_token as API key
+    if (entry.access_token) return entry.access_token;
+    return null;
+  } catch {
+    return null;
+  }
+}
