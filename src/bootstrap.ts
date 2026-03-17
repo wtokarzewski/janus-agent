@@ -83,6 +83,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
         model: spec.model,
         purpose: spec.purpose ?? [],
         priority: spec.priority ?? 0,
+        logLevel: spec.logLevel,
       });
     }
   } else {
