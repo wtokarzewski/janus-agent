@@ -54,9 +54,13 @@ describe('Setup Wizard', () => {
 
     expect(saveConfig).toHaveBeenCalledWith({
       llm: {
-        provider: 'openrouter',
-        apiKey: 'sk-test-key',
-        model: 'anthropic/claude-sonnet-4-5-20250929',
+        providers: [{
+          name: 'primary',
+          provider: 'openrouter',
+          apiKey: 'sk-test-key',
+          model: 'anthropic/claude-sonnet-4-5-20250929',
+          priority: 0,
+        }],
       },
     });
   });
@@ -75,9 +79,13 @@ describe('Setup Wizard', () => {
 
     expect(saveConfig).toHaveBeenCalledWith({
       llm: {
-        provider: 'anthropic',
-        apiKey: 'sk-ant-test',
-        model: 'claude-opus-4-5-20250929',
+        providers: [{
+          name: 'primary',
+          provider: 'anthropic',
+          apiKey: 'sk-ant-test',
+          model: 'claude-opus-4-5-20250929',
+          priority: 0,
+        }],
       },
     });
   });
@@ -96,9 +104,13 @@ describe('Setup Wizard', () => {
 
     expect(saveConfig).toHaveBeenCalledWith({
       llm: {
-        provider: 'deepseek',
-        apiKey: 'ds-key',
-        model: 'deepseek-chat',
+        providers: [{
+          name: 'primary',
+          provider: 'deepseek',
+          apiKey: 'ds-key',
+          model: 'deepseek-chat',
+          priority: 0,
+        }],
       },
     });
   });
@@ -133,9 +145,13 @@ describe('Setup Wizard', () => {
 
     expect(saveConfig).toHaveBeenCalledWith({
       llm: {
-        provider: 'openai',
-        apiKey: 'sk-oai',
-        model: 'gpt-4o',
+        providers: [{
+          name: 'primary',
+          provider: 'openai',
+          apiKey: 'sk-oai',
+          model: 'gpt-4o',
+          priority: 0,
+        }],
       },
     });
     // question called 6 times (invalid + mode + provider + key + model + fallback)
@@ -157,9 +173,13 @@ describe('Setup Wizard', () => {
 
     expect(saveConfig).toHaveBeenCalledWith({
       llm: {
-        provider: 'openrouter',
-        apiKey: 'sk-valid',
-        model: 'anthropic/claude-sonnet-4-5-20250929',
+        providers: [{
+          name: 'primary',
+          provider: 'openrouter',
+          apiKey: 'sk-valid',
+          model: 'anthropic/claude-sonnet-4-5-20250929',
+          priority: 0,
+        }],
       },
     });
     expect(io.question).toHaveBeenCalledTimes(6);
@@ -187,7 +207,14 @@ describe('Setup Wizard', () => {
     try {
       await runSetup(undefined, io);
       expect(saveConfig).toHaveBeenCalledWith({
-        llm: { provider: 'claude-agent', model: 'claude-sonnet-4-6' },
+        llm: {
+          providers: [{
+            name: 'primary',
+            provider: 'claude-agent',
+            model: 'claude-sonnet-4-6',
+            priority: 0,
+          }],
+        },
       });
     } catch {
       // May fail due to auth check — that's OK, we're testing the flow structure
