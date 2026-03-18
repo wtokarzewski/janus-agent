@@ -124,9 +124,14 @@ export class CronTool implements ContextualTool {
         const name = String(args.name ?? '');
         const scheduleKind = String(args.schedule_kind ?? '') as ScheduleKind;
         const scheduleValue = String(args.schedule_value ?? '');
-        const task = String(args.task ?? '');
+        let task = String(args.task ?? '');
         if (!name || !scheduleKind || !scheduleValue || !task) {
           return 'Error: add requires name, schedule_kind, schedule_value, and task.';
+        }
+        // Inject recent conversation context so cron job knows what the user was talking about
+        if (reqCtx?.recentMessages?.length) {
+          const context = reqCtx.recentMessages.join('\n');
+          task += `\n\n[Conversation context when this job was created:\n${context}\n]`;
         }
         const job = this.cronService.addJob({
           name,
