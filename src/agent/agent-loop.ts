@@ -335,6 +335,13 @@ export class AgentLoop {
     const streamCtx = (this.deps.config.streaming?.enabled ?? true) && msg.channel !== 'system'
       ? { channel: msg.channel, chatId: msg.chatId }
       : undefined;
+
+    // Inject recent messages for cron context (last 5 user/assistant messages)
+    reqCtx.recentMessages = messages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .slice(-5)
+      .map(m => `${m.role}: ${'content' in m ? String(m.content).slice(0, 200) : ''}`);
+
     const iterResult = await this.iterate(messages, toolDefs, maxIterations, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx);
 
     // 6. Save final assistant message
@@ -531,6 +538,7 @@ export class AgentLoop {
     let contextRetries = 0;
     let llmRetries = 0;
     const seenToolCalls = new Set<string>();
+    const toolFailCounts = new Map<string, number>(); // tool name → consecutive failure count
 
     for (let i = 0; i < maxIterations; i++) {
       if (signal?.aborted) {
@@ -726,6 +734,18 @@ export class AgentLoop {
           if (!allowed) {
             return { role: 'tool', tool_call_id: tc.id, content: 'Stopped by user after tool error.' };
           }
+        }
+
+        // Track consecutive failures per tool name for loop detection
+        if (rawResult.startsWith('Error:')) {
+          const count = (toolFailCounts.get(tc.function.name) ?? 0) + 1;
+          toolFailCounts.set(tc.function.name, count);
+          if (count >= 3) {
+            const hint = `\n\n[Circuit breaker: "${tc.function.name}" has failed ${count} consecutive times. Stop using this tool and try a completely different approach.]`;
+            return { role: 'tool', tool_call_id: tc.id, content: truncateToolResult(rawResult) + hint };
+          }
+        } else {
+          toolFailCounts.delete(tc.function.name); // Reset on success
         }
 
         return { role: 'tool', tool_call_id: tc.id, content: truncateToolResult(rawResult) };
