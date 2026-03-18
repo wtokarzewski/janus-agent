@@ -308,7 +308,7 @@ export class CronService {
         id: `cron-${job.id}-${Date.now()}`,
         channel: 'system',
         chatId,
-        content: `[Cron job: ${job.name}]\n\n${job.task}`,
+        content: `[Cron job: ${job.name}] (${new Date().toISOString()})\n\n${job.task}`,
         author: 'system',
         timestamp: startedAt,
         cronDepth: 1,

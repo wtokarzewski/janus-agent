@@ -46,6 +46,8 @@ export interface RequestContext {
   };
   /** Tracks where the message tool sent during this turn (for dedup). */
   sentTargets?: Array<{ channel: string; chatId: string }>;
+  /** Recent conversation messages (for cron context injection). */
+  recentMessages?: string[];
 }
 
 export function isContextualTool(tool: Tool): tool is ContextualTool {

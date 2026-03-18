@@ -149,7 +149,7 @@ export class HeartbeatService {
           id: `heartbeat-${Date.now()}`,
           channel: 'system',
           chatId: task.userId ? `heartbeat:${task.userId}` : 'heartbeat',
-          content: `[Heartbeat task: ${task.name}]\n\n${task.description}`,
+          content: `[Heartbeat task: ${task.name}] (${new Date().toISOString()})\n\n${task.description}`,
           author: 'system',
           timestamp: new Date(),
           lane: 'heartbeat',
