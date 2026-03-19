@@ -23,11 +23,12 @@ const START_RETRY_DELAY_MS = 5000;
  * Uses grammy (official-ish, TypeScript-native, long polling).
  */
 interface StreamState {
-  messageId: number;
+  messageId: number; // 0 = pending (initial send failed, chunks buffered)
   text: string;
   dirty: boolean;
   flushing: boolean;
   flushTimer?: ReturnType<typeof setInterval>;
+  topicOpts?: { message_thread_id?: number };
 }
 
 /** Interval for refreshing Telegram "typing..." action (expires after ~5s). */
@@ -41,6 +42,8 @@ export class TelegramChannel {
   private typingTimers = new Map<string, ReturnType<typeof setInterval>>();
   private typingStartedAt = new Map<string, number>();
   private throttleMs = 500;
+  /** Per-chat rate-limit tracking: chatId → timestamp when cooldown expires. */
+  private rateLimitUntil = new Map<string, number>();
   /** Dedup: track recently sent message hashes to prevent duplicates (S6). */
   private sentHashes = new Map<string, number>();
 
@@ -146,6 +149,16 @@ export class TelegramChannel {
           await bot.api.sendMessage(tgChatId, chunk, topicOpts);
         } catch (err) {
           log.error(`Telegram: failed to send message to ${msg.chatId}: ${err instanceof Error ? err.message : err}`);
+          // Retry once after 429 cooldown
+          const retryAfter = parseRetryAfter(err);
+          if (retryAfter) {
+            await delay(retryAfter * 1000);
+            try {
+              await bot.api.sendMessage(tgChatId, chunk, topicOpts);
+            } catch (retryErr) {
+              log.error(`Telegram: retry also failed for ${msg.chatId}: ${retryErr instanceof Error ? retryErr.message : retryErr}`);
+            }
+          }
         }
       }
     });
@@ -564,6 +577,9 @@ export class TelegramChannel {
       log.warn(`Telegram: sendChatAction failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
     }
     const timer = setInterval(() => {
+      // Skip typing refresh if rate-limited for this chat
+      const limitUntil = this.rateLimitUntil.get(chatId);
+      if (limitUntil && Date.now() < limitUntil) return;
       bot.api.sendChatAction(tgChatId, 'typing', topicOpts).catch(() => {});
     }, TYPING_REFRESH_MS);
     this.typingTimers.set(chatId, timer);
@@ -616,9 +632,24 @@ export class TelegramChannel {
         dirty: false,
         flushing: false,
         flushTimer: setInterval(() => this.flushStream(bot, chatId), this.throttleMs),
+        topicOpts,
       });
     } catch (err) {
       log.error(`Telegram: stream send failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
+      // Set pending state (messageId=0) so subsequent chunks buffer instead of
+      // retrying sendMessage on every chunk (prevents 429 cascade).
+      const retryAfter = parseRetryAfter(err);
+      if (retryAfter) {
+        this.rateLimitUntil.set(chatId, Date.now() + retryAfter * 1000);
+      }
+      this.streamStates.set(chatId, {
+        messageId: 0,
+        text: content,
+        dirty: true,
+        flushing: false,
+        flushTimer: setInterval(() => this.flushStream(bot, chatId), this.throttleMs),
+        topicOpts,
+      });
     }
   }
 
@@ -630,14 +661,30 @@ export class TelegramChannel {
     const state = this.streamStates.get(chatId);
     if (!state || !state.dirty || state.flushing) return;
 
+    // Skip if rate-limited — chunks keep buffering, flush retries next tick
+    const limitUntil = this.rateLimitUntil.get(chatId);
+    if (limitUntil && Date.now() < limitUntil) return;
+
     state.flushing = true;
     state.dirty = false;
 
     const { chatId: tgChatId } = parseTelegramChatId(chatId);
     try {
-      await bot.api.editMessageText(tgChatId, state.messageId, state.text);
+      if (state.messageId === 0) {
+        // Initial send failed — try sending now with buffered text
+        const sent = await bot.api.sendMessage(tgChatId, state.text, state.topicOpts ?? {});
+        state.messageId = sent.message_id;
+      } else {
+        await bot.api.editMessageText(tgChatId, state.messageId, state.text);
+      }
+      this.rateLimitUntil.delete(chatId);
     } catch (err) {
       log.debug(`Telegram: stream flush failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
+      const retryAfter = parseRetryAfter(err);
+      if (retryAfter) {
+        this.rateLimitUntil.set(chatId, Date.now() + retryAfter * 1000);
+      }
+      state.dirty = true; // re-mark so next flush retries
     }
 
     state.flushing = false;
@@ -649,15 +696,41 @@ export class TelegramChannel {
 
     if (state.flushTimer) clearInterval(state.flushTimer);
 
+    // Wait out rate limit before final send (message must be delivered)
+    const limitUntil = this.rateLimitUntil.get(chatId);
+    if (limitUntil && Date.now() < limitUntil) {
+      await delay(limitUntil - Date.now());
+    }
+
     // Final edit with complete text (clean markdown from URLs)
     const { chatId: tgChatId } = parseTelegramChatId(chatId);
+    const finalText = cleanMarkdownUrls(state.text);
     try {
-      await bot.api.editMessageText(tgChatId, state.messageId, cleanMarkdownUrls(state.text));
+      if (state.messageId === 0) {
+        await bot.api.sendMessage(tgChatId, finalText, state.topicOpts ?? {});
+      } else {
+        await bot.api.editMessageText(tgChatId, state.messageId, finalText);
+      }
     } catch (err) {
       log.debug(`Telegram: stream final edit failed for ${chatId}: ${err instanceof Error ? err.message : err}`);
+      // One retry after rate-limit cooldown
+      const retryAfter = parseRetryAfter(err);
+      if (retryAfter) {
+        await delay(retryAfter * 1000);
+        try {
+          if (state.messageId === 0) {
+            await bot.api.sendMessage(tgChatId, finalText, state.topicOpts ?? {});
+          } else {
+            await bot.api.editMessageText(tgChatId, state.messageId, finalText);
+          }
+        } catch {
+          log.error(`Telegram: stream final send failed after retry for ${chatId}`);
+        }
+      }
     }
 
     this.streamStates.delete(chatId);
+    this.rateLimitUntil.delete(chatId);
   }
 
   private async startWithRetry(bot: Bot, signal: AbortSignal): Promise<void> {
@@ -743,6 +816,13 @@ function extractReplyContext(replyMsg: { text?: string; caption?: string; from?:
   const author = replyMsg.from?.username ?? replyMsg.from?.first_name ?? 'unknown';
   const truncated = text.length > 500 ? text.slice(0, 497) + '...' : text;
   return `${author}: ${truncated}`;
+}
+
+/** Extract retry_after seconds from a Telegram 429 error message. */
+function parseRetryAfter(err: unknown): number | undefined {
+  if (!(err instanceof Error)) return undefined;
+  const match = err.message.match(/retry after (\d+)/i);
+  return match ? parseInt(match[1], 10) : undefined;
 }
 
 /** Simple string hash for dedup keys. */
