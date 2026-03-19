@@ -14,7 +14,6 @@ const DEFAULT_CONFIG = JSON.stringify({
     temperature: 0.7,
   },
   agent: {
-    maxIterations: 20,
     summarizationThreshold: 20,
   },
   workspace: {

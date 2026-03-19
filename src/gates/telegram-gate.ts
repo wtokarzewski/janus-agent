@@ -53,12 +53,16 @@ export class TelegramGate implements GateService {
     const callbackId = `gate-${Date.now()}`;
     const targetChatId = check.chatId || this.chatId;
 
-    const msg = await this.bot.api.sendMessage(targetChatId, `⚠ Agent wants to run:\n\`${check.action}\``, {
+    // Friendlier UX for non-dangerous tools (spawn_agent = delegation, not danger)
+    const isDangerous = check.tool !== 'spawn_agent';
+    const icon = isDangerous ? '⚠' : '🤖';
+    const label = isDangerous ? 'Agent wants to run' : 'Subagent task';
+    const msg = await this.bot.api.sendMessage(targetChatId, `${icon} ${label}:\n\`${check.action}\``, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [[
-          { text: 'Allow', callback_data: `${callbackId}:allow` },
-          { text: 'Deny', callback_data: `${callbackId}:deny` },
+          { text: isDangerous ? '✅ Allow' : '👍 OK' , callback_data: `${callbackId}:allow` },
+          { text: isDangerous ? '❌ Deny' : '🚫 Cancel', callback_data: `${callbackId}:deny` },
         ]],
       },
     });
