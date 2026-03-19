@@ -14,7 +14,7 @@ export function createTestConfig(overrides?: Partial<Record<string, unknown>>): 
   const raw = JanusConfigSchema.parse({
     workspace: { dir: tempDir, memoryDir: 'memory', sessionsDir: 'sessions', skillsDir: 'skills' },
     database: { enabled: false },
-    agent: { maxIterations: 5, summarizationThreshold: 100 },
+    agent: { summarizationThreshold: 100 },
     streaming: { enabled: false },
     gates: { enabled: false },
     ...overrides,

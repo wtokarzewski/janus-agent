@@ -155,7 +155,7 @@ describe('AgentLoop integration', () => {
       async chat() { throw new Error('API down'); },
     } as any;
 
-    const config = createTestConfig({ agent: { maxIterations: 2, onLLMError: 'stop' } });
+    const config = createTestConfig({ agent: { onLLMError: 'stop' } });
     const bus = new MessageBus();
     const registry = new ProviderRegistry();
     registry.register({
@@ -349,7 +349,7 @@ describe('AgentLoop integration', () => {
     // Flush interval 5: triggers when unflushed messages >= 5
     // 3 processDirect calls = 6 messages (3 user + 3 assistant) >= 5
     const config = createTestConfig({
-      agent: { maxIterations: 5, summarizationThreshold: 100, memoryFlushInterval: 5, memoryIdleFlushMs: 600_000 },
+      agent: { summarizationThreshold: 100, memoryFlushInterval: 5, memoryIdleFlushMs: 600_000 },
       streaming: { enabled: false },
     });
     const bus = new MessageBus();
@@ -388,7 +388,7 @@ describe('AgentLoop integration', () => {
 
   it('should flush all sessions on flushAllSessions()', async () => {
     const config = createTestConfig({
-      agent: { maxIterations: 5, summarizationThreshold: 100, memoryFlushInterval: 100, memoryIdleFlushMs: 600_000 },
+      agent: { summarizationThreshold: 100, memoryFlushInterval: 100, memoryIdleFlushMs: 600_000 },
       streaming: { enabled: false },
     });
     const bus = new MessageBus();
@@ -479,7 +479,7 @@ describe('AgentLoop integration', () => {
       { content: 'Stopped.' },
     ]);
 
-    const config = createTestConfig({ agent: { onToolError: 'ask', toolRetries: 1 } });
+    const config = createTestConfig({ agent: { onToolError: 'ask' as const, toolRetries: 1 } });
     const bus = new MessageBus();
     const registry = new ProviderRegistry();
     registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
@@ -518,7 +518,7 @@ describe('AgentLoop integration', () => {
     // Low summarizationThreshold so 3 messages (6 entries) triggers it
     // High memoryFlushInterval/idleFlushMs so only pre-summarization flush fires
     const config = createTestConfig({
-      agent: { maxIterations: 5, summarizationThreshold: 4, memoryFlushInterval: 999, memoryIdleFlushMs: 600_000 },
+      agent: { summarizationThreshold: 4, memoryFlushInterval: 999, memoryIdleFlushMs: 600_000 },
       streaming: { enabled: false },
     });
     const bus = new MessageBus();

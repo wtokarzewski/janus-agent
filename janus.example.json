@@ -26,14 +26,12 @@
   },
 
   "agent": {
-    "maxIterations": 20,
     "summarizationThreshold": 20,
     "tokenBudget": 100000,
     "contextWindow": 128000,
     "toolRetries": 2,
     "onLLMError": "retry",
     "onToolError": "continue",
-    "maxSubagentIterations": 5,
     "maxSkillsInPrompt": 150,
     "maxSkillsPromptChars": 30000,
     "memoryFlushInterval": 5,
@@ -42,6 +40,11 @@
       "user": 6,
       "cron": 3,
       "heartbeat": 2
+    },
+    "subagents": {
+      "maxSpawnDepth": 1,
+      "maxChildrenPerAgent": 5,
+      "maxConcurrentSubagents": 8
     }
   },
 

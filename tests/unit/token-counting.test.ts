@@ -48,7 +48,7 @@ describe('Token counting and emergency compression', () => {
     } as any;
 
     const config = createTestConfig({
-      agent: { maxIterations: 5, onLLMError: 'stop' },
+      agent: { onLLMError: 'stop' },
       streaming: { enabled: false },
     });
     const bus = new MessageBus();
@@ -97,7 +97,6 @@ describe('Token counting and emergency compression', () => {
 
     const config = createTestConfig({
       agent: {
-        maxIterations: 5,
         summarizationThreshold: 100, // high message count threshold
         tokenBudget: 500, // very low token budget to trigger token-based summarization
       },
@@ -142,7 +141,6 @@ describe('Token counting and emergency compression', () => {
 
     const config = createTestConfig({
       agent: {
-        maxIterations: 5,
         summarizationThreshold: 100,
         tokenBudget: 500, // low budget to trigger token-aware flush + summarization
         memoryIdleFlushMs: 600_000, // disable idle flush for test

@@ -85,10 +85,19 @@ export function validateUserFileAccess(
   const relPath = fullPath.slice(janusDir.length + 1);
 
   // .janus/users/{X}/ → allow only if X === userId
+  // Writes must target files/, memory/, or known system files (PROFILE.md, HEARTBEAT.md, AGENTS.md)
   if (relPath.startsWith('users' + sep)) {
     const parts = relPath.split(sep);
     if (parts.length >= 2 && parts[1] !== userId) {
       throw new Error('Access denied: cannot access another user\'s directory.');
+    }
+    if (mode === 'write' && parts.length >= 3) {
+      const subPath = parts[2];
+      const allowedRootFiles = ['PROFILE.md', 'HEARTBEAT.md', 'AGENTS.md'];
+      const allowedSubdirs = ['files', 'memory'];
+      if (!allowedRootFiles.includes(subPath) && !allowedSubdirs.includes(subPath)) {
+        throw new Error(`Access denied: user files must be in .janus/users/${userId}/files/. Move the file there.`);
+      }
     }
     return;
   }
