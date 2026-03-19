@@ -339,6 +339,73 @@ export class TelegramChannel {
       }
     });
 
+    // Emoji reactions — convert to inbound message so agent can respond
+    bot.on('message_reaction', async (ctx) => {
+      const reaction = ctx.messageReaction;
+      if (!reaction) return;
+
+      // Only handle newly added emoji reactions (not custom emoji or removals)
+      const added = reaction.new_reaction?.filter(r => r.type === 'emoji');
+      if (!added || added.length === 0) return;
+
+      const emoji = added.map(r => 'emoji' in r ? r.emoji : '').filter(Boolean).join('');
+      if (!emoji) return;
+      const baseChatId = String(reaction.chat.id);
+      const chatId = baseChatId;
+      const author = reaction.user?.username || String(reaction.user?.id || 'unknown');
+
+      log.info(`Telegram: reaction ${emoji} from ${author} (chat ${chatId})`);
+
+      // Allowlist check
+      const effectiveAllowlist = tg.allowlist.length > 0 ? tg.allowlist : deriveChannelAllowlist('telegram', config);
+      const isAllowed = effectiveAllowlist.includes(baseChatId) || effectiveAllowlist.includes(author) || runtimeAllowlist.has(baseChatId);
+      if (effectiveAllowlist.length > 0 && !isAllowed) return;
+      if (effectiveAllowlist.length === 0 && tg.denyByDefault) return;
+
+      // Resolve user
+      const channelUserId = reaction.user ? String(reaction.user.id) : undefined;
+      const channelUsername = reaction.user?.username ?? undefined;
+      const resolved = resolveUser('telegram', channelUserId, channelUsername, config)
+        ?? autoIdentifyUser('telegram', channelUserId, channelUsername, reaction.user?.first_name, config.workspace.dir);
+
+      let scope: InboundMessage['scope'];
+      if (reaction.chat.type === 'private' && resolved) {
+        scope = { kind: 'user', id: resolved.userId };
+      } else if (config.family && config.family.groupChatIds.includes(baseChatId)) {
+        scope = { kind: 'family', id: config.family.id };
+      }
+
+      const inbound: InboundMessage = {
+        id: randomUUID(),
+        channel: 'telegram',
+        chatId,
+        content: `[Reaction: ${emoji}]`,
+        author,
+        timestamp: new Date(),
+        user: resolved ? {
+          userId: resolved.userId,
+          name: resolved.name,
+          channelUserId: resolved.identity.channelUserId,
+          channelUsername: resolved.identity.channelUsername,
+        } : undefined,
+        scope,
+      };
+
+      // If agent is already processing, buffer as steering message
+      if (bus.isProcessing(chatId)) {
+        bus.pushSteering(inbound);
+        log.info(`Telegram: reaction steering message buffered for ${chatId}`);
+        return;
+      }
+
+      try {
+        await bus.publishInbound(inbound, signal);
+        log.info(`Telegram: reaction published to inbound queue (chat=${chatId})`);
+      } catch {
+        // Reaction-triggered processing failed silently — not critical
+      }
+    });
+
     // Voice messages — auto-transcribe via Groq Whisper and process as text
     bot.on(['message:voice', 'message:audio'], async (ctx) => {
       if (!config.voice.enabled || !config.voice.apiKey) {
@@ -603,6 +670,10 @@ export class TelegramChannel {
         // We run it in background but catch errors so they're not silently lost.
         const startPromise = bot.start({
           drop_pending_updates: true,
+          allowed_updates: [
+            'message', 'edited_message', 'callback_query',
+            'message_reaction',
+          ],
           onStart: (info) => {
             log.info(`Telegram: connected as @${info.username} — polling active`);
           },

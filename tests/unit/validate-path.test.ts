@@ -119,6 +119,28 @@ describe('validateUserFileAccess', () => {
     expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/PROFILE.md`, 'wojtek', undefined, 'read')).not.toThrow();
   });
 
+  it('allows writing known system files in user root', () => {
+    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/PROFILE.md`, 'wojtek', undefined, 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/HEARTBEAT.md`, 'wojtek', undefined, 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/AGENTS.md`, 'wojtek', undefined, 'write')).not.toThrow();
+  });
+
+  it('allows writing to files/ and memory/ subdirectories', () => {
+    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/files/mac-mini-monitor.md`, 'wojtek', undefined, 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/memory/2026-03-19.md`, 'wojtek', undefined, 'write')).not.toThrow();
+  });
+
+  it('blocks writing arbitrary files to user root directory', () => {
+    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/mac-mini-monitor.md`, 'wojtek', undefined, 'write')).toThrow('user files must be in');
+    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/random-notes.txt`, 'wojtek', undefined, 'write')).toThrow('user files must be in');
+    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/todo.md`, 'wojtek', undefined, 'write')).toThrow('user files must be in');
+  });
+
+  it('allows reading arbitrary files from user root directory', () => {
+    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/mac-mini-monitor.md`, 'wojtek', undefined, 'read')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/random-notes.txt`, 'wojtek', undefined, 'read')).not.toThrow();
+  });
+
   it('blocks user from accessing another user directory', () => {
     expect(() => validateUserFileAccess(ws, `${janus}/users/monika/files/diary.txt`, 'wojtek', undefined, 'read')).toThrow('Access denied');
     expect(() => validateUserFileAccess(ws, `${janus}/users/monika/PROFILE.md`, 'wojtek', undefined, 'write')).toThrow('Access denied');

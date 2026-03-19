@@ -330,7 +330,6 @@ export class AgentLoop {
 
     // 5. LLM iteration loop — saves tool calls to session during iteration
     const toolDefs = this.deps.tools.list();
-    const maxIterations = this.deps.config.agent.maxIterations;
     const startTime = Date.now();
     const streamCtx = (this.deps.config.streaming?.enabled ?? true) && msg.channel !== 'system'
       ? { channel: msg.channel, chatId: msg.chatId }
@@ -342,7 +341,7 @@ export class AgentLoop {
       .slice(-5)
       .map(m => `${m.role}: ${'content' in m ? String(m.content).slice(0, 200) : ''}`);
 
-    const iterResult = await this.iterate(messages, toolDefs, maxIterations, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx);
+    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx);
 
     // 6. Save final assistant message
     await this.deps.sessions.append(sessionKey, [
@@ -525,7 +524,6 @@ export class AgentLoop {
   private async iterate(
     messages: LLMMessage[],
     tools: ReturnType<ToolRegistry['list']>,
-    maxIterations: number,
     sessionKey: string,
     streamCtx?: { channel: string; chatId: string },
     signal?: AbortSignal,
@@ -540,7 +538,7 @@ export class AgentLoop {
     const seenToolCalls = new Set<string>();
     const toolFailCounts = new Map<string, number>(); // tool name → consecutive failure count
 
-    for (let i = 0; i < maxIterations; i++) {
+    for (let i = 0; ; i++) {
       if (signal?.aborted) {
         if (streamCtx) {
           this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
@@ -580,7 +578,7 @@ export class AgentLoop {
 
       try {
         const llmStart = Date.now();
-        log.info(`[${sessionKey}] LLM call start (iteration ${i + 1}/${maxIterations})`);
+        log.info(`[${sessionKey}] LLM call start (iteration ${i + 1})`);
         const streamingEnabled = this.deps.config.streaming?.enabled ?? true;
         if (streamingEnabled && streamCtx) {
           // Use streaming — chunks go to the channel in real-time
@@ -786,21 +784,12 @@ export class AgentLoop {
         };
         messages.push(reflectMsg);
       }
+
     }
 
-    log.warn(`Max iterations (${maxIterations}) reached`);
-    const maxIterContent = lastContent || 'I reached the maximum number of iterations. Please continue with a follow-up message.';
-    if (streamCtx) {
-      this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'chunk', maxIterContent);
-      this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
-    }
-    return {
-      content: maxIterContent,
-      iterations: maxIterations,
-      toolCalls: totalToolCalls,
-      totalTokens,
-      outcome: 'max_iterations',
-    };
+    // Unreachable — loop terminates via: no tool calls, /stop, token budget,
+    // circuit breaker, tool dedup, or LLM error exhaustion.
+    return { content: lastContent, iterations: 0, toolCalls: totalToolCalls, totalTokens, outcome: 'success' };
   }
 
   /** Extract key facts from messages and save to daily notes + HISTORY.md + MEMORY.md. */

@@ -100,20 +100,25 @@ const LanesSchema = z.object({
   heartbeat: z.number().default(2),
 });
 
+const SubagentsSchema = z.object({
+  maxSpawnDepth: z.number().default(1),
+  maxChildrenPerAgent: z.number().default(5),
+  maxConcurrentSubagents: z.number().default(8),
+});
+
 const AgentSchema = z.object({
-  maxIterations: z.number().default(30),
   summarizationThreshold: z.number().default(40),
   tokenBudget: z.number().default(750_000),
   contextWindow: z.number().default(1_000_000),
   toolRetries: z.number().default(2),
   onLLMError: z.enum(['stop', 'retry']).default('retry'),
   onToolError: z.enum(['continue', 'ask']).default('continue'),
-  maxSubagentIterations: z.number().default(5),
   maxSkillsInPrompt: z.number().default(150),
   maxSkillsPromptChars: z.number().default(30_000),
   memoryFlushInterval: z.number().default(5),
   memoryIdleFlushMs: z.number().default(120_000),
   lanes: LanesSchema.optional().transform(v => LanesSchema.parse(v ?? {})),
+  subagents: SubagentsSchema.optional().transform(v => SubagentsSchema.parse(v ?? {})),
 });
 
 const WorkspaceSchema = z.object({

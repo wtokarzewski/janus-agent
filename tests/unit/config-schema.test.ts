@@ -8,7 +8,6 @@ describe('JanusConfigSchema', () => {
 
     expect(config.llm.maxTokens).toBe(4096);
     expect(config.llm.temperature).toBe(0.3);
-    expect(config.agent.maxIterations).toBe(30);
     expect(config.agent.toolRetries).toBe(2);
     expect(config.workspace.dir).toBe('.');
     expect(config.workspace.memoryDir).toBe('memory');
@@ -22,13 +21,13 @@ describe('JanusConfigSchema', () => {
   it('should accept custom values', () => {
     const config = JanusConfigSchema.parse({
       llm: { model: 'gpt-4o', maxTokens: 8192 },
-      agent: { maxIterations: 50 },
+      agent: { tokenBudget: 500_000 },
       database: { enabled: false, path: '/tmp/test.db' },
     });
 
     expect(config.llm.model).toBe('gpt-4o');
     expect(config.llm.maxTokens).toBe(8192);
-    expect(config.agent.maxIterations).toBe(50);
+    expect(config.agent.tokenBudget).toBe(500_000);
     expect(config.database.enabled).toBe(false);
     expect(config.database.path).toBe('/tmp/test.db');
   });
@@ -87,8 +86,24 @@ describe('JanusConfigSchema', () => {
 
   it('should reject invalid types', () => {
     expect(() => JanusConfigSchema.parse({
-      agent: { maxIterations: 'not a number' },
+      agent: { tokenBudget: 'not a number' },
     })).toThrow();
+  });
+
+  it('should produce subagents defaults', () => {
+    const config = JanusConfigSchema.parse({});
+    expect(config.agent.subagents.maxSpawnDepth).toBe(1);
+    expect(config.agent.subagents.maxChildrenPerAgent).toBe(5);
+    expect(config.agent.subagents.maxConcurrentSubagents).toBe(8);
+  });
+
+  it('should accept custom subagents config', () => {
+    const config = JanusConfigSchema.parse({
+      agent: { subagents: { maxSpawnDepth: 2, maxChildrenPerAgent: 3, maxConcurrentSubagents: 4 } },
+    });
+    expect(config.agent.subagents.maxSpawnDepth).toBe(2);
+    expect(config.agent.subagents.maxChildrenPerAgent).toBe(3);
+    expect(config.agent.subagents.maxConcurrentSubagents).toBe(4);
   });
 
   it('should default users to empty array', () => {
