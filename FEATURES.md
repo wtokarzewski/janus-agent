@@ -1,15 +1,15 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 387 passing tests.
+Canonical list of implemented, working features. Verified against source code and 400 passing tests.
 
-**Last updated:** 2026-03-18
+**Last updated:** 2026-03-21
 
 ---
 
 ## Agent Core
 
 - **Flat agent loop** — LLM decides what to do, tools execute, loop repeats until done. No rigid pipeline or pre-classification.
-- **Subagent spawning** — `spawn_agent` tool creates child AgentLoop with isolated session. Minimal prompt mode (identity + skills + session only) saves tokens.
+- **Subagent spawning** — `spawn_agent` tool creates child AgentLoop with isolated session. Minimal prompt mode (identity + skills + session only) saves tokens. Partial progress on timeout: returns collected work instead of bare "Stopped." message.
 - **Emergency compression** — On context overflow, drops oldest 50% of messages and retries (up to 2x).
 - **Token-based summarization** — When session tokens exceed 75% of budget, triggers async summarization.
 - **Memory flush before compaction** — Before summarization discards old messages, pointer-based flush extracts ALL discarded messages (lastFlushed..discardUpTo) with context-aware LLM extraction. Triple output: HISTORY.md + daily notes + MEMORY.md holistic update. Preserves knowledge across compaction.
@@ -48,6 +48,7 @@ Three auth modes (mutually exclusive):
 - **Background slot** — Cheap models for cron/heartbeat/summarization (e.g., claude-haiku, gpt-5.4-mini). Falls back to default slot when not configured.
 - **toolChoice support** — `auto`/`none`/`required` with automatic fallback if provider rejects. Wired through Anthropic (required→any mapping) and OpenAI providers.
 - **Dynamic model listing** — Setup wizard fetches models from provider APIs (Anthropic `/v1/models`, OpenAI `/v1/models`). Filters non-chat models from OpenAI. Falls back to manual input on fetch failure.
+- **Multimodal tool results** — Tools can return images alongside text via `ToolContentBlock[]`. Anthropic provider passes image blocks natively to Claude vision. OpenAI/Codex providers flatten to text with image count note. `toolResultWithImage()` helper for tool authors.
 - **Streaming** — `chatStream()` on Anthropic + OpenAI-compatible providers. Real-time chunk delivery via MessageBus to CLI and Telegram.
 - **Structured output** — Subscription providers use JSON schema enforcement via `sdk-utils.ts` (~99% reliability + fallback parsing).
 - **Setup wizard** — Interactive first-run config. Generates providers+slots format. Detects API key vs subscription. Fallback provider selection. `/config` command for reconfiguration.
@@ -65,7 +66,7 @@ Three auth modes (mutually exclusive):
 | `message` | Send message to user via bus. |
 | `spawn_agent` | Spawn child agent for subtasks (minimal prompt, isolated session). |
 | `cron` | Create, list, update, delete persistent cron jobs. |
-| `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards, CAPTCHA detection, Jina Reader option, SSRF guard). |
+| `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards, CAPTCHA detection, Jina Reader option, SSRF guard, anti-Cloudflare retry with UA rotation and browser-like headers, escalation hint to browser tool). |
 | `web_search` | Web search (Brave API or DuckDuckGo fallback, in-memory cache 15min TTL). |
 | `browser` | **Real Chrome** via Playwright persistent context. AI-native snapshots with element refs. Auto-launches Chrome with dedicated profile. 30min idle timeout. Safety policy blocks checkout/payment. |
 | `heartbeat` | Manage periodic heartbeat tasks. |
@@ -117,7 +118,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 | **CLI** | Interactive REPL, single-message mode (`-m`), persistent history (~/.janus/history), `/help`, `/config`, `/model`, `/stop` commands, inline streaming output, gate confirmation via readline. |
 | **Telegram** | Grammy bot, user allowlist (denyByDefault), streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami`, `/stop`, `/model` commands, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup, forum/topic session isolation, group mention policy (`groupPolicy: all\|mention`), voice message transcription (Groq Whisper), message dedup (hash-based, 30s window). |
 | **MCP Server** | JSON-RPC 2.0 over stdio. Exposes tools and prompts to editors (VS Code, Cursor, Claude Code). Tool bridge maps ToolRegistry to MCP protocol. |
-| **MCP Client** | Connect to external MCP servers. Config-driven `mcp.servers[]`. Auto-discover tools, register as `mcp_{server}_{tool}`. |
+| **MCP Client** | Connect to external MCP servers. Config-driven `mcp.servers[]`. Auto-discover tools, register as `mcp_{server}_{tool}`. Schema normalization strips unsupported JSON Schema keywords for OpenAI compatibility. |
 
 ## Gates (Safety)
 
@@ -128,6 +129,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 - **Wired into ToolRegistry** — Gate check runs before every tool execution.
 - **Path validation** — `realpathSync()` + workspace prefix check on all file tools. Symlink safety. Cross-platform (`path.sep`). User-scoped access enforcement in family chats (users can only access their own `.janus/users/{id}/` directory).
 - **Obfuscation detection** — 8 patterns (base64 pipe, xxd, eval, etc.) + whitelist in PatternGate. URL stripping before check (prevents false positives from URLs containing "bash").
+- **Env injection deny patterns** — Blocks environment variable injection vectors: JVM (`JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`), Python (`PYTHONSTARTUP`, `PYTHONPATH`), .NET (`DOTNET_STARTUP_HOOKS`), `LD_PRELOAD`, `NODE_OPTIONS`, Perl (`PERL5OPT`), Ruby (`RUBYOPT`).
 - **Gate on file writes** — 11 sensitive path patterns (/etc, .ssh, .env, .git/config, etc.).
 - **Gate on spawn_agent** — Always gated with task preview.
 - **Process group kill** — `spawn({detached:true})` + `kill(-pid)` on exec timeout.
@@ -137,7 +139,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 - **CronService** — SQLite-backed persistent scheduler. Survives restarts.
   - 3 schedule kinds: `at` (one-shot), `every` (interval), `cron` (expression via croner).
   - Timezone support for cron expressions.
-  - Run history tracking, exponential backoff on consecutive errors (30s → 60s → 5m → 15m → 1h).
+  - Run history tracking with `finished_at` timestamps (migration 9), exponential backoff on consecutive errors (30s → 60s → 5m → 15m → 1h).
   - Missed job staggering: jobs >1 min late after restart spread 30s apart to prevent LLM overload.
   - Per-user job ownership: userId column (migration 6), ownership enforcement on update/delete/list.
   - Custom session IDs: optional sessionId per cron job — reuse same session across runs (migration 7).
@@ -202,7 +204,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 
 ## Sessions
 
-- **JSONL persistence** — One message per line, atomic writes (write-then-rename). First line = metadata.
+- **JSONL persistence** — Incremental append (new messages appended, not full rewrite). Post-compaction truncation reclaims disk space. First line = metadata.
 - **Memory cache** — In-memory + file for performance.
 - **Summarization** — Async, non-blocking. Split-half strategy: keep last 4 messages, summarize the rest.
 - **Crash recovery** — Orphan tool messages stripped on load.
@@ -225,6 +227,7 @@ Assembles system prompt from multiple sources:
 
 Subagents use minimal mode (identity + user + skills only) to save tokens.
 
+- **Sender name in session context** — Shows `Sender: Name (userId)` instead of `User: userId` in family chats. Agent knows WHO is writing, enabling proper identity-aware responses ("remind me" knows who to remind).
 - **All behavioral instructions externalized to AGENTS.md** — context-builder code has zero hardcoded rules. All tool usage rules, skill instructions, and behavioral guidance live in editable .md files.
 - **Date-only timestamp** — ISO date (no time) in session info maximizes Anthropic prompt cache hits within a day.
 
@@ -245,7 +248,7 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 ## Database
 
 - **SQLite** (better-sqlite3), WAL mode, numbered migrations.
-- **7 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id), per-user cron (user_id column), cron session IDs (session_id column).
+- **9 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id), per-user cron (user_id column), cron session IDs (session_id column), cron chat_id column, cron_runs finished_at column.
 - **Memory write validation** — Verify write succeeded by reading back. After 3 consecutive failures, dump to timestamped backup file.
 - **Graceful fallback** — File-based storage when database disabled.
 
@@ -281,7 +284,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 387 tests across 38 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 400 tests across 39 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 
 ## Commands
 
