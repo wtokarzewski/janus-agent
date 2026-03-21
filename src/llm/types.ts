@@ -4,11 +4,24 @@ export interface ToolCall {
   function: { name: string; arguments: string };
 }
 
+/** Content block for multimodal tool results (images from browser screenshots, etc.) */
+export type ToolContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+
 export type LLMMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string }
   | { role: 'assistant'; content: string; tool_calls?: ToolCall[] }
-  | { role: 'tool'; tool_call_id: string; content: string };
+  | { role: 'tool'; tool_call_id: string; content: string | ToolContentBlock[] };
+
+/** Helper: wrap a text string as a content block array with an image. */
+export function toolResultWithImage(text: string, base64: string, mediaType = 'image/png'): ToolContentBlock[] {
+  return [
+    { type: 'text', text },
+    { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+  ];
+}
 
 export interface ToolDefinition {
   type: 'function';

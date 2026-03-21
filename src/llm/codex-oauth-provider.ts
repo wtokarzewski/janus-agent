@@ -152,10 +152,14 @@ function convertInput(messages: LLMMessage[]): { input: ResponseInput; instructi
         }
       }
     } else if (msg.role === 'tool') {
+      // Flatten multimodal content to string for Codex
+      const output = Array.isArray(msg.content)
+        ? msg.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map(b => b.text).join('\n')
+        : msg.content;
       input.push({
         type: 'function_call_output',
         call_id: msg.tool_call_id,
-        output: msg.content,
+        output,
       });
     }
   }

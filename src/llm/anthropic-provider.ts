@@ -328,12 +328,19 @@ function convertMessage(msg: LLMMessage): Anthropic.MessageParam {
   }
 
   if (msg.role === 'tool') {
+    // Support multimodal tool results (text + images)
+    const content = Array.isArray(msg.content)
+      ? msg.content.map(block =>
+          block.type === 'image'
+            ? { type: 'image' as const, source: { type: 'base64' as const, media_type: block.source.media_type as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp', data: block.source.data } }
+            : { type: 'text' as const, text: block.text })
+      : msg.content;
     return {
       role: 'user',
       content: [{
         type: 'tool_result',
         tool_use_id: msg.tool_call_id,
-        content: msg.content,
+        content,
       }],
     };
   }
