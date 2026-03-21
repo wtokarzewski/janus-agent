@@ -64,6 +64,20 @@ export async function spawnSubagent(
       signal,
     });
 
+    // Extract partial progress if subagent was stopped/cancelled
+    if (result === 'Stopped.' || result === 'Cancelled before start') {
+      const history = await parentDeps.sessions.getHistory(sessionKey);
+      const progress = history
+        .filter(m => m.role === 'assistant' && typeof m.content === 'string')
+        .map(m => m.content as string)
+        .filter(Boolean);
+      if (progress.length > 0) {
+        const partial = progress.join('\n---\n').slice(0, 5000);
+        log.info(`Subagent partial progress: "${config.task.slice(0, 40)}..." → ${partial.length} chars before stop`);
+        return { id, result: `[Partial progress before timeout]\n${partial}\n\n[Status: ${result}]` };
+      }
+    }
+
     log.info(`Subagent finished: "${config.task.slice(0, 40)}..." → ${result.length} chars`);
     return { id, result };
   } finally {

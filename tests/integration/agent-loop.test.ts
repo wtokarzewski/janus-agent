@@ -231,7 +231,7 @@ describe('AgentLoop integration', () => {
     // System prompt should contain user info
     const systemMsg = mock.calls[0].messages[0];
     expect(systemMsg.content).toContain('Alice');
-    expect(systemMsg.content).toContain('User: user1');
+    expect(systemMsg.content).toContain('Sender: Alice (user1)');
     expect(systemMsg.content).toContain('Scope: user:user1');
   });
 

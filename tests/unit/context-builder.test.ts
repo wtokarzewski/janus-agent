@@ -126,7 +126,7 @@ describe('ContextBuilder multi-user', () => {
       scope: { kind: 'user', id: 'wt' },
     });
 
-    expect(prompt).toContain('User: wt');
+    expect(prompt).toContain('Sender: Wojciech (wt)');
     expect(prompt).toContain('Scope: user:wt');
   });
 

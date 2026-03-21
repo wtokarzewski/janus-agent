@@ -16,6 +16,13 @@ const DEFAULT_DENY_PATTERNS = [
   'dd\\s+if=/dev/zero',
   'sqlite3\\s+.*\\.janus/',
   'sqlite3\\s+.*janus\\.db',
+  // Env injection: runtime-specific vars that execute code on process start
+  '(JAVA_TOOL_OPTIONS|_JAVA_OPTIONS)\\s*=',
+  '(DOTNET_STARTUP_HOOKS|COMPlus_)\\s*=',
+  '(LD_PRELOAD|DYLD_INSERT_LIBRARIES)\\s*=',
+  '(PYTHONSTARTUP|PYTHONPATH)\\s*=.*python',
+  '(NODE_OPTIONS)\\s*=.*--require',
+  '(PERL5OPT|RUBYOPT)\\s*=',
 ];
 
 export class ExecTool implements ContextualTool {
