@@ -2,13 +2,13 @@
 
 ## Current State (Phase 10 in progress)
 
-- **Codebase:** ~13,200 LOC TypeScript, 387 tests across 38 files, CI
+- **Codebase:** ~13,300 LOC TypeScript, 400 tests across 39 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
 - **Skills:** 9 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace, github, skill-creator, browser-operator)
 - **Channels:** 2 (CLI, Telegram) + MCP server + MCP client
-- **DB:** SQLite (WAL, 7 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron, cron session IDs)
+- **DB:** SQLite (WAL, 9 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron, cron session IDs, cron chat_id, cron_runs finished_at)
 
 See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 
@@ -116,6 +116,19 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Anthropic OAuth fix: required "You are Claude Code" system prompt + beta headers
 - Legacy config auto-normalization (backward compatible)
 - 387 tests across 38 files
+
+### Phase 10b: Quick Wins (#132)
+- Sender name in session context: `Sender: Name (userId)` in context-builder for family chat identity (CR-AD)
+- Incremental JSONL append + post-compaction truncation in session-manager (CR-AA)
+- Subagent partial progress on timeout: returns collected work instead of bare "Stopped." (CR-AB)
+- Cron run history `finished_at`: migration 9, cron_runs table enhancement (CR-AC)
+- Exec env injection deny patterns: blocks JVM/Python/.NET/LD_PRELOAD/NODE_OPTIONS/Perl/Ruby env var injection (CR-AH)
+
+### Phase 10c: MCP + Cloudflare + Multimodal (#133, #134)
+- MCP schema normalization: strip unsupported JSON Schema keywords ($ref, oneOf, pattern, constraints) for OpenAI compatibility (CR-AI)
+- Anti-Cloudflare retry in web_fetch: UA rotation, browser-like headers (Accept-Language, Sec-Fetch-*), 2s delay, escalation hint to browser tool (CR-AG)
+- Multimodal tool results: ToolContentBlock[] (text + images), Anthropic native vision passthrough, OpenAI/Codex text fallback, `__MULTIMODAL__` prefix protocol, `toolResultWithImage()` helper (CR-AF)
+- 400 tests across 39 files
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
