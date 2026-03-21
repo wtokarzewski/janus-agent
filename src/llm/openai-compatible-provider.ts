@@ -1,7 +1,23 @@
 import OpenAI from 'openai';
-import type { LLMProvider, ChatRequest, ChatResponse, ToolCall, StreamCallback } from './types.js';
+import type { LLMProvider, ChatRequest, ChatResponse, ToolCall, StreamCallback, LLMMessage } from './types.js';
 import { AnthropicProvider } from './anthropic-provider.js';
 import * as log from '../utils/logger.js';
+
+/** Flatten multimodal tool content blocks to string for OpenAI-compatible providers. */
+function flattenToolContent(messages: LLMMessage[]): OpenAI.ChatCompletionMessageParam[] {
+  return messages.map(msg => {
+    if (msg.role === 'tool' && Array.isArray(msg.content)) {
+      const text = msg.content
+        .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+        .map(b => b.text)
+        .join('\n');
+      const imageCount = msg.content.filter(b => b.type === 'image').length;
+      const suffix = imageCount > 0 ? `\n[${imageCount} image(s) omitted — provider does not support inline images in tool results]` : '';
+      return { role: 'tool' as const, tool_call_id: msg.tool_call_id, content: text + suffix };
+    }
+    return msg;
+  }) as OpenAI.ChatCompletionMessageParam[];
+}
 
 /**
  * Normalize assistant content — handles two provider quirks:
@@ -81,7 +97,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     const params: OpenAI.ChatCompletionCreateParams = {
       model,
-      messages: request.messages as OpenAI.ChatCompletionMessageParam[],
+      messages: flattenToolContent(request.messages),
       temperature: request.temperature ?? 0.7,
       max_tokens: request.maxTokens ?? 4096,
     };
@@ -153,7 +169,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     const params: OpenAI.ChatCompletionCreateParams = {
       model,
-      messages: request.messages as OpenAI.ChatCompletionMessageParam[],
+      messages: flattenToolContent(request.messages),
       temperature: request.temperature ?? 0.7,
       max_tokens: request.maxTokens ?? 4096,
       stream: true,

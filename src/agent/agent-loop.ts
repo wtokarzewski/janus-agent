@@ -1,6 +1,6 @@
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
-import type { LLMMessage } from '../llm/types.js';
+import type { LLMMessage, ToolContentBlock } from '../llm/types.js';
 import type { ProviderRegistry } from '../llm/provider-registry.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import type { RequestContext } from '../tools/types.js';
@@ -746,7 +746,7 @@ export class AgentLoop {
           toolFailCounts.delete(tc.function.name); // Reset on success
         }
 
-        return { role: 'tool', tool_call_id: tc.id, content: truncateToolResult(rawResult) };
+        return { role: 'tool', tool_call_id: tc.id, content: parseToolResult(rawResult) };
       };
 
       const toolResults = uniqueCalls.length > 1
@@ -1080,10 +1080,30 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 2.5);
 }
 
+/** Extract estimatable string from message content (handles multimodal). */
+function contentToString(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return (content as ToolContentBlock[])
+      .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+      .map(b => b.text).join('\n');
+  }
+  return '';
+}
+
 function estimateMessagesTokens(messages: LLMMessage[]): number {
   let total = 0;
   for (const m of messages) {
-    if ('content' in m && m.content) total += estimateTokens(m.content);
+    if ('content' in m && m.content) {
+      if (typeof m.content === 'string') {
+        total += estimateTokens(m.content);
+      } else if (Array.isArray(m.content)) {
+        for (const b of m.content) {
+          if (b.type === 'text') total += estimateTokens(b.text);
+          else if (b.type === 'image') total += 1000; // approximate image token cost
+        }
+      }
+    }
     if ('tool_calls' in m && m.tool_calls) {
       for (const tc of m.tool_calls) {
         total += estimateTokens(tc.function.name + tc.function.arguments);
@@ -1111,13 +1131,13 @@ function trimHistoryToTokenBudget(
   const trimmed = [...history];
   while (trimmed.length > 2 && fixedTokens + historyTokens > maxTokens) {
     const removed = trimmed.shift()!;
-    historyTokens -= estimateTokens('content' in removed && removed.content ? removed.content : '');
+    historyTokens -= estimateTokens(contentToString('content' in removed ? removed.content : ''));
 
     // If we removed an assistant message, also remove following tool messages
     // to avoid orphan tool_call_id references
     while (trimmed.length > 0 && trimmed[0].role === 'tool') {
       const toolRemoved = trimmed.shift()!;
-      historyTokens -= estimateTokens('content' in toolRemoved && toolRemoved.content ? toolRemoved.content : '');
+      historyTokens -= estimateTokens(contentToString('content' in toolRemoved ? toolRemoved.content : ''));
     }
   }
 
@@ -1126,6 +1146,26 @@ function trimHistoryToTokenBudget(
   }
 
   return trimmed;
+}
+
+/**
+ * Parse tool result string for multimodal content.
+ * Tools can return structured results by prefixing with `__MULTIMODAL__\n`
+ * followed by JSON: [{ type: 'text', text: '...' }, { type: 'image', source: { ... } }]
+ */
+const MULTIMODAL_PREFIX = '__MULTIMODAL__\n';
+
+function parseToolResult(rawResult: string): string | ToolContentBlock[] {
+  if (!rawResult.startsWith(MULTIMODAL_PREFIX)) return truncateToolResult(rawResult);
+  try {
+    const json = rawResult.slice(MULTIMODAL_PREFIX.length);
+    const blocks = JSON.parse(json) as ToolContentBlock[];
+    if (Array.isArray(blocks) && blocks.length > 0) {
+      // Truncate text blocks only
+      return blocks.map(b => b.type === 'text' ? { ...b, text: truncateToolResult(b.text) } : b);
+    }
+  } catch { /* fall through */ }
+  return truncateToolResult(rawResult);
 }
 
 const MAX_TOOL_RESULT_CHARS = 4000;
