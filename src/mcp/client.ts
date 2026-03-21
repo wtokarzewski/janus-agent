@@ -152,13 +152,46 @@ export class MCPClient {
 }
 
 /**
+ * Normalize MCP tool inputSchema for OpenAI-compatible providers.
+ * Strips JSON Schema features not supported by OpenAI function calling:
+ * $ref, oneOf, anyOf, allOf, pattern, format, and constraint keywords.
+ */
+function normalizeSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    // Strip unsupported keywords
+    if (['$ref', '$schema', '$id', 'oneOf', 'anyOf', 'allOf', 'not',
+         'pattern', 'format', 'minLength', 'maxLength', 'minimum', 'maximum',
+         'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+         'minItems', 'maxItems', 'uniqueItems', 'additionalProperties',
+         'patternProperties', 'if', 'then', 'else', '$defs', 'definitions',
+    ].includes(key)) continue;
+
+    if (key === 'properties' && value && typeof value === 'object') {
+      const props: Record<string, unknown> = {};
+      for (const [pName, pVal] of Object.entries(value as Record<string, unknown>)) {
+        props[pName] = pVal && typeof pVal === 'object' ? normalizeSchema(pVal as Record<string, unknown>) : pVal;
+      }
+      result[key] = props;
+    } else if (key === 'items' && value && typeof value === 'object') {
+      result[key] = normalizeSchema(value as Record<string, unknown>);
+    } else {
+      result[key] = value;
+    }
+  }
+  // Ensure type: 'object' at top level
+  if (!result.type) result.type = 'object';
+  return result;
+}
+
+/**
  * Creates a Janus Tool that proxies to a remote MCP server tool.
  */
 export function createMCPProxyTool(client: MCPClient, serverName: string, mcpTool: MCPTool): Tool {
   return {
     name: `mcp_${serverName}_${mcpTool.name}`,
     description: `[MCP:${serverName}] ${mcpTool.description}`,
-    parameters: mcpTool.inputSchema as unknown as Record<string, unknown>,
+    parameters: normalizeSchema(mcpTool.inputSchema as unknown as Record<string, unknown>),
     async execute(args: Record<string, unknown>): Promise<string> {
       return client.callTool(mcpTool.name, args);
     },
