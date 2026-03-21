@@ -104,4 +104,9 @@ export const migrations: string[] = [
   `
   ALTER TABLE cron_jobs ADD COLUMN chat_id TEXT;
   `,
+
+  // Migration 9: finished_at for cron run history (CR-AC)
+  `
+  ALTER TABLE cron_runs ADD COLUMN finished_at TEXT;
+  `,
 ];
