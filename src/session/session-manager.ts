@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
+import { readFile, writeFile, appendFile, mkdir, rename } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { LLMMessage } from '../llm/types.js';
@@ -75,11 +75,18 @@ export class SessionManager {
   async append(key: string, messages: LLMMessage[]): Promise<void> {
     return this.withLock(key, async () => {
       const session = await this.getOrCreateInner(key);
+      const isNew = session.messages.length === 0;
       session.messages.push(...messages);
       session.metadata.messageCount = session.messages.length;
       session.metadata.updated = new Date().toISOString();
 
-      await this.save(key, session);
+      if (isNew) {
+        // First append — write full file (metadata + messages)
+        await this.save(key, session);
+      } else {
+        // Incremental — append new lines + rewrite metadata header
+        await this.appendIncremental(key, session, messages);
+      }
     });
   }
 
@@ -108,9 +115,21 @@ export class SessionManager {
       session.metadata.messageCount = session.messages.length;
       session.metadata.lastFlushed = 0; // Reset pointer — remaining messages may need re-flush
 
+      // Full rewrite — truncates JSONL to only post-compaction messages
       await this.save(key, session);
-      log.debug(`Summarized session ${key}, kept ${keepCount} messages`);
+      log.debug(`Summarized session ${key}, kept ${keepCount} messages (JSONL truncated)`);
     });
+  }
+
+  private async appendIncremental(key: string, session: Session, newMessages: LLMMessage[]): Promise<void> {
+    try {
+      const path = this.sessionPath(key);
+      const newLines = newMessages.map(m => JSON.stringify(m)).join('\n') + '\n';
+      await appendFile(path, newLines, 'utf-8');
+    } catch {
+      // Fallback to full rewrite on append failure
+      await this.save(key, session);
+    }
   }
 
   private async save(key: string, session: Session): Promise<void> {

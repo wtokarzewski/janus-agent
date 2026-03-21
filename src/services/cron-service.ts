@@ -56,6 +56,7 @@ export interface CronRunEntry {
   status: string;
   error: string | null;
   startedAt: string;
+  finishedAt: string | null;
   durationMs: number | null;
 }
 
@@ -326,9 +327,10 @@ export class CronService {
       `).run(startedAt.toISOString(), nextRunAt, job.id);
 
       // Record run
+      const finishedAt = new Date().toISOString();
       this.db.db.prepare(`
-        INSERT INTO cron_runs (job_id, status, started_at, duration_ms) VALUES (?, 'ok', ?, ?)
-      `).run(job.id, startedAt.toISOString(), durationMs);
+        INSERT INTO cron_runs (job_id, status, started_at, finished_at, duration_ms) VALUES (?, 'ok', ?, ?, ?)
+      `).run(job.id, startedAt.toISOString(), finishedAt, durationMs);
 
       // Auto-disable completed one-shot jobs
       if (job.scheduleKind === 'at' && !nextRunAt) {
@@ -346,9 +348,10 @@ export class CronService {
         WHERE id = ?
       `).run(startedAt.toISOString(), nextRunAt, errorText, job.id);
 
+      const finishedAt = new Date().toISOString();
       this.db.db.prepare(`
-        INSERT INTO cron_runs (job_id, status, error, started_at, duration_ms) VALUES (?, 'error', ?, ?, ?)
-      `).run(job.id, errorText, startedAt.toISOString(), durationMs);
+        INSERT INTO cron_runs (job_id, status, error, started_at, finished_at, duration_ms) VALUES (?, 'error', ?, ?, ?, ?)
+      `).run(job.id, errorText, startedAt.toISOString(), finishedAt, durationMs);
 
       log.warn(`Cron job "${job.name}" failed: ${errorText}`);
     } finally {
@@ -422,6 +425,7 @@ function rowToRun(row: unknown): CronRunEntry {
     status: String(r.status),
     error: r.error ? String(r.error) : null,
     startedAt: String(r.started_at),
+    finishedAt: r.finished_at ? String(r.finished_at) : null,
     durationMs: r.duration_ms != null ? Number(r.duration_ms) : null,
   };
 }

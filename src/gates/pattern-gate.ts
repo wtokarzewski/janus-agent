@@ -10,6 +10,7 @@ const OBFUSCATION_PATTERNS: RegExp[] = [
   /\bpython[23]?\s+-c\s+.*\b(exec|eval|import\s+os)\b/i, // python exec/eval
   /\bperl\s+-e\s+.*\b(system|exec)\b/i,               // perl system/exec
   /\$\{[^}]*\}.*\brm\b/i,                             // variable expansion + rm
+  /\bexport\s+(JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|LD_PRELOAD|DYLD_INSERT_LIBRARIES|DOTNET_STARTUP_HOOKS|NODE_OPTIONS|PYTHONSTARTUP|PERL5OPT|RUBYOPT)=/i,
 ];
 
 // Legitimate tools that use eval/pipe-to-shell patterns
