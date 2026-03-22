@@ -14,6 +14,7 @@ import { findUserProfile } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 import { stripControlTokens } from '../utils/sanitize.js';
 import type { AgentResolver, AgentContext } from './agent-resolver.js';
+import { ensureAgentDir } from '../users/user-resolver.js';
 
 const THINKING_LEVEL_BUDGETS: Record<string, number> = {
   off: 0, minimal: 2000, low: 5000, medium: 10000, high: 20000,
@@ -252,6 +253,9 @@ export class AgentLoop {
     // 0. Resolve agent from bindings
     const agentCtx = this.deps.agentResolver?.resolve(msg);
     const agentId = agentCtx?.id ?? 'main';
+    if (agentCtx && !agentCtx.memoryShared) {
+      ensureAgentDir(agentId, this.deps.config.workspace.dir);
+    }
     const sessionKey = `${agentId}:${msg.channel}:${msg.chatId}`;
 
     // 1. Resolve user profile (if multi-user)
