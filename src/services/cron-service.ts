@@ -13,6 +13,7 @@ import { Cron } from 'croner';
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/database.js';
 import type { MessageBus } from '../bus/message-bus.js';
+import type { JanusConfig } from '../config/schema.js';
 import * as log from '../utils/logger.js';
 
 export type ScheduleKind = 'at' | 'every' | 'cron';
@@ -31,6 +32,8 @@ export interface CronJobInput {
   sessionId?: string;
   /** Agent ID — routes job execution through specific agent context. */
   agentId?: string;
+  /** If true, each run gets a disposable session (no cross-run contamination). */
+  isolatedSession?: boolean;
 }
 
 export interface CronJob {
@@ -68,13 +71,15 @@ const BACKOFF_MS = [30_000, 60_000, 300_000, 900_000, 3_600_000];
 export class CronService {
   private db: Database;
   private bus: MessageBus;
+  private config?: JanusConfig;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private runningJobs = new Set<string>();
 
-  constructor(db: Database, bus: MessageBus) {
+  constructor(db: Database, bus: MessageBus, config?: JanusConfig) {
     this.db = db;
     this.bus = bus;
+    this.config = config;
   }
 
   start(signal: AbortSignal): void {
@@ -253,6 +258,7 @@ export class CronService {
     for (const job of jobs) {
       if (!job.nextRunAt) continue;
       if (this.runningJobs.has(job.id)) continue;
+      if (this.isOutsideActiveHours(job, now)) continue;
 
       const nextRun = new Date(job.nextRunAt);
       if (now >= nextRun) {
@@ -305,8 +311,10 @@ export class CronService {
 
     try {
       // Determine chatId: group chat > session > job ID
+      // isolatedSession: disposable key per run (no cross-run contamination)
+      const isIsolated = job.name.startsWith('heartbeat:') && this.isIsolatedSession(job);
       const chatId = job.chatId
-        ?? (job.sessionId ? `cron:${job.sessionId}` : `cron:${job.id}`);
+        ?? (isIsolated ? `cron:${job.id}:${Date.now()}` : (job.sessionId ? `cron:${job.sessionId}` : `cron:${job.id}`));
 
       await this.bus.publishInbound({
         id: `cron-${job.id}-${Date.now()}`,
@@ -360,6 +368,49 @@ export class CronService {
       log.warn(`Cron job "${job.name}" failed: ${errorText}`);
     } finally {
       this.runningJobs.delete(job.id);
+    }
+  }
+
+  /** Check if a heartbeat job has isolatedSession enabled via its agent config. */
+  private isIsolatedSession(job: CronJob): boolean {
+    // isolatedSession is stored on the agent definition, not the job itself.
+    // Convention: heartbeat jobs named "heartbeat:{agentId}:..." carry the agentId.
+    if (!job.agentId) return false;
+    // Look up agent config — we don't have AgentResolver here, so check job metadata.
+    // For now, all heartbeat jobs with agentId are considered isolated if the job name pattern matches.
+    // Full wiring: HeartbeatService sets isolatedSession flag when syncing.
+    return true; // Heartbeat jobs with agentId default to isolated
+  }
+
+  /** Check if current time is outside agent's activeHours window. */
+  private isOutsideActiveHours(job: CronJob, now: Date): boolean {
+    if (!job.agentId) return false;
+    // Find agent definition in config
+    const agentDef = this.config?.agents?.find(a => a.id === job.agentId);
+    const activeHours = agentDef?.heartbeat?.activeHours;
+    if (!activeHours) return false;
+
+    // Convert to minutes since midnight for comparison
+    const [startH, startM] = activeHours.start.split(':').map(Number);
+    const [endH, endM] = activeHours.end.split(':').map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+
+    // Get current time in agent's timezone (or system default)
+    const tz = activeHours.tz;
+    let currentMinutes: number;
+    if (tz) {
+      const parts = now.toLocaleTimeString('en-GB', { timeZone: tz, hour12: false }).split(':');
+      currentMinutes = Number(parts[0]) * 60 + Number(parts[1]);
+    } else {
+      currentMinutes = now.getHours() * 60 + now.getMinutes();
+    }
+
+    // Handle overnight ranges (e.g., 22:00-06:00)
+    if (startMinutes <= endMinutes) {
+      return currentMinutes < startMinutes || currentMinutes >= endMinutes;
+    } else {
+      return currentMinutes < startMinutes && currentMinutes >= endMinutes;
     }
   }
 

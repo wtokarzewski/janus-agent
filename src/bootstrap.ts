@@ -188,7 +188,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   const context = new ContextBuilder({ skills, memory, config, learner });
 
   // 7. Cron service (requires database)
-  const cronService = db ? new CronService(db, bus) : null;
+  const cronService = db ? new CronService(db, bus, config) : null;
   if (cronService) {
     tools.register(new CronTool(cronService));
   }

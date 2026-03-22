@@ -291,6 +291,17 @@ const AgentDefinitionSchema = z.object({
   memory: z.object({
     shared: z.boolean().default(true),
   }).optional(),
+  heartbeat: z.object({
+    isolatedSession: z.boolean().default(false),
+    activeHours: z.object({
+      start: z.string(),
+      end: z.string(),
+      tz: z.string().optional(),
+    }).optional(),
+  }).optional(),
+  subagents: z.object({
+    allowAgents: z.array(z.string()).default(['*']),
+  }).optional(),
 });
 
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
@@ -301,6 +312,11 @@ const BindingSchema = z.object({
 });
 
 export type Binding = z.infer<typeof BindingSchema>;
+
+const SessionSchema = z.object({
+  dmScope: z.enum(['main', 'per-peer', 'per-channel-peer']).default('per-channel-peer'),
+  identityLinks: z.record(z.string(), z.array(z.string())).default({}),
+});
 
 export const JanusConfigSchema = z.object({
   llm: LLMSchema.optional().transform(v => LLMSchema.parse(v ?? {})),
@@ -324,6 +340,7 @@ export const JanusConfigSchema = z.object({
   agents: z.array(AgentDefinitionSchema).default([]),
   bindings: z.array(BindingSchema).default([]),
   defaultAgentId: z.string().default('main'),
+  session: SessionSchema.optional().transform(v => SessionSchema.parse(v ?? {})),
 });
 
 export type RawJanusConfig = z.infer<typeof JanusConfigSchema>;
