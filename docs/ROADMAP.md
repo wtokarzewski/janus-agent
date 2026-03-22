@@ -1,14 +1,14 @@
 # Roadmap
 
-## Current State (Phase 10 in progress)
+## Current State (Phase 11 complete)
 
-- **Codebase:** ~13,400 LOC TypeScript, 400 tests across 39 files, CI
+- **Codebase:** ~13,500 LOC TypeScript, 414 tests across 40 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
 - **Skills:** 9 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace, github, skill-creator, browser-operator)
 - **Channels:** 2 (CLI, Telegram) + MCP server + MCP client
-- **DB:** SQLite (WAL, 9 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron, cron session IDs, cron chat_id, cron_runs finished_at)
+- **DB:** SQLite (WAL, 10 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron, cron session IDs, cron chat_id, cron_runs finished_at, cron agent_id)
 
 See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 
@@ -139,6 +139,22 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Proactive OAuth token refresh: 30-min interval checks for tokens expiring within 1 hour, auto-refreshes anthropic/codex (OD-C)
 - 400 tests across 39 files
 
+### Phase 11: Multi-Agent Routing (#137, #138)
+- AgentResolver: generic match bag routing with first-match-wins bindings, per-agent config (tools, params, model slots, bootstrap file overrides)
+- Config: `agents[]` (AgentDefinitionSchema), `bindings[]` (BindingSchema), `defaultAgentId`
+- Agent ID validation regex (`^[a-z0-9][a-z0-9_-]{0,63}$`)
+- Per-agent: EGO.md, AGENTS.md, HEARTBEAT.md path overrides
+- Per-agent: tool allow/deny (intersect allow, union deny with user), params (temperature, maxTokens), model slot overrides
+- Agent-prefixed session keys (`{agentId}:{channel}:{chatId}`) with legacy auto-migration (self-healing)
+- Per-agent memory isolation: `resolveMemDir` (agent > user > global when `memory.shared: false`), `ensureAgentDir()` creates `.janus/agents/{id}/memory/`
+- Per-agent cron: agentId on cron_jobs (migration 10), propagated to inbound messages
+- Per-agent heartbeat: HeartbeatService loads per-agent HEARTBEAT.md, syncs agentId to CronService
+- Context builder: agent name in identity, `Agent:` line in session context, per-agent memory section
+- Telegram routingMeta with topicId for forum supergroup routing
+- Onboard creates `.janus/agents/` directory
+- Zero-config backward compat (empty agents[] = implicit "main")
+- 414 tests across 40 files
+
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
 - Q&A Loop (iterative requirements gathering)
@@ -169,7 +185,7 @@ Features that set Janus apart from other AI agents:
 - **Minimal subagent prompts** — Child agents get stripped context, saving tokens.
 - **Persistent cron scheduler** — SQLite-backed, survives restarts, exponential backoff.
 - **MCP server** — Editors can use Janus tools directly via reverse provider.
-- **Simplicity** — ~11.2K LOC. Minimal codebase, full capabilities.
+- **Simplicity** — ~13.5K LOC. Minimal codebase, full capabilities.
 - **Native OAuth** — PKCE flows for Anthropic + Codex. No CLI SDK dependency required.
 - **Steering messages** — Mid-run user injection. User can redirect agent during tool execution.
 - **Family skills** — Meal planner, Home Assistant, stock watcher, travel planner, Google Workspace.

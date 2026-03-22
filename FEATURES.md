@@ -1,8 +1,8 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 400 passing tests.
+Canonical list of implemented, working features. Verified against source code and 414 passing tests.
 
-**Last updated:** 2026-03-21
+**Last updated:** 2026-03-22
 
 ---
 
@@ -27,6 +27,23 @@ Canonical list of implemented, working features. Verified against source code an
 - **Compaction hardening** — Double-fire guard (no concurrent compaction on same session), post-compaction sanity check (verifies token reduction), task-aware summarization (preserves active task context).
 - **Compaction notifications** — Silent background summarization with ⏳ status indicator.
 - **SSRF guard** — Blocks private/reserved IPs (localhost, 10.x, 172.16-31.x, 192.168.x, link-local, cloud metadata) in web_fetch and browser tools.
+
+## Multi-Agent
+
+- **AgentResolver** — Generic match bag routing with first-match-wins bindings. Routes inbound messages to the correct agent based on channel, chatId, topicId, userId. Zero-config backward compat: empty `agents[]` = implicit "main" agent.
+- **Config: agents[], bindings[], defaultAgentId** — `agents[]` defines agent personas (AgentDefinitionSchema). `bindings[]` maps match criteria to agents (BindingSchema). `defaultAgentId` fallback when no binding matches.
+- **Agent ID validation** — Regex `^[a-z0-9][a-z0-9_-]{0,63}$` enforced at config parse time.
+- **Per-agent bootstrap overrides** — Each agent can specify custom paths for EGO.md, AGENTS.md, HEARTBEAT.md. Falls back to global files when not configured.
+- **Per-agent tool allow/deny** — Intersects allow lists (agent AND user), unions deny lists (agent OR user). Fine-grained tool access per persona.
+- **Per-agent params** — Temperature, maxTokens overrides per agent definition.
+- **Per-agent model slot overrides** — Agent-specific model routing (e.g., work agent uses opus, home agent uses sonnet).
+- **Agent-prefixed session keys** — Format `{agentId}:{channel}:{chatId}`. Each agent maintains its own conversation history. Legacy session key auto-migration (self-healing: old keys transparently promoted to `main:` prefix).
+- **Per-agent memory isolation** — `resolveMemDir` prefers agent > user > global memory directories when `memory.shared: false`. `ensureAgentDir()` auto-creates `.janus/agents/{id}/memory/`.
+- **Per-agent cron jobs** — `agentId` field on cron_jobs table (migration 10). Propagated through CronJobInput to inbound messages. HeartbeatService loads per-agent HEARTBEAT.md and syncs agentId to CronService.
+- **Telegram routingMeta** — Includes topicId for forum supergroup routing to correct agent.
+- **Context builder integration** — Agent name in identity section, `Agent:` line in session context. Per-agent memory section via agentId when not shared.
+- **Onboard** — Creates `.janus/agents/` directory structure.
+- **14 tests** — agent-resolver.test.ts covers routing, bindings, fallback, migration, edge cases.
 
 ## LLM Providers (8)
 
@@ -112,6 +129,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 - **Hybrid search (RRF)** — Reciprocal Rank Fusion combining FTS5 + vector results.
 - **Temporal decay** — 30-day half-life. Recent content ranks higher. MEMORY.md chunks exempt (evergreen).
 - **Scope filtering** — Memory chunks tagged with owner/scope for multi-user isolation.
+- **Per-agent memory isolation** — `resolveMemDir` prefers agent > user > global memory directories when `memory.shared: false`. Agents maintain separate MEMORY.md, HISTORY.md, and daily notes.
 - **Markdown chunking** — Split by `##` headings. Further split at paragraph boundaries when chunk exceeds 2000 chars.
 - **Async reindex** — Embedding computation is non-blocking. Delayed 5s on startup with setImmediate yield points between inference calls to prevent event loop blocking.
 
@@ -146,12 +164,14 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
   - Run history tracking with `finished_at` timestamps (migration 9), exponential backoff on consecutive errors (30s → 60s → 5m → 15m → 1h).
   - Missed job staggering: jobs >1 min late after restart spread 30s apart to prevent LLM overload.
   - Per-user job ownership: userId column (migration 6), ownership enforcement on update/delete/list.
+  - Per-agent jobs: agentId column (migration 10), propagated to inbound messages.
   - Custom session IDs: optional sessionId per cron job — reuse same session across runs (migration 7).
   - CRUD: addJob, updateJob, removeJob, listJobs, getRuns.
 - **HeartbeatService** — Parses `HEARTBEAT.md` for periodic tasks.
   - Supports `every Xm/h/d` and cron expressions.
   - Per-user `HEARTBEAT.md` in `.janus/users/{userId}/` — tasks tagged with userId, routed to user's Telegram chat.
-  - Auto-starts when any HEARTBEAT.md exists (global or per-user).
+  - Per-agent `HEARTBEAT.md` in `.janus/agents/{agentId}/` — loads per-agent tasks, syncs agentId to CronService.
+  - Auto-starts when any HEARTBEAT.md exists (global, per-user, or per-agent).
   - Syncs to CronService when available, falls back to in-memory timers.
 
 ## Multi-User
@@ -209,6 +229,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 ## Sessions
 
 - **JSONL persistence** — Incremental append (new messages appended, not full rewrite). Post-compaction truncation reclaims disk space. First line = metadata.
+- **Agent-prefixed session keys** — Format `{agentId}:{channel}:{chatId}`. Each agent maintains isolated conversation history. Legacy key auto-migration (self-healing).
 - **Memory cache** — In-memory + file for performance.
 - **Summarization** — Async, non-blocking. Split-half strategy: keep last 4 messages, summarize the rest.
 - **Crash recovery** — Orphan tool messages stripped on load.
@@ -232,6 +253,7 @@ Assembles system prompt from multiple sources:
 Subagents use minimal mode (identity + user + skills only) to save tokens.
 
 - **Sender name in session context** — Shows `Sender: Name (userId)` instead of `User: userId` in family chats. Agent knows WHO is writing, enabling proper identity-aware responses ("remind me" knows who to remind).
+- **Agent identity in context** — Agent name in identity section, `Agent:` line in session context. Per-agent memory section via agentId when not shared.
 - **All behavioral instructions externalized to AGENTS.md** — context-builder code has zero hardcoded rules. All tool usage rules, skill instructions, and behavioral guidance live in editable .md files.
 - **Date-only timestamp** — ISO date (no time) in session info maximizes Anthropic prompt cache hits within a day.
 
@@ -248,11 +270,12 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 | `.janus/users/{id}/AGENTS.md` | Per-user | Agent behavior override (appended to global) |
 | `.janus/users/{id}/HEARTBEAT.md` | Per-user | Personal scheduled tasks (routed to user's chat) |
 | `.janus/chats/{chatId}/` | Per-chat | Chat-scoped directory (auto-created) |
+| `.janus/agents/{id}/` | Per-agent | Agent directory with optional EGO.md, AGENTS.md, HEARTBEAT.md overrides + `memory/` for isolated memory |
 
 ## Database
 
 - **SQLite** (better-sqlite3), WAL mode, numbered migrations.
-- **9 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id), per-user cron (user_id column), cron session IDs (session_id column), cron chat_id column, cron_runs finished_at column.
+- **10 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id), per-user cron (user_id column), cron session IDs (session_id column), cron chat_id column, cron_runs finished_at column, cron_jobs agent_id column.
 - **Memory write validation** — Verify write succeeded by reading back. After 3 consecutive failures, dump to timestamped backup file.
 - **Graceful fallback** — File-based storage when database disabled.
 
@@ -277,6 +300,9 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 | `users[]` | id, name, identities[], tools{allow,deny}, skills{allow,deny} |
 | `ownerIds` | User IDs with elevated privileges (owner-only tools) |
 | `family` | id, name, groupChatIds[] |
+| `agents[]` | id, name, ego/agents/heartbeat path overrides, tools{allow,deny}, params{temperature,maxTokens}, slots |
+| `bindings[]` | agentId, match{channel,chatId,topicId,userId} |
+| `defaultAgentId` | Fallback agent when no binding matches |
 
 Load priority: defaults < user config < workspace config < env vars.
 
@@ -288,7 +314,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 400 tests across 39 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 414 tests across 40 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 
 ## Commands
 
