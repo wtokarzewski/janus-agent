@@ -256,7 +256,9 @@ export class AgentLoop {
     if (agentCtx && !agentCtx.memoryShared) {
       ensureAgentDir(agentId, this.deps.config.workspace.dir);
     }
-    const sessionKey = `${agentId}:${msg.channel}:${msg.chatId}`;
+    const sessionKey = this.deps.agentResolver
+      ? this.deps.agentResolver.resolveSessionKey(agentId, msg)
+      : `${agentId}:${msg.channel}:${msg.chatId}`;
 
     // 1. Resolve user profile (if multi-user)
     const userProfile = msg.user?.userId

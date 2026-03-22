@@ -182,7 +182,8 @@
       "description": "Work context — focused on programming and GitHub",
       "ego": ".janus/agents/work/EGO.md",
       "tools": { "allow": ["exec", "read_file", "write_file", "edit_file", "list_dir", "web_fetch", "web_search", "spawn_agent"] },
-      "params": { "temperature": 0.2 }
+      "params": { "temperature": 0.2 },
+      "subagents": { "allowAgents": ["*"] }
     },
     {
       "id": "diet",
@@ -191,7 +192,11 @@
       "ego": ".janus/agents/diet/EGO.md",
       "tools": { "deny": ["exec", "spawn_agent"] },
       "params": { "temperature": 0.5 },
-      "memory": { "shared": false }
+      "memory": { "shared": false },
+      "heartbeat": {
+        "isolatedSession": true,
+        "activeHours": { "start": "07:00", "end": "22:00", "tz": "Europe/Warsaw" }
+      }
     }
   ],
 
@@ -201,5 +206,12 @@
     { "agentId": "main", "match": {} }
   ],
 
-  "defaultAgentId": "main"
+  "defaultAgentId": "main",
+
+  "session": {
+    "dmScope": "per-channel-peer",
+    "identityLinks": {
+      "wojtek": ["telegram:123456", "discord:789012"]
+    }
+  }
 }
