@@ -29,6 +29,8 @@ export interface CronJobInput {
   chatId?: string;
   /** Optional custom session ID — cron uses same session across runs instead of per-job UUID. */
   sessionId?: string;
+  /** Agent ID — routes job execution through specific agent context. */
+  agentId?: string;
 }
 
 export interface CronJob {
@@ -37,6 +39,7 @@ export interface CronJob {
   userId: string | null;
   chatId: string | null;
   sessionId: string | null;
+  agentId: string | null;
   scheduleKind: ScheduleKind;
   scheduleValue: string;
   scheduleTz: string | null;
@@ -125,9 +128,9 @@ export class CronService {
     });
 
     this.db.db.prepare(`
-      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at, user_id, chat_id, session_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt, input.userId ?? null, input.chatId ?? null, input.sessionId ?? null);
+      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at, user_id, chat_id, session_id, agent_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt, input.userId ?? null, input.chatId ?? null, input.sessionId ?? null, input.agentId ?? null);
 
     return this.getJob(id)!;
   }
@@ -315,6 +318,7 @@ export class CronService {
         cronDepth: 1,
         lane: job.name.startsWith('heartbeat:') ? 'heartbeat' : 'cron',
         user: job.userId ? { userId: job.userId } : undefined,
+        agentId: job.agentId ?? undefined,
       });
 
       const durationMs = Date.now() - startedAt.getTime();
@@ -403,6 +407,7 @@ function rowToJob(row: unknown): CronJob {
     userId: r.user_id ? String(r.user_id) : null,
     chatId: r.chat_id ? String(r.chat_id) : null,
     sessionId: r.session_id ? String(r.session_id) : null,
+    agentId: r.agent_id ? String(r.agent_id) : null,
     scheduleKind: String(r.schedule_kind) as ScheduleKind,
     scheduleValue: String(r.schedule_value),
     scheduleTz: r.schedule_tz ? String(r.schedule_tz) : null,

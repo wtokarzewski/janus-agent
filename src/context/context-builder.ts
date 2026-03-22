@@ -110,7 +110,8 @@ export class ContextBuilder {
 
     if (!minimal) {
       // 7. Memory (hybrid: FTS5 search if available, else full dump)
-      const memorySection = await this.buildMemorySection(opts.userMessage, opts.user?.userId, opts.scope);
+      const memoryAgentId = opts.agentCtx && !opts.agentCtx.memoryShared ? opts.agentCtx.id : undefined;
+      const memorySection = await this.buildMemorySection(opts.userMessage, opts.user?.userId, opts.scope, memoryAgentId);
       if (memorySection) parts.push(memorySection);
 
       // 7b. Learner recommendations (if enough data)
@@ -341,6 +342,7 @@ ${toolList}
     userMessage?: string,
     userId?: string,
     scope?: InboundMessage['scope'],
+    agentId?: string,
   ): Promise<string | null> {
     // Hybrid search: if index available and user message provided, search FTS5 (+ vectors if enabled)
     if (this.deps.memory.hasIndex && userMessage) {
@@ -362,7 +364,7 @@ ${toolList}
         const date = new Date();
         date.setDate(date.getDate() - d);
         const dateStr = date.toISOString().slice(0, 10);
-        const dayNote = await this.deps.memory.readDaily(dateStr, userId);
+        const dayNote = await this.deps.memory.readDaily(dateStr, userId, agentId);
         if (dayNote.trim()) {
           const label = d === 0 ? 'today' : dateStr;
           parts.push(`<memory_chunk source="${label}" section="daily_note">\n${dayNote.trim()}\n</memory_chunk>`);
@@ -375,7 +377,7 @@ ${toolList}
     }
 
     // Fallback: full dump (no index, no results, or no user message)
-    const ctx = await this.deps.memory.getContext(userId);
+    const ctx = await this.deps.memory.getContext(userId, agentId);
     const parts: string[] = [];
 
     if (ctx.memory) parts.push(`<!-- MEMORY.md -->\n${ctx.memory}`);

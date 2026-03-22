@@ -4,9 +4,10 @@ import { resolve } from 'node:path';
 import type { JanusConfig, UserProfile } from '../config/schema.js';
 import * as log from '../utils/logger.js';
 
-/** Track which user/chat dirs we've already ensured this process lifetime. */
+/** Track which user/chat/agent dirs we've already ensured this process lifetime. */
 const ensuredUsers = new Set<string>();
 const ensuredChats = new Set<string>();
+const ensuredAgents = new Set<string>();
 
 /** Sanitize chatId for filesystem use (Telegram group IDs can be negative, forum topics use '/'). */
 export function sanitizeChatId(chatId: string): string {
@@ -160,4 +161,21 @@ export function ensureChatDir(chatId: string, workspaceDir: string): void {
   mkdir(chatDir, { recursive: true }).catch(err => {
     log.warn(`Failed to ensure chat dir for ${safeChatId}: ${err instanceof Error ? err.message : String(err)}`);
   });
+}
+
+/**
+ * Ensure per-agent directory exists with memory/ subdirectory.
+ * Non-destructive, cached per-process.
+ */
+export function ensureAgentDir(agentId: string, workspaceDir: string): void {
+  const key = `${workspaceDir}:agent:${agentId}`;
+  if (ensuredAgents.has(key)) return;
+  ensuredAgents.add(key);
+
+  const agentDir = resolve(workspaceDir, '.janus', 'agents', agentId);
+  mkdir(agentDir, { recursive: true })
+    .then(() => mkdir(resolve(agentDir, 'memory'), { recursive: true }))
+    .catch(err => {
+      log.warn(`Failed to ensure agent dir for ${agentId}: ${err instanceof Error ? err.message : String(err)}`);
+    });
 }

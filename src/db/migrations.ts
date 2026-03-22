@@ -109,4 +109,10 @@ export const migrations: string[] = [
   `
   ALTER TABLE cron_runs ADD COLUMN finished_at TEXT;
   `,
+
+  // Migration 10: agent_id for multi-agent cron jobs
+  `
+  ALTER TABLE cron_jobs ADD COLUMN agent_id TEXT;
+  CREATE INDEX IF NOT EXISTS idx_cron_jobs_agent_id ON cron_jobs(agent_id);
+  `,
 ];

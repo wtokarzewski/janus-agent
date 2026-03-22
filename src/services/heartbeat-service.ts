@@ -14,6 +14,7 @@ export interface HeartbeatTask {
   scheduleValue: string;
   scheduleTz?: string;
   userId?: string;
+  agentId?: string;
 }
 
 const UNIT_MS: Record<string, number> = {
@@ -64,9 +65,11 @@ export class HeartbeatService {
     // If CronService is available, sync tasks there and let it handle scheduling
     if (this.cronService) {
       for (const task of this.tasks) {
-        const jobName = task.userId
-          ? `heartbeat:${task.userId}:${task.name}`
-          : `heartbeat:${task.name}`;
+        const parts = ['heartbeat'];
+        if (task.agentId) parts.push(task.agentId);
+        if (task.userId) parts.push(task.userId);
+        parts.push(task.name);
+        const jobName = parts.join(':');
         this.cronService.upsertByName({
           name: jobName,
           scheduleKind: task.scheduleKind,
@@ -75,9 +78,12 @@ export class HeartbeatService {
           task: task.description,
           enabled: true,
           userId: task.userId,
+          agentId: task.agentId,
         });
       }
-      log.info(`Heartbeat: synced ${this.tasks.length} task(s) to CronService (${this.tasks.filter(t => t.userId).length} per-user)`);
+      const perUser = this.tasks.filter(t => t.userId).length;
+      const perAgent = this.tasks.filter(t => t.agentId).length;
+      log.info(`Heartbeat: synced ${this.tasks.length} task(s) to CronService (${perUser} per-user, ${perAgent} per-agent)`);
       return;
     }
 
@@ -128,6 +134,24 @@ export class HeartbeatService {
         log.debug(`Heartbeat: loaded ${userTasks.length} task(s) for user ${user.id}`);
       } catch {
         // No per-user HEARTBEAT.md — fine
+      }
+    }
+
+    // 3. Per-agent HEARTBEAT.md files (from heartbeatFile path overrides)
+    for (const agent of this.config.agents) {
+      const agentHbPath = agent.heartbeatFile
+        ? resolve(this.workspaceDir, agent.heartbeatFile)
+        : resolve(this.workspaceDir, '.janus', 'agents', agent.id, 'HEARTBEAT.md');
+      try {
+        const content = await readFile(agentHbPath, 'utf-8');
+        const agentTasks = parseHeartbeatMd(content);
+        for (const task of agentTasks) {
+          task.agentId = agent.id;
+        }
+        this.tasks.push(...agentTasks);
+        log.debug(`Heartbeat: loaded ${agentTasks.length} task(s) for agent ${agent.id}`);
+      } catch {
+        // No per-agent HEARTBEAT.md — fine
       }
     }
   }
