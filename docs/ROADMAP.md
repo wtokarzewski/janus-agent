@@ -2,7 +2,7 @@
 
 ## Current State (Phase 10 in progress)
 
-- **Codebase:** ~13,300 LOC TypeScript, 400 tests across 39 files, CI
+- **Codebase:** ~13,400 LOC TypeScript, 400 tests across 39 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
@@ -128,6 +128,15 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - MCP schema normalization: strip unsupported JSON Schema keywords ($ref, oneOf, pattern, constraints) for OpenAI compatibility (CR-AI)
 - Anti-Cloudflare retry in web_fetch: UA rotation, browser-like headers (Accept-Language, Sec-Fetch-*), 2s delay, escalation hint to browser tool (CR-AG)
 - Multimodal tool results: ToolContentBlock[] (text + images), Anthropic native vision passthrough, OpenAI/Codex text fallback, `__MULTIMODAL__` prefix protocol, `toolResultWithImage()` helper (CR-AF)
+- 400 tests across 39 files
+
+### Phase 10d: Agent Hardening (#136)
+- Cross-tool loop detection: 6-call pattern window detects repeating tool sequences, injects system break message (OD-A)
+- MAX_ITERATIONS=200 hard safety limit on agent loop
+- Proactive context overflow detection: checks token budget at 90% (prunes old tool results) and 95% (emergency compression) (CR-Q)
+- Context pruning (pruneOldToolResults): tool results older than 8 messages trimmed to 200 chars (OD-B)
+- Prompt injection guard: web_fetch and Jina output wrapped in `<untrusted_content source="url">` XML tags (item 44)
+- Proactive OAuth token refresh: 30-min interval checks for tokens expiring within 1 hour, auto-refreshes anthropic/codex (OD-C)
 - 400 tests across 39 files
 
 **Remaining:**
