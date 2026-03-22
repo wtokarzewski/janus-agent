@@ -111,22 +111,25 @@ export class MemoryStore {
     return this.index !== null;
   }
 
-  /** Resolve memory directory: per-user when userId is given, global otherwise. */
-  private resolveMemDir(userId?: string): string {
+  /** Resolve memory directory: per-agent > per-user > global. */
+  private resolveMemDir(userId?: string, agentId?: string): string {
+    if (agentId) {
+      return resolve(this.config.workspace.dir, '.janus', 'agents', agentId, 'memory');
+    }
     if (userId) {
       return resolve(this.config.workspace.dir, '.janus', 'users', userId, 'memory');
     }
     return this.memoryDir;
   }
 
-  async readMemory(userId?: string): Promise<string> {
-    return this.readSafe(join(this.resolveMemDir(userId), 'MEMORY.md'));
+  async readMemory(userId?: string, agentId?: string): Promise<string> {
+    return this.readSafe(join(this.resolveMemDir(userId, agentId), 'MEMORY.md'));
   }
 
   private writeFailures = 0;
 
-  async writeMemory(content: string, userId?: string): Promise<void> {
-    const dir = this.resolveMemDir(userId);
+  async writeMemory(content: string, userId?: string, agentId?: string): Promise<void> {
+    const dir = this.resolveMemDir(userId, agentId);
     await mkdir(dir, { recursive: true });
     const path = join(dir, 'MEMORY.md');
 
@@ -157,11 +160,14 @@ export class MemoryStore {
     }
   }
 
-  async appendDaily(entry: string, userId?: string, scope?: InboundMessage['scope']): Promise<void> {
+  async appendDaily(entry: string, userId?: string, scope?: InboundMessage['scope'], agentId?: string): Promise<void> {
     let dir = this.memoryDir;
 
-    // Per-user private memory goes to .janus/users/{userId}/memory/
-    if (scope?.kind === 'user' && userId) {
+    // Per-agent isolated memory goes to .janus/agents/{agentId}/memory/
+    if (agentId) {
+      dir = resolve(this.config.workspace.dir, '.janus', 'agents', agentId, 'memory');
+    } else if (scope?.kind === 'user' && userId) {
+      // Per-user private memory goes to .janus/users/{userId}/memory/
       dir = resolve(this.config.workspace.dir, '.janus', 'users', userId, 'memory');
     }
     // Family scope stays in workspace memory (owner='shared', scope='family')
@@ -173,9 +179,9 @@ export class MemoryStore {
     await appendFile(path, `${prefix}${entry}\n`, 'utf-8');
   }
 
-  async readDaily(date?: string, userId?: string): Promise<string> {
+  async readDaily(date?: string, userId?: string, agentId?: string): Promise<string> {
     const d = date ?? this.todayDate();
-    return this.readSafe(join(this.resolveMemDir(userId), `${d}.md`));
+    return this.readSafe(join(this.resolveMemDir(userId, agentId), `${d}.md`));
   }
 
   /**
@@ -183,16 +189,16 @@ export class MemoryStore {
    * Loads MEMORY.md + last 3 daily notes for system prompt context.
    * When userId is provided, reads per-user memory (multi-user isolation).
    */
-  async getContext(userId?: string): Promise<MemoryContext> {
+  async getContext(userId?: string, agentId?: string): Promise<MemoryContext> {
     const [memory, recentNotes] = await Promise.all([
-      this.readMemory(userId),
-      this.getRecentDailyNotes(3, userId),
+      this.readMemory(userId, agentId),
+      this.getRecentDailyNotes(3, userId, agentId),
     ]);
     return { memory, recentNotes };
   }
 
   /** Load last N days of daily notes (today + N-1 previous days). */
-  private async getRecentDailyNotes(days: number, userId?: string): Promise<string> {
+  private async getRecentDailyNotes(days: number, userId?: string, agentId?: string): Promise<string> {
     const notes: string[] = [];
     const today = new Date();
 
@@ -200,7 +206,7 @@ export class MemoryStore {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
       const dateStr = date.toISOString().slice(0, 10);
-      const content = await this.readDaily(dateStr, userId);
+      const content = await this.readDaily(dateStr, userId, agentId);
       if (content.trim()) {
         notes.push(`<!-- ${dateStr} -->\n${content.trim()}`);
       }
