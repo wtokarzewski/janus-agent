@@ -82,8 +82,9 @@ export async function runOnboard(dir?: string): Promise<void> {
     created.push(`${subdir}/`);
   }
 
-  // Workspace .janus/skills dir
+  // Workspace .janus/skills + agents dirs
   await mkdir(resolve(workspace, '.janus', 'skills'), { recursive: true });
+  await mkdir(resolve(workspace, '.janus', 'agents'), { recursive: true });
 
   // janus.json (onboard-only — update shouldn't create config)
   await createIfMissing(resolve(workspace, 'janus.json'), DEFAULT_CONFIG, 'janus.json', created, skipped);

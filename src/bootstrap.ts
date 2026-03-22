@@ -30,6 +30,7 @@ import { SessionManager } from './session/session-manager.js';
 import { SkillLoader } from './skills/skill-loader.js';
 import { ContextBuilder } from './context/context-builder.js';
 import { AgentLoop } from './agent/agent-loop.js';
+import { AgentResolver } from './agent/agent-resolver.js';
 import { SubagentRegistry } from './agent/subagent-registry.js';
 import { CronService } from './services/cron-service.js';
 import { CronTool } from './tools/builtin/cron.js';
@@ -211,7 +212,8 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
 
   // 9. Agent loop (with spawn_agent tool + subagent registry)
   const subagentRegistry = new SubagentRegistry();
-  const agentDeps = { bus, llm, tools, sessions, context, skills, config, learner, memory };
+  const agentResolver = new AgentResolver(config);
+  const agentDeps = { bus, llm, tools, sessions, context, skills, config, learner, memory, agentResolver };
   tools.register(new SpawnAgentTool(agentDeps, subagentRegistry));
   const agent = new AgentLoop(agentDeps);
 

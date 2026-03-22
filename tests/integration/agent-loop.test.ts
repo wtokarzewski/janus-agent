@@ -116,7 +116,7 @@ describe('AgentLoop integration', () => {
 
     await agent.processDirect('save this', { channel: 'test', chatId: 'test-session' });
 
-    const history = await deps.sessions.getHistory('test:test-session');
+    const history = await deps.sessions.getHistory('main:test:test-session');
     expect(history.length).toBeGreaterThanOrEqual(2); // user + assistant
     expect(history.some(m => m.role === 'user' && m.content === 'save this')).toBe(true);
     expect(history.some(m => m.role === 'assistant' && m.content === 'Stored!')).toBe(true);

@@ -331,6 +331,7 @@ export class TelegramChannel {
         scope,
         topicId,
         replyContext,
+        routingMeta: topicId ? { topicId } : undefined,
       };
 
       // If the agent is already processing this chat, buffer as steering message
@@ -521,6 +522,7 @@ export class TelegramChannel {
         scope,
         topicId,
         replyContext,
+        routingMeta: topicId ? { topicId } : undefined,
       };
 
       if (bus.isProcessing(chatId)) {

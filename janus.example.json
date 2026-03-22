@@ -168,5 +168,38 @@
   "family": {
     "id": "family",
     "groupChatIds": []
-  }
+  },
+
+  "agents": [
+    {
+      "id": "main",
+      "name": "Janus",
+      "description": "Main assistant"
+    },
+    {
+      "id": "work",
+      "name": "Work",
+      "description": "Work context — focused on programming and GitHub",
+      "ego": ".janus/agents/work/EGO.md",
+      "tools": { "allow": ["exec", "read_file", "write_file", "edit_file", "list_dir", "web_fetch", "web_search", "spawn_agent"] },
+      "params": { "temperature": 0.2 }
+    },
+    {
+      "id": "diet",
+      "name": "Diet Coach",
+      "description": "Nutrition and meal planning assistant",
+      "ego": ".janus/agents/diet/EGO.md",
+      "tools": { "deny": ["exec", "spawn_agent"] },
+      "params": { "temperature": 0.5 },
+      "memory": { "shared": false }
+    }
+  ],
+
+  "bindings": [
+    { "agentId": "work", "match": { "channel": "telegram", "chatId": "-100987654" } },
+    { "agentId": "diet", "match": { "channel": "telegram", "chatId": "123456", "topicId": 42 } },
+    { "agentId": "main", "match": {} }
+  ],
+
+  "defaultAgentId": "main"
 }

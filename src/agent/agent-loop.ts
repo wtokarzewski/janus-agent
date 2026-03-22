@@ -13,6 +13,7 @@ import type { GateService } from '../gates/types.js';
 import { findUserProfile } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 import { stripControlTokens } from '../utils/sanitize.js';
+import type { AgentResolver, AgentContext } from './agent-resolver.js';
 
 const THINKING_LEVEL_BUDGETS: Record<string, number> = {
   off: 0, minimal: 2000, low: 5000, medium: 10000, high: 20000,
@@ -29,6 +30,7 @@ export interface AgentDeps {
   learner?: { recordExecution(record: ExecutionRecord): Promise<void> };
   memory?: MemoryStore;
   gateService?: GateService;
+  agentResolver?: AgentResolver;
 }
 
 export interface ExecutionRecord {
@@ -247,7 +249,10 @@ export class AgentLoop {
   }
 
   private async processMessage(msg: InboundMessage, externalReqCtx?: Partial<RequestContext>): Promise<OutboundMessage & { streamed?: boolean }> {
-    const sessionKey = `${msg.channel}:${msg.chatId}`;
+    // 0. Resolve agent from bindings
+    const agentCtx = this.deps.agentResolver?.resolve(msg);
+    const agentId = agentCtx?.id ?? 'main';
+    const sessionKey = `${agentId}:${msg.channel}:${msg.chatId}`;
 
     // 1. Resolve user profile (if multi-user)
     const userProfile = msg.user?.userId
@@ -281,13 +286,22 @@ export class AgentLoop {
       : this.deps.config.users.length > 0 ? [this.deps.config.users[0].id] : [];
     const isOwner = !msg.user?.userId || ownerIds.includes(msg.user.userId);
 
+    // Merge agent + user tool filters: allow ∩ (both must allow), deny ∪ (either can deny)
+    const mergedToolAllow = agentCtx?.toolAllow && userProfile?.tools?.allow
+      ? agentCtx.toolAllow.filter(t => userProfile.tools!.allow!.includes(t))
+      : agentCtx?.toolAllow ?? userProfile?.tools?.allow;
+    const mergedToolDeny = [
+      ...(agentCtx?.toolDeny ?? []),
+      ...(userProfile?.tools?.deny ?? []),
+    ];
+
     const reqCtx: RequestContext = {
       chatId: msg.chatId,
       userId: msg.user?.userId,
       isOwner,
       familyUserIds,
-      userToolAllow: userProfile?.tools?.allow,
-      userToolDeny: userProfile?.tools?.deny,
+      userToolAllow: mergedToolAllow,
+      userToolDeny: mergedToolDeny.length > 0 ? mergedToolDeny : undefined,
       toolPolicy: userProfile?.tools?.policy,
       sentTargets: externalReqCtx?.sentTargets ?? [],
     };
@@ -304,6 +318,7 @@ export class AgentLoop {
       mode: msg.contextMode,
       user: msg.user,
       scope: msg.scope,
+      agentCtx,
     });
 
     // 3. Build messages: [system, ...history, user]
@@ -341,7 +356,7 @@ export class AgentLoop {
       .slice(-5)
       .map(m => `${m.role}: ${'content' in m ? String(m.content).slice(0, 200) : ''}`);
 
-    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx);
+    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx);
 
     // 6. Save final assistant message
     await this.deps.sessions.append(sessionKey, [
@@ -529,6 +544,7 @@ export class AgentLoop {
     signal?: AbortSignal,
     chatId?: string,
     reqCtx?: RequestContext,
+    agentCtx?: AgentContext,
   ): Promise<IterateResult> {
     let lastContent = '';
     let totalToolCalls = 0;
@@ -592,10 +608,9 @@ export class AgentLoop {
         model: '',
         messages,
         tools: tools.length > 0 ? tools : undefined,
-        temperature: i > 0 && r.toolTemperature != null
-          ? r.toolTemperature
-          : r.temperature,
-        maxTokens: r.maxTokens,
+        temperature: agentCtx?.params?.temperature
+          ?? (i > 0 && r.toolTemperature != null ? r.toolTemperature : r.temperature),
+        maxTokens: agentCtx?.params?.maxTokens ?? r.maxTokens,
         ...(thinkingEnabled ? { thinking: { type: 'enabled' as const, budgetTokens: thinkingBudget } } : {}),
         ...(r.reasoningEffort ? { reasoningEffort: r.reasoningEffort } : {}),
       };
