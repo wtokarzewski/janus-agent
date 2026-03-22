@@ -131,9 +131,9 @@ export class MessageBus {
             console.error(`Bus: handler for "${msg.channel}" failed:`, err instanceof Error ? err.message : String(err));
           });
         } else {
-          // System channel responses (cron/heartbeat) are handled internally by processSystemMessage() —
-          // outbound messages to "system" channel are expected to be dropped here (no external subscriber).
-          if (msg.channel !== 'system') {
+          if (msg.channel === 'system') {
+            console.log(`Bus: system channel outbound dropped (expected — cron/heartbeat responses handled internally)`);
+          } else {
             console.warn(`Bus: no handler for channel "${msg.channel}", message dropped`);
           }
         }
