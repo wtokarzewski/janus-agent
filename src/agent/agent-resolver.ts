@@ -14,6 +14,9 @@ export interface AgentContext {
   slotOverrides?: Record<string, Record<string, string>>;
   memoryShared: boolean;
   params?: { temperature?: number; maxTokens?: number };
+  heartbeatIsolatedSession: boolean;
+  heartbeatActiveHours?: { start: string; end: string; tz?: string };
+  allowedSubagents: string[];
 }
 
 /** Default implicit agent — synthesized when agents[] is empty (zero behavioral change). */
@@ -30,10 +33,21 @@ export class AgentResolver {
   private agents: Map<string, AgentContext>;
   private bindings: Array<{ agentId: string; match: Record<string, string | number> }>;
   private defaultId: string;
+  private dmScope: 'main' | 'per-peer' | 'per-channel-peer';
+  private identityMap: Map<string, string>; // "telegram:123" → canonical user ID
 
   constructor(config: JanusConfig) {
     this.defaultId = config.defaultAgentId ?? 'main';
     this.bindings = config.bindings ?? [];
+    this.dmScope = config.session?.dmScope ?? 'per-channel-peer';
+
+    // Build identity links map: "channel:userId" → canonical ID
+    this.identityMap = new Map();
+    for (const [canonicalId, identities] of Object.entries(config.session?.identityLinks ?? {})) {
+      for (const identity of identities) {
+        this.identityMap.set(identity, canonicalId);
+      }
+    }
 
     // Build agent contexts
     this.agents = new Map();
@@ -53,6 +67,9 @@ export class AgentResolver {
         slotOverrides: def.llm?.slots as Record<string, Record<string, string>> | undefined,
         memoryShared: def.memory?.shared ?? true,
         params: def.params,
+        heartbeatIsolatedSession: def.heartbeat?.isolatedSession ?? false,
+        heartbeatActiveHours: def.heartbeat?.activeHours,
+        allowedSubagents: def.subagents?.allowAgents ?? ['*'],
       });
     }
   }
@@ -81,6 +98,32 @@ export class AgentResolver {
     }
 
     return this.getDefault();
+  }
+
+  /**
+   * Build session key with DMScope logic.
+   * Group chats always use {agentId}:{channel}:{chatId}.
+   * DMs vary by dmScope: main, per-peer (cross-platform), per-channel-peer (default).
+   */
+  resolveSessionKey(agentId: string, msg: InboundMessage): string {
+    // Group chats (Telegram groups have negative chatId or contain ':')
+    const isGroup = msg.chatId.startsWith('-') || msg.chatId.includes(':');
+    if (isGroup) {
+      return `${agentId}:${msg.channel}:${msg.chatId}`;
+    }
+
+    switch (this.dmScope) {
+      case 'main':
+        return `${agentId}:main`;
+      case 'per-peer': {
+        const channelIdentity = `${msg.channel}:${msg.user?.userId ?? msg.chatId}`;
+        const canonical = this.identityMap.get(channelIdentity) ?? msg.user?.userId ?? msg.chatId;
+        return `${agentId}:direct:${canonical}`;
+      }
+      case 'per-channel-peer':
+      default:
+        return `${agentId}:${msg.channel}:${msg.chatId}`;
+    }
   }
 
   get(agentId: string): AgentContext | undefined {
