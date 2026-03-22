@@ -7,6 +7,7 @@ import type { JanusConfig } from '../config/schema.js';
 import type { InboundMessage } from '../bus/types.js';
 import type { SkillLearner } from '../learner/learner.js';
 import { loadProfileMd, findUserProfile, sanitizeChatId } from '../users/user-resolver.js';
+import type { AgentContext } from '../agent/agent-resolver.js';
 
 interface ContextDeps {
   skills: SkillLoader;
@@ -43,6 +44,7 @@ export class ContextBuilder {
     mode?: 'full' | 'minimal';
     user?: InboundMessage['user'];
     scope?: InboundMessage['scope'];
+    agentCtx?: AgentContext;
   }): Promise<string> {
     const parts: string[] = [];
     const minimal = opts.mode === 'minimal';
@@ -57,7 +59,7 @@ export class ContextBuilder {
     if (userProfile?.tools) {
       tools = this.filterTools(tools, userProfile.tools.allow, userProfile.tools.deny);
     }
-    parts.push(this.buildIdentity(tools));
+    parts.push(this.buildIdentity(tools, opts.agentCtx));
 
     // 1b. User section
     if (opts.user) {
@@ -79,17 +81,23 @@ export class ContextBuilder {
     }
 
     if (!minimal) {
-      // 2. Ego (EGO.md from .janus/)
-      const ego = await this.loadEgo();
-      if (ego) parts.push(ego);
+      // 2. Ego (EGO.md — agent path override: null=skip, undefined=global)
+      if (opts.agentCtx?.egoPath !== null) {
+        const ego = await this.loadEgo(opts.agentCtx?.egoPath);
+        if (ego) parts.push(ego);
+      }
 
-      // 3. Agents (AGENTS.md from workspace + per-user override)
-      const agents = await this.loadAgents(opts.user?.userId);
-      if (agents) parts.push(agents);
+      // 3. Agents (AGENTS.md — agent path override + per-user override)
+      if (opts.agentCtx?.agentsFilePath !== null) {
+        const agents = await this.loadAgents(opts.user?.userId, opts.agentCtx?.agentsFilePath);
+        if (agents) parts.push(agents);
+      }
 
-      // 4. Heartbeat (HEARTBEAT.md from workspace + per-user)
-      const heartbeat = await this.loadHeartbeat(opts.user?.userId);
-      if (heartbeat) parts.push(heartbeat);
+      // 4. Heartbeat (HEARTBEAT.md — agent path override + per-user)
+      if (opts.agentCtx?.heartbeatFilePath !== null) {
+        const heartbeat = await this.loadHeartbeat(opts.user?.userId, opts.agentCtx?.heartbeatFilePath);
+        if (heartbeat) parts.push(heartbeat);
+      }
 
       // 5. Project file (JANUS.md from workspace)
       const project = await this.loadProjectFile();
@@ -120,6 +128,7 @@ export class ContextBuilder {
       const senderLabel = opts.user.name ? `${opts.user.name} (${opts.user.userId})` : opts.user.userId;
       sessionParts.push(`Sender: ${senderLabel}`);
     }
+    if (opts.agentCtx) sessionParts.push(`Agent: ${opts.agentCtx.id}`);
     if (opts.scope) sessionParts.push(`Scope: ${opts.scope.kind}:${opts.scope.id}`);
     parts.push(`<session>\n${sessionParts.join('\n')}\n</session>`);
 
@@ -163,15 +172,17 @@ export class ContextBuilder {
     return filtered;
   }
 
-  private buildIdentity(tools: Array<{ name: string; description: string }>): string {
+  private buildIdentity(tools: Array<{ name: string; description: string }>, agentCtx?: AgentContext): string {
     const workspace = resolve(this.deps.config.workspace.dir);
     const toolList = tools.map(t => `- ${t.name}: ${t.description}`).join('\n');
+    const agentName = agentCtx?.name ?? 'Janus';
+    const agentDesc = agentCtx?.definition.description ? ` — ${agentCtx.definition.description}` : '';
 
     // Anthropic OAuth identity prefix is now injected by AnthropicProvider itself
     const oauthPrefix = '';
 
     return `<identity>
-${oauthPrefix}You are Janus, a universal AI agent.
+${oauthPrefix}You are ${agentName}${agentDesc}, a universal AI agent.
 
 Workspace: ${workspace}
 
@@ -180,11 +191,13 @@ ${toolList}
 </identity>`;
   }
 
-  private async loadEgo(): Promise<string | null> {
-    const dir = resolve(this.deps.config.workspace.dir, '.janus');
+  private async loadEgo(pathOverride?: string): Promise<string | null> {
+    const egoPath = pathOverride
+      ? resolve(this.deps.config.workspace.dir, pathOverride)
+      : resolve(this.deps.config.workspace.dir, '.janus', 'EGO.md');
 
     try {
-      const content = await readFile(resolve(dir, 'EGO.md'), 'utf-8');
+      const content = await readFile(egoPath, 'utf-8');
       if (content.trim()) {
         return `<ego>\n${content.trim()}\n</ego>`;
       }
@@ -194,13 +207,14 @@ ${toolList}
     return null;
   }
 
-  private async loadAgents(userId?: string): Promise<string | null> {
+  private async loadAgents(userId?: string, pathOverride?: string): Promise<string | null> {
     const dir = resolve(this.deps.config.workspace.dir);
     const parts: string[] = [];
 
-    // Global AGENTS.md
+    // Global AGENTS.md (or agent-specific override)
+    const agentsPath = pathOverride ? resolve(dir, pathOverride) : resolve(dir, 'AGENTS.md');
     try {
-      const content = await readFile(resolve(dir, 'AGENTS.md'), 'utf-8');
+      const content = await readFile(agentsPath, 'utf-8');
       if (content.trim()) parts.push(content.trim());
     } catch {
       // No global AGENTS.md
@@ -219,13 +233,14 @@ ${toolList}
     return parts.length > 0 ? `<agents>\n${parts.join('\n\n')}\n</agents>` : null;
   }
 
-  private async loadHeartbeat(userId?: string): Promise<string | null> {
+  private async loadHeartbeat(userId?: string, pathOverride?: string): Promise<string | null> {
     const dir = resolve(this.deps.config.workspace.dir);
     const parts: string[] = [];
 
-    // Global HEARTBEAT.md
+    // Global HEARTBEAT.md (or agent-specific override)
+    const hbPath = pathOverride ? resolve(dir, pathOverride) : resolve(dir, 'HEARTBEAT.md');
     try {
-      const content = await readFile(resolve(dir, 'HEARTBEAT.md'), 'utf-8');
+      const content = await readFile(hbPath, 'utf-8');
       if (content.trim()) parts.push(content.trim());
     } catch {
       // No global HEARTBEAT.md

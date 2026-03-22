@@ -57,6 +57,23 @@ export class SessionManager {
       this.cache.set(key, session);
       return session;
     } catch {
+      // Legacy session migration: if agent-prefixed key not found, try without agent prefix
+      const colonCount = key.split(':').length - 1;
+      if (colonCount >= 2) {
+        const legacyKey = key.slice(key.indexOf(':') + 1);
+        const legacyPath = this.sessionPath(legacyKey);
+        try {
+          const content = await readFile(legacyPath, 'utf-8');
+          const session = this.parseJSONL(content, key); // Use new key for session metadata
+          this.cache.set(key, session);
+          // Rename file to new location (fire and forget)
+          await rename(legacyPath, path).catch(() => {});
+          log.info(`Migrated session ${legacyKey} → ${key}`);
+          return session;
+        } catch {
+          // Legacy not found either — create new
+        }
+      }
       // Create new session
       const session: Session = {
         metadata: {
