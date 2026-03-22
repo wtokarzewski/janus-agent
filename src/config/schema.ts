@@ -265,6 +265,43 @@ const ToolsSchema = z.object({
   execDenyPatternsExtra: z.array(z.string()).default([]),
 });
 
+// --- Multi-agent routing ---
+
+const AGENT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+const AgentDefinitionSchema = z.object({
+  id: z.string().regex(AGENT_ID_RE, 'Agent ID must be 1-64 lowercase alphanumeric chars with _ or -'),
+  name: z.string(),
+  description: z.string().optional(),
+  ego: z.string().nullable().optional(),
+  agentsFile: z.string().nullable().optional(),
+  heartbeatFile: z.string().nullable().optional(),
+  skillsDirs: z.array(z.string()).default([]),
+  tools: z.object({
+    allow: z.array(z.string()).optional(),
+    deny: z.array(z.string()).optional(),
+  }).optional(),
+  llm: z.object({
+    slots: z.record(z.string(), SlotSchema).optional(),
+  }).optional(),
+  params: z.object({
+    temperature: z.number().optional(),
+    maxTokens: z.number().optional(),
+  }).optional(),
+  memory: z.object({
+    shared: z.boolean().default(true),
+  }).optional(),
+});
+
+export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
+
+const BindingSchema = z.object({
+  agentId: z.string(),
+  match: z.record(z.string(), z.union([z.string(), z.number()])).default({}),
+});
+
+export type Binding = z.infer<typeof BindingSchema>;
+
 export const JanusConfigSchema = z.object({
   llm: LLMSchema.optional().transform(v => LLMSchema.parse(v ?? {})),
   agent: AgentSchema.optional().transform(v => AgentSchema.parse(v ?? {})),
@@ -284,6 +321,9 @@ export const JanusConfigSchema = z.object({
   users: z.array(UserProfileSchema).default([]),
   ownerIds: z.array(z.string()).default([]),
   family: FamilySchema.optional(),
+  agents: z.array(AgentDefinitionSchema).default([]),
+  bindings: z.array(BindingSchema).default([]),
+  defaultAgentId: z.string().default('main'),
 });
 
 export type RawJanusConfig = z.infer<typeof JanusConfigSchema>;

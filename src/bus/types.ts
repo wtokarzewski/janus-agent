@@ -24,6 +24,11 @@ export interface InboundMessage {
   topicId?: number;
   /** Text of the message being replied to (e.g. Telegram reply-to). */
   replyContext?: string;
+  /** Resolved agent ID (set during processing, not by channels). */
+  agentId?: string;
+  /** Channel-specific routing metadata for binding resolution.
+   *  Telegram: { topicId }. Discord: { guildId }. Slack: { teamId }. */
+  routingMeta?: Record<string, string | number>;
 }
 
 export interface OutboundMessage {
