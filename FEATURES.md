@@ -20,6 +20,10 @@ Canonical list of implemented, working features. Verified against source code an
 - **Diagnostic timing logs** — Full pipeline observability: Telegram incoming → lane semaphore → context build → LLM call → tool execution → flush → summarization, with durations.
 - **Leaked control token stripping** — Sanitizes LLM control tokens (`<|endoftext|>`, `[INST]`, `<<SYS>>`, `<s>`) from user-facing output before delivery.
 - **Invisible Unicode stripping** — Strips zero-width spaces, Mongolian vowel separators, and other invisible chars before gate/deny pattern checks. Prevents regex bypass.
+- **MAX_ITERATIONS hard limit** — Safety cap at 200 iterations per agent loop run. Prevents infinite loops even when all other safeguards fail.
+- **Cross-tool loop detection** — 6-call sliding window detects repeating tool call sequences (e.g., exec->fail->exec->fail). Injects system break message to redirect the agent.
+- **Proactive context overflow detection** — Monitors token budget usage after each tool call. At 90%, prunes old tool results (`pruneOldToolResults`). At 95%, triggers emergency compression. Prevents mid-task crashes.
+- **Context pruning (pruneOldToolResults)** — Tool results older than 8 messages automatically trimmed to 200 chars. Reclaims context space without waiting for emergency compression.
 - **Compaction hardening** — Double-fire guard (no concurrent compaction on same session), post-compaction sanity check (verifies token reduction), task-aware summarization (preserves active task context).
 - **Compaction notifications** — Silent background summarization with ⏳ status indicator.
 - **SSRF guard** — Blocks private/reserved IPs (localhost, 10.x, 172.16-31.x, 192.168.x, link-local, cloud metadata) in web_fetch and browser tools.
@@ -39,7 +43,7 @@ Three auth modes (mutually exclusive):
 | `codex` | Subscription (ChatGPT Plus/Pro) | @openai/codex-sdk |
 | `codex` (OAuth) | Subscription, native OAuth | Responses API (PKCE) |
 
-- **Native OAuth (PKCE)** — Browser-based login for Anthropic + Codex with auto-refresh. Credential storage (`~/.janus/auth.json`, 0o600) — both OAuth tokens and API keys.
+- **Native OAuth (PKCE)** — Browser-based login for Anthropic + Codex with auto-refresh. Credential storage (`~/.janus/auth.json`, 0o600) — both OAuth tokens and API keys. Proactive refresh: 30-min interval checks for tokens expiring within 1 hour via `getExpiringProviders()`, auto-refreshes before failover is needed.
 - **Anthropic OAuth identity** — Injects required "You are Claude Code" system prompt + beta headers (`claude-code-20250219`, `oauth-2025-04-20`) for subscription OAuth tokens.
 - **Extended thinking** — `llm.thinking.enabled` + `budgetTokens`. Thinking levels: off/minimal/low/medium/high.
 - **Prompt caching** — `cache_control: ephemeral` on system prompt + last tool def. Timestamp in dynamic session tail for cache stability.
@@ -66,7 +70,7 @@ Three auth modes (mutually exclusive):
 | `message` | Send message to user via bus. |
 | `spawn_agent` | Spawn child agent for subtasks (minimal prompt, isolated session). |
 | `cron` | Create, list, update, delete persistent cron jobs. |
-| `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards, CAPTCHA detection, Jina Reader option, SSRF guard, anti-Cloudflare retry with UA rotation and browser-like headers, escalation hint to browser tool). |
+| `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards, CAPTCHA detection, Jina Reader option, SSRF guard, anti-Cloudflare retry with UA rotation and browser-like headers, escalation hint to browser tool, prompt injection guard: output wrapped in `<untrusted_content>` XML tags). |
 | `web_search` | Web search (Brave API or DuckDuckGo fallback, in-memory cache 15min TTL). |
 | `browser` | **Real Chrome** via Playwright persistent context. AI-native snapshots with element refs. Auto-launches Chrome with dedicated profile. 30min idle timeout. Safety policy blocks checkout/payment. |
 | `heartbeat` | Manage periodic heartbeat tasks. |

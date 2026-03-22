@@ -537,8 +537,17 @@ export class AgentLoop {
     let llmRetries = 0;
     const seenToolCalls = new Set<string>();
     const toolFailCounts = new Map<string, number>(); // tool name → consecutive failure count
+    const MAX_ITERATIONS = 200; // Hard safety limit — prevent infinite loops
+    const recentToolSigs: string[] = []; // Track recent tool call signatures for loop detection
+    const LOOP_WINDOW = 6; // Check last N tool calls for repeating patterns
 
     for (let i = 0; ; i++) {
+      // Iteration hard limit (OD-A)
+      if (i >= MAX_ITERATIONS) {
+        log.warn(`[${sessionKey}] Hit iteration limit (${MAX_ITERATIONS})`);
+        return { content: lastContent || `Stopped: reached ${MAX_ITERATIONS} iteration safety limit.`, iterations: i, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
+      }
+
       if (signal?.aborted) {
         if (streamCtx) {
           this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
@@ -554,6 +563,21 @@ export class AgentLoop {
           messages.push(steerMsg);
           await this.deps.sessions.append(sessionKey, [steerMsg]);
           log.info(`Steering injected: "${s.content.slice(0, 80)}"`);
+        }
+      }
+
+      // Proactive context overflow detection (CR-Q)
+      const currentTokens = estimateMessagesTokens(messages);
+      const tokenBudget = this.deps.config.agent.tokenBudget;
+      if (currentTokens > tokenBudget * 0.9) {
+        log.warn(`[${sessionKey}] Context at ${Math.round(currentTokens / tokenBudget * 100)}% of budget (${currentTokens}/${tokenBudget}), pruning old tool results`);
+        pruneOldToolResults(messages);
+        if (estimateMessagesTokens(messages) > tokenBudget * 0.95) {
+          log.warn(`[${sessionKey}] Still over budget after pruning, forcing emergency compression`);
+          const nonSystem = messages.slice(1);
+          const half = Math.floor(nonSystem.length / 2);
+          const kept = nonSystem.slice(Math.max(half, nonSystem.length - 2));
+          messages.splice(1, messages.length - 1, ...kept);
         }
       }
 
@@ -758,6 +782,22 @@ export class AgentLoop {
       // Append results in original order (preserves determinism)
       for (const toolMsg of toolResults) {
         messages.push(toolMsg);
+      }
+
+      // Cross-tool loop detection (OD-A): track tool call signatures
+      for (const tc of uniqueCalls) {
+        recentToolSigs.push(tc.function.name);
+        if (recentToolSigs.length > LOOP_WINDOW * 2) recentToolSigs.shift();
+      }
+      if (recentToolSigs.length >= LOOP_WINDOW) {
+        const recent = recentToolSigs.slice(-LOOP_WINDOW);
+        const half = LOOP_WINDOW / 2;
+        const firstHalf = recent.slice(0, half).join(',');
+        const secondHalf = recent.slice(half).join(',');
+        if (firstHalf === secondHalf) {
+          log.warn(`[${sessionKey}] Cross-tool loop detected: ${firstHalf} repeating`);
+          messages.push({ role: 'user', content: '[System: Repeating tool call pattern detected. You are stuck in a loop. Stop calling tools and respond to the user with what you have so far.]' });
+        }
       }
 
       // Atomic save: assistant + tool_calls + dup skip messages + tool results
@@ -1146,6 +1186,23 @@ function trimHistoryToTokenBudget(
   }
 
   return trimmed;
+}
+
+/**
+ * Prune old tool results in-place to reclaim context space (OD-B).
+ * Replaces verbose tool results older than the last 4 turns with truncated summaries.
+ * Preserves the most recent tool results (they're likely still relevant).
+ */
+function pruneOldToolResults(messages: LLMMessage[]): void {
+  const KEEP_RECENT = 8; // Keep last 8 messages untouched
+  const PRUNED_MAX = 200; // Max chars for pruned tool result
+  const cutoff = messages.length - KEEP_RECENT;
+  for (let i = 0; i < cutoff; i++) {
+    const msg = messages[i];
+    if (msg.role === 'tool' && typeof msg.content === 'string' && msg.content.length > PRUNED_MAX) {
+      (msg as { content: string }).content = msg.content.slice(0, PRUNED_MAX) + '\n[... pruned to save context space]';
+    }
+  }
 }
 
 /**

@@ -47,6 +47,30 @@ export class FileTokenStore implements TokenStore {
 }
 
 /**
+ * Check all OAuth tokens and return providers whose tokens expire within `withinMs`.
+ * Used by proactive token refresh (OD-C) to keep fallback providers alive.
+ */
+export function getExpiringProviders(withinMs = 3_600_000): string[] {
+  const path = defaultPath();
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>;
+    const now = Date.now();
+    const expiring: string[] = [];
+    for (const [provider, entry] of Object.entries(data)) {
+      if (entry && typeof entry === 'object' && 'expires_at' in entry && 'refresh_token' in entry) {
+        const expiresAt = (entry as OAuthTokens).expires_at;
+        if (expiresAt && expiresAt - now < withinMs) {
+          expiring.push(provider);
+        }
+      }
+    }
+    return expiring;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Save an API key to auth.json (credentials separated from config).
  * Stored as { type: "api_key", key: "..." } alongside OAuth tokens.
  */

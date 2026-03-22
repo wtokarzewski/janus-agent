@@ -5,7 +5,7 @@
 
 import { resolve } from 'node:path';
 import type { JanusConfig } from './config/schema.js';
-import { FileTokenStore, loadApiKey } from './auth/token-store.js';
+import { FileTokenStore, loadApiKey, getExpiringProviders } from './auth/token-store.js';
 import { MessageBus } from './bus/message-bus.js';
 import { createProvider } from './llm/openai-compatible-provider.js';
 import { ProviderRegistry } from './llm/provider-registry.js';
@@ -220,6 +220,29 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
     workspaceDir: config.workspace.dir,
     onBeforeRestart: () => agent.flushAllSessions(),
   }));
+
+  // Proactive OAuth token refresh (OD-C): check every 30 min, refresh tokens expiring within 1 hour
+  const TOKEN_REFRESH_INTERVAL = 30 * 60_000;
+  const refreshStore = new FileTokenStore();
+  const tokenRefreshTimer = setInterval(async () => {
+    const expiring = getExpiringProviders(3_600_000);
+    for (const provider of expiring) {
+      try {
+        if (provider === 'anthropic') {
+          const { anthropicRefresh } = await import('./auth/anthropic-oauth.js');
+          await anthropicRefresh(refreshStore);
+          log.info(`Proactive OAuth refresh: ${provider} token refreshed`);
+        } else if (provider === 'codex') {
+          const { codexRefresh } = await import('./auth/codex-oauth.js');
+          await codexRefresh(refreshStore);
+          log.info(`Proactive OAuth refresh: ${provider} token refreshed`);
+        }
+      } catch (err) {
+        log.warn(`Proactive OAuth refresh failed for ${provider}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+  }, TOKEN_REFRESH_INTERVAL);
+  tokenRefreshTimer.unref(); // Don't block process exit
 
   return { config, db, bus, llm, tools, sessions, context, skills, learner, agent, cronService, subagentRegistry, mcpClients };
 }
