@@ -124,7 +124,8 @@ describe('WebFetchTool', () => {
     expect(parsed).toHaveProperty('extractor', 'raw');
     expect(parsed).toHaveProperty('truncated', false);
     expect(parsed).toHaveProperty('length');
-    expect(parsed).toHaveProperty('text', 'Hello world');
+    expect(parsed.text).toContain('Hello world');
+    expect(parsed.text).toContain('<untrusted_content');
   });
 
   it('pretty-prints JSON responses', async () => {
@@ -196,7 +197,7 @@ describe('WebFetchTool', () => {
 
     const result = await tool.execute({ url: 'https://example.com/start' });
     const parsed = JSON.parse(result);
-    expect(parsed.text).toBe('Final');
+    expect(parsed.text).toContain('Final');
     expect(parsed.url).toContain('redirect-3');
   });
 });
