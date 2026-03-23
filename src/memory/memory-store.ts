@@ -4,6 +4,7 @@ import type { JanusConfig } from '../config/schema.js';
 import type { MemoryIndex, MemoryChunk } from './memory-index.js';
 import type { InboundMessage } from '../bus/types.js';
 import * as log from '../utils/logger.js';
+import { localDate, localTimestamp } from '../utils/date.js';
 
 export interface MemoryContext {
   memory: string;
@@ -68,7 +69,7 @@ export class MemoryStore {
     for (let i = 0; i < 7; i++) {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().slice(0, 10);
+      const dateStr = localDate(date);
       const content = await this.readDaily(dateStr);
       if (content.trim()) {
         files.push({ source: `${dateStr}.md`, content, owner: 'shared', scope: 'global' });
@@ -205,7 +206,7 @@ export class MemoryStore {
     for (let i = 0; i < days; i++) {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().slice(0, 10);
+      const dateStr = localDate(date);
       const content = await this.readDaily(dateStr, userId, agentId);
       if (content.trim()) {
         notes.push(`<!-- ${dateStr} -->\n${content.trim()}`);
@@ -221,7 +222,7 @@ export class MemoryStore {
     const path = join(this.memoryDir, 'HISTORY.md');
     const exists = (await this.readSafe(path)).length > 0;
     const prefix = exists ? '\n' : '# History\n\n';
-    const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const timestamp = localTimestamp();
     await appendFile(path, `${prefix}- ${timestamp}: ${entry}\n`, 'utf-8');
   }
 
@@ -234,6 +235,6 @@ export class MemoryStore {
   }
 
   private todayDate(): string {
-    return new Date().toISOString().slice(0, 10);
+    return localDate();
   }
 }

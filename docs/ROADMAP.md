@@ -2,7 +2,7 @@
 
 ## Current State (Phase 11 complete)
 
-- **Codebase:** ~13,500 LOC TypeScript, 414 tests across 40 files, CI
+- **Codebase:** ~13,500 LOC TypeScript, 423 tests across 41 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
