@@ -6,6 +6,11 @@ vi.mock('../../src/config/config.js', () => ({
   saveConfig: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Mock date utils to return a fixed timezone (avoids Intl dependency in tests)
+vi.mock('../../src/utils/date.js', () => ({
+  getTimezone: vi.fn().mockReturnValue('Europe/Warsaw'),
+}));
+
 // Mock chalk to pass through (avoid terminal escape codes in tests)
 vi.mock('chalk', () => ({
   default: {
@@ -54,6 +59,7 @@ describe('Setup Wizard', () => {
       'sk-test-key', // API key
       '',            // Default model (fetch fails, falls back to manual)
       '2',           // No fallback
+      '1',           // Confirm timezone
     ]);
 
     await runSetup(undefined, io);
@@ -66,6 +72,7 @@ describe('Setup Wizard', () => {
           background: null,
         },
       },
+      timezone: 'Europe/Warsaw',
     });
   });
 
@@ -77,6 +84,7 @@ describe('Setup Wizard', () => {
       'sk-ant-test',                // API key
       'claude-opus-4-5-20250929',   // Custom model
       '2',                          // No fallback
+      '1',                          // Confirm timezone
     ]);
 
     await runSetup(undefined, io);
@@ -89,6 +97,7 @@ describe('Setup Wizard', () => {
           background: null,
         },
       },
+      timezone: 'Europe/Warsaw',
     });
   });
 
@@ -100,6 +109,7 @@ describe('Setup Wizard', () => {
       'ds-key',    // API key
       '',          // Default model
       '2',         // No fallback
+      '1',         // Confirm timezone
     ]);
 
     await runSetup(undefined, io);
@@ -112,6 +122,7 @@ describe('Setup Wizard', () => {
           background: null,
         },
       },
+      timezone: 'Europe/Warsaw',
     });
   });
 
@@ -122,6 +133,7 @@ describe('Setup Wizard', () => {
       'g-key',  // API key
       '',       // Default model
       '2',      // No fallback
+      '1',      // Confirm timezone
     ]);
 
     await runSetup(undefined, io);
@@ -139,6 +151,7 @@ describe('Setup Wizard', () => {
       'sk-oai',  // API key
       '',        // Default model
       '2',       // No fallback
+      '1',       // Confirm timezone
     ]);
 
     await runSetup(undefined, io);
@@ -151,9 +164,10 @@ describe('Setup Wizard', () => {
           background: null,
         },
       },
+      timezone: 'Europe/Warsaw',
     });
-    // question called 6 times (invalid + mode + provider + key + model + fallback)
-    expect(io.question).toHaveBeenCalledTimes(6);
+    // question called 7 times (invalid + mode + provider + key + model + fallback + timezone)
+    expect(io.question).toHaveBeenCalledTimes(7);
   });
 
   it('retries on empty API key', async () => {
@@ -165,6 +179,7 @@ describe('Setup Wizard', () => {
       'sk-valid',  // Valid key
       '',          // Default model
       '2',         // No fallback
+      '1',         // Confirm timezone
     ]);
 
     await runSetup(undefined, io);
@@ -177,8 +192,9 @@ describe('Setup Wizard', () => {
           background: null,
         },
       },
+      timezone: 'Europe/Warsaw',
     });
-    expect(io.question).toHaveBeenCalledTimes(6);
+    expect(io.question).toHaveBeenCalledTimes(7);
   });
 
   it('offers OAuth and CLI auth methods for subscription', async () => {
@@ -198,6 +214,7 @@ describe('Setup Wizard', () => {
       '',   // Press Enter for auth check
       '1',  // sonnet model
       '2',  // No fallback
+      '1',  // Confirm timezone
     ]);
 
     try {
@@ -210,6 +227,7 @@ describe('Setup Wizard', () => {
             background: null,
           },
         },
+        timezone: 'Europe/Warsaw',
       });
     } catch {
       // May fail due to auth check — that's OK, we're testing the flow structure
@@ -225,6 +243,7 @@ describe('Setup Wizard', () => {
       'sk-reconf', // API key
       '',          // Default model
       '2',         // No fallback
+      '1',         // Confirm timezone
     ]);
 
     // Should not throw
