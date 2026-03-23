@@ -15,6 +15,7 @@ import type { Database } from '../db/database.js';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { JanusConfig } from '../config/schema.js';
 import * as log from '../utils/logger.js';
+import { localTimestamp, getTimezone } from '../utils/date.js';
 
 export type ScheduleKind = 'at' | 'every' | 'cron';
 
@@ -320,7 +321,7 @@ export class CronService {
         id: `cron-${job.id}-${Date.now()}`,
         channel: 'system',
         chatId,
-        content: `[Cron job: ${job.name}] (${new Date().toISOString()})\n\n${job.task}`,
+        content: `[Cron job: ${job.name}] (${localTimestamp()})\n\n${job.task}`,
         author: 'system',
         timestamp: startedAt,
         cronDepth: 1,
@@ -396,8 +397,8 @@ export class CronService {
     const startMinutes = startH * 60 + startM;
     const endMinutes = endH * 60 + endM;
 
-    // Get current time in agent's timezone (or system default)
-    const tz = activeHours.tz;
+    // Get current time in agent's timezone, falling back to configured/system timezone
+    const tz = activeHours.tz ?? getTimezone();
     let currentMinutes: number;
     if (tz) {
       const parts = now.toLocaleTimeString('en-GB', { timeZone: tz, hour12: false }).split(':');

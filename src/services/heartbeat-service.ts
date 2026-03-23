@@ -4,6 +4,7 @@ import type { MessageBus } from '../bus/message-bus.js';
 import type { JanusConfig } from '../config/schema.js';
 import type { CronService } from './cron-service.js';
 import * as log from '../utils/logger.js';
+import { localTimestamp, getTimezone } from '../utils/date.js';
 
 export interface HeartbeatTask {
   name: string;
@@ -173,7 +174,7 @@ export class HeartbeatService {
           id: `heartbeat-${Date.now()}`,
           channel: 'system',
           chatId: task.userId ? `heartbeat:${task.userId}` : 'heartbeat',
-          content: `[Heartbeat task: ${task.name}] (${new Date().toISOString()})\n\n${task.description}`,
+          content: `[Heartbeat task: ${task.name}] (${localTimestamp()})\n\n${task.description}`,
           author: 'system',
           timestamp: new Date(),
           lane: 'heartbeat',
@@ -191,18 +192,9 @@ export class HeartbeatService {
 
 const CRON_EXPR_RE = /^[\d*,\-/]+\s+[\d*,\-/]+\s+[\d*,\-/]+\s+[\d*,\-/]+\s+[\d*,\-/]+$/;
 
-/** Detect system IANA timezone (e.g. "Europe/Warsaw"). */
-function getSystemTimezone(): string | undefined {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone;
-  } catch {
-    return undefined;
-  }
-}
-
 export function parseHeartbeatMd(content: string): HeartbeatTask[] {
   const tasks: HeartbeatTask[] = [];
-  const systemTz = getSystemTimezone();
+  const systemTz = getTimezone();
   const sections = content.split(/^## /m).filter(Boolean);
 
   for (const section of sections) {

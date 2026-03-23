@@ -8,6 +8,7 @@ import type { InboundMessage } from '../bus/types.js';
 import type { SkillLearner } from '../learner/learner.js';
 import { loadProfileMd, findUserProfile, sanitizeChatId } from '../users/user-resolver.js';
 import type { AgentContext } from '../agent/agent-resolver.js';
+import { localDate } from '../utils/date.js';
 
 interface ContextDeps {
   skills: SkillLoader;
@@ -123,7 +124,7 @@ export class ContextBuilder {
 
     // 8. Session info (dynamic — not cached by Anthropic prompt caching)
     // Use date-only (no time) to maximize Anthropic prompt cache hits within a day
-    const now = new Date().toISOString().slice(0, 10);
+    const now = localDate();
     const sessionParts = [`Current date: ${now}`, `Channel: ${opts.channel}`, `Chat: ${opts.chatId}`];
     if (opts.user) {
       const senderLabel = opts.user.name ? `${opts.user.name} (${opts.user.userId})` : opts.user.userId;
@@ -363,7 +364,7 @@ ${toolList}
       for (let d = 0; d < recentDays; d++) {
         const date = new Date();
         date.setDate(date.getDate() - d);
-        const dateStr = date.toISOString().slice(0, 10);
+        const dateStr = localDate(date);
         const dayNote = await this.deps.memory.readDaily(dateStr, userId, agentId);
         if (dayNote.trim()) {
           const label = d === 0 ? 'today' : dateStr;

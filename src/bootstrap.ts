@@ -42,6 +42,7 @@ import { SelfUpdateTool } from './tools/builtin/self-update.js';
 import { BrowserOperatorTool } from './tools/builtin/browser-operator.js';
 import { MCPClient, createMCPProxyTool } from './mcp/client.js';
 import * as log from './utils/logger.js';
+import { setTimezone } from './utils/date.js';
 
 export interface AppDeps {
   config: JanusConfig;
@@ -60,6 +61,9 @@ export interface AppDeps {
 }
 
 export async function createApp(config: JanusConfig): Promise<AppDeps> {
+  // 0. Timezone (configurable or auto-detected from system)
+  setTimezone(config.timezone);
+
   // 1. Database (optional — falls back to file-based storage)
   const db = config.database.enabled
     ? tryCreateDatabase(resolve(config.workspace.dir, config.database.path))

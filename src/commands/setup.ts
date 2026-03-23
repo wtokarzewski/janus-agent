@@ -12,6 +12,7 @@
 import * as readline from 'node:readline';
 import chalk from 'chalk';
 import { loadConfig, saveConfig } from '../config/config.js';
+import { getTimezone } from '../utils/date.js';
 
 export interface SetupOptions {
   reconfigure?: boolean;
@@ -52,6 +53,7 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
 
       if (scope === '2') {
         const fallback = await setupFallbackProvider(rl, existingPrimary);
+        const timezone = await setupTimezone(rl);
         await saveConfig({
           llm: {
             providers: {
@@ -66,6 +68,7 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
               background: null,
             },
           },
+          timezone,
         });
         console.log(chalk.green('\n  ✓ Fallback provider saved to janus.json\n'));
         await verifyProvider(fallback);
@@ -94,6 +97,8 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
 
     const fallbackChoice = await askChoice(rl, '  Select [1-2]: ', ['1', '2']);
 
+    const timezone = await setupTimezone(rl);
+
     if (fallbackChoice === '1') {
       const fallback = await setupFallbackProvider(rl, primary);
       await saveConfig({
@@ -110,6 +115,7 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
             background: null,
           },
         },
+        timezone,
       });
     } else {
       await saveConfig({
@@ -122,6 +128,7 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
             background: null,
           },
         },
+        timezone,
       });
     }
 
@@ -514,6 +521,28 @@ async function askNonEmpty(rl: ReadlineIO, prompt: string): Promise<string> {
     const answer = (await rl.question(prompt)).trim();
     if (answer) return answer;
     console.log(chalk.red('  Value cannot be empty.'));
+  }
+}
+
+/** Auto-detect timezone and confirm with user. Returns IANA timezone string. */
+async function setupTimezone(rl: ReadlineIO): Promise<string> {
+  const detected = getTimezone() ?? 'UTC';
+  console.log(`\n  Detected timezone: ${chalk.bold(detected)}`);
+  console.log('  1. Confirm');
+  console.log('  2. Change\n');
+
+  const choice = await askChoice(rl, '  Select [1-2]: ', ['1', '2']);
+
+  if (choice === '1') return detected;
+
+  const tz = await askNonEmpty(rl, '  IANA timezone (e.g. Europe/Warsaw, America/New_York): ');
+  // Validate the timezone
+  try {
+    Intl.DateTimeFormat('en-CA', { timeZone: tz });
+    return tz;
+  } catch {
+    console.log(chalk.yellow(`  ⚠ Invalid timezone "${tz}", using ${detected}`));
+    return detected;
   }
 }
 

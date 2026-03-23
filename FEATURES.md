@@ -308,13 +308,15 @@ Load priority: defaults < user config < workspace config < env vars.
 
 **Config hot reload** — `watchConfig()` watches janus.json + .janus/config.json with 500ms debounce. Changes take effect without restart in gateway mode.
 
+**Timezone** — Configurable via `timezone` field in janus.json (IANA format, e.g. `"Europe/Warsaw"`). Auto-detected from system if omitted. Used for all user-facing dates (system prompt, cron/heartbeat messages, daily memory notes, HISTORY.md timestamps). Setup wizard confirms detected timezone. Update command auto-backfills missing timezone in existing configs.
+
 ## Infrastructure
 
 - **MessageBus** — AsyncQueue with bounded capacity (100) and backpressure. Multi-lane concurrent processing (user:3, cron:1, heartbeat:1) with semaphore-based concurrency control and AbortSignal support. Steering message buffering during processing.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 414 tests across 40 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 423 tests across 41 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 
 ## Commands
 

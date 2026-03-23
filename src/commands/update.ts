@@ -9,6 +9,7 @@ import { resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import chalk from 'chalk';
+import { getTimezone } from '../utils/date.js';
 
 const execAsync = promisify(execFile);
 const IS_WIN = process.platform === 'win32';
@@ -133,6 +134,7 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
     console.log(chalk.green('Already up to date.'));
     await migrateFromHome(cwd);
     await ensureWorkspace(cwd);
+    await ensureTimezone();
     return;
   }
 
@@ -180,6 +182,26 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
   // 6. Ensure per-user directories exist
   await ensureWorkspace(cwd);
 
+  // 7. Auto-detect timezone if missing from config
+  await ensureTimezone();
+
   console.log();
   console.log(chalk.green('Update complete. Restart Janus to use the new version.'));
+}
+
+/** Auto-detect timezone and add to config if missing. */
+async function ensureTimezone(): Promise<void> {
+  try {
+    const { loadConfig, saveConfig } = await import('../config/config.js');
+    const config = await loadConfig();
+    if (config.timezone) return; // already set
+
+    const tz = getTimezone();
+    if (!tz) return;
+
+    await saveConfig({ timezone: tz });
+    console.log(chalk.green(`  + timezone: ${tz} (auto-detected, saved to janus.json)`));
+  } catch {
+    // Non-critical — skip silently
+  }
 }

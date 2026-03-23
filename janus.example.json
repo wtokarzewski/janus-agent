@@ -105,6 +105,8 @@
     "checkIntervalMs": 60000
   },
 
+  "timezone": "Europe/Warsaw",
+
   "autoUpdate": {
     "enabled": false,
     "schedule": "0 9 * * 1"

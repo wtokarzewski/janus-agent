@@ -341,6 +341,8 @@ export const JanusConfigSchema = z.object({
   bindings: z.array(BindingSchema).default([]),
   defaultAgentId: z.string().default('main'),
   session: SessionSchema.optional().transform(v => SessionSchema.parse(v ?? {})),
+  /** IANA timezone (e.g. "Europe/Warsaw"). Auto-detected from system if omitted. */
+  timezone: z.string().optional(),
 });
 
 export type RawJanusConfig = z.infer<typeof JanusConfigSchema>;
