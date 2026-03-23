@@ -40,7 +40,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
 - `skills/` — SKILL.md loader (YAML frontmatter + markdown), lazy loading (stubs + read on demand), mtime-based cache invalidation on skill file writes
 - `invites/` — InviteStore (in-memory, 24h TTL) for Telegram deep-link onboarding
 - `tools/` — 15 built-in tools (exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch [prompt injection guard: `<untrusted_content>` XML tags], web_search, browser [Playwright persistent context], heartbeat, self_update, invite), path validation (symlink safety, user-scoped access in family chats)
-- `utils/` — Logger, cross-platform shell config (`getShellConfig`, `killProcessTree`), sanitize (strip leaked LLM control tokens + invisible Unicode), SSRF guard
+- `utils/` — Logger, cross-platform shell config (`getShellConfig`, `killProcessTree`), sanitize (strip leaked LLM control tokens + invisible Unicode), SSRF guard, timezone-aware date helpers (`localDate`/`localTimestamp` via configured IANA timezone)
 - `users/` — User resolver (Telegram userId/username → Janus user), per-user profiles, tool/skill filtering, `ensureUserDir()` (auto-create `.janus/users/{id}/` on first resolution, channel-agnostic), `ensureChatDir()` (auto-create `.janus/chats/{chatId}/`)
 
 ### Browser Operator
@@ -144,7 +144,7 @@ Three auth modes (mutually exclusive):
 - **Credentials** — stored in `.janus/auth.json` (not in config). Both API keys (`{ type: "api_key", key: "..." }`) and OAuth tokens.
 - **Normalization** — legacy flat config (`llm.provider`, `llm.model`) auto-converted to providers+slots at load time (backward compatible).
 
-Key sections: `llm` (providers, slots, thinking, reasoningEffort, toolTemperature), `agent` (iterations, tokenBudget=750K, contextWindow=1M, temperature=0.3, skillLimits, memoryFlushInterval, memoryIdleFlushMs, onLLMError, lanes), `agents` (AgentDefinitionSchema[]: id, name, ego/agents/heartbeat path overrides, tools allow/deny, params, slots), `bindings` (BindingSchema[]: agentId, match bag with channel/chatId/topicId/userId), `defaultAgentId`, `workspace`, `tools` (exec deny patterns, execDenyPatternsExtra), `database`, `heartbeat`, `telegram` (token, allowlist, denyByDefault, groupPolicy), `streaming`, `gates`, `memory` (vectorSearch, vectorWeight, textWeight, recentDays, shared), `voice` (Groq Whisper), `autoUpdate` (enabled, schedule), `users` (profiles, tool/skill allow/deny), `ownerIds` (owner-only tool access), `family` (groupChatIds, shared scope), `mcp` (servers). Config hot reload via `watchConfig()` (fs.watch on janus.json + .janus/config.json).
+Key sections: `llm` (providers, slots, thinking, reasoningEffort, toolTemperature), `agent` (iterations, tokenBudget=750K, contextWindow=1M, temperature=0.3, skillLimits, memoryFlushInterval, memoryIdleFlushMs, onLLMError, lanes), `agents` (AgentDefinitionSchema[]: id, name, ego/agents/heartbeat path overrides, tools allow/deny, params, slots), `bindings` (BindingSchema[]: agentId, match bag with channel/chatId/topicId/userId), `defaultAgentId`, `workspace`, `tools` (exec deny patterns, execDenyPatternsExtra), `database`, `heartbeat`, `telegram` (token, allowlist, denyByDefault, groupPolicy), `streaming`, `gates`, `memory` (vectorSearch, vectorWeight, textWeight, recentDays, shared), `voice` (Groq Whisper), `autoUpdate` (enabled, schedule), `users` (profiles, tool/skill allow/deny), `ownerIds` (owner-only tool access), `family` (groupChatIds, shared scope), `mcp` (servers), `timezone` (IANA timezone string, auto-detected from system if omitted). Config hot reload via `watchConfig()` (fs.watch on janus.json + .janus/config.json).
 
 ## Dependencies
 
@@ -159,7 +159,7 @@ npm test           # Run all tests (vitest)
 npm run typecheck   # TypeScript type checking
 ```
 
-414 tests across 40 test files: unit (agent-resolver, anthropic-oauth, async-queue, browser-tool, codex-oauth, config-schema, context-builder, cron-service, cron-tool, exec-tool, gate-routing, heartbeat-parser, invite, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sanitize, sdk-utils, self-update-tool, session-lock, setup, shell, skill-loading, stop-command, streaming, system-message, telegram-channel, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search, voice-transcribe, web-tools) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
+423 tests across 41 test files: unit (agent-resolver, anthropic-oauth, async-queue, browser-tool, codex-oauth, config-schema, context-builder, cron-service, cron-tool, exec-tool, gate-routing, heartbeat-parser, invite, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sanitize, sdk-utils, self-update-tool, session-lock, setup, shell, skill-loading, stop-command, streaming, system-message, telegram-channel, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search, voice-transcribe, web-tools) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
 
 ## Conventions
 
