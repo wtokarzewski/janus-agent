@@ -143,7 +143,12 @@ export class TelegramChannel {
         }
       }
 
-      const chunks = chunkMessage(cleanMarkdownUrls(msg.content), MAX_TELEGRAM_MSG);
+      const cleaned = cleanMarkdownUrls(msg.content).trim();
+      if (!cleaned) {
+        log.warn(`Telegram: skipping empty message for ${msg.chatId}`);
+        return;
+      }
+      const chunks = chunkMessage(cleaned, MAX_TELEGRAM_MSG);
       for (const chunk of chunks) {
         try {
           await bot.api.sendMessage(tgChatId, chunk, topicOpts);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { localDate, localTimestamp, setTimezone, getTimezone } from '../../src/utils/date.js';
+import { localDate, localDateWithDay, localTimestamp, setTimezone, getTimezone } from '../../src/utils/date.js';
 
 describe('date utils', () => {
   beforeEach(() => {
@@ -31,6 +31,29 @@ describe('date utils', () => {
       setTimezone('Europe/Warsaw');
       const date = new Date('2026-01-15T23:30:00Z');
       expect(localDate(date)).toBe('2026-01-16');
+    });
+  });
+
+  describe('localDateWithDay', () => {
+    it('returns YYYY-MM-DD (DayName) format', () => {
+      setTimezone('UTC');
+      // 2026-01-15 is a Thursday
+      const date = new Date('2026-01-15T12:00:00Z');
+      expect(localDateWithDay(date)).toBe('2026-01-15 (Thursday)');
+    });
+
+    it('uses configured timezone for day name', () => {
+      // At 2026-01-15T23:30:00Z, UTC is Thursday Jan 15 but Tokyo (UTC+9) is Friday Jan 16
+      setTimezone('Asia/Tokyo');
+      const date = new Date('2026-01-15T23:30:00Z');
+      expect(localDateWithDay(date)).toBe('2026-01-16 (Friday)');
+    });
+
+    it('returns correct day for Warsaw timezone', () => {
+      setTimezone('Europe/Warsaw');
+      // 2026-03-23 is a Monday
+      const date = new Date('2026-03-23T12:00:00Z');
+      expect(localDateWithDay(date)).toBe('2026-03-23 (Monday)');
     });
   });
 

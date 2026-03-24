@@ -52,6 +52,17 @@ export function localDate(date: Date = new Date()): string {
   return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
 }
 
+/** Returns date as "YYYY-MM-DD (DayName)" in configured timezone. */
+export function localDateWithDay(date: Date = new Date()): string {
+  const base = localDate(date);
+  const tz = getTimezone();
+  const dayName = date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    ...(tz ? { timeZone: tz } : {}),
+  });
+  return `${base} (${dayName})`;
+}
+
 /** Returns timestamp as YYYY-MM-DD HH:MM:SS in configured timezone. */
 export function localTimestamp(date: Date = new Date()): string {
   const p = partsInTz(date);
