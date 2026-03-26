@@ -2,7 +2,7 @@
 
 ## Current State (Phase 11 complete)
 
-- **Codebase:** ~13,500 LOC TypeScript, 423 tests across 41 files, CI
+- **Codebase:** ~13,500 LOC TypeScript, 433 tests across 41 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
@@ -154,6 +154,13 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Onboard creates `.janus/agents/` directory
 - Zero-config backward compat (empty agents[] = implicit "main")
 - 414 tests across 40 files
+
+### Cross-User Cron Reminders (#146)
+- `target_user_id` on cron tool: creates job owned by target user, records requester in task for notification
+- Job ID in cron execution context: `(id: {jobId})` enables agent self-removal via `cron remove`
+- Cron session context injection: last 10 messages from target user's primary session injected into cron context
+- Solves: session isolation (cron didn't see confirmations), cross-user visibility, infinite reminder spam
+- 433 tests across 41 files
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
