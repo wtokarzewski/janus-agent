@@ -332,9 +332,19 @@ export class AgentLoop {
     const history = await this.deps.sessions.getHistory(sessionKey);
     const cleanHistory = repairToolMessages(history);
     const maxTokens = this.deps.config.agent.tokenBudget;
-    const userContent = msg.replyContext
+    let userContent = msg.replyContext
       ? `[Reply to ${msg.replyContext}]\n\n${msg.content}`
       : msg.content;
+
+    // Context injection: for cron/heartbeat jobs, inject recent messages from the target user's
+    // primary session so the cron agent can see confirmations like "done" or "cancel".
+    if (msg.cronDepth && msg.cronDepth > 0) {
+      const injected = await this.injectTargetSessionContext(msg, agentId);
+      if (injected) {
+        userContent = `${injected}\n\n${userContent}`;
+      }
+    }
+
     const trimmedHistory = trimHistoryToTokenBudget(cleanHistory, systemPrompt, userContent, maxTokens);
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
@@ -528,6 +538,59 @@ export class AgentLoop {
       await this.deps.bus.publishOutbound(response, new AbortController().signal).catch(err => {
         log.warn(`Failed to publish system message response: ${err instanceof Error ? err.message : String(err)}`);
       });
+    }
+  }
+
+  /**
+   * Inject recent messages from the target user's primary session into cron context.
+   * This lets the cron agent see confirmations ("done", "cancel") from the user's main conversation.
+   *
+   * Resolution: real chatId (group) → group session; userId → user's DM session; else → skip.
+   */
+  private async injectTargetSessionContext(msg: InboundMessage, agentId: string): Promise<string | null> {
+    let sourceSessionKey: string | null = null;
+
+    // 1. Real group chat ID (not cron:/heartbeat prefixed) → use group session
+    if (msg.chatId && !msg.chatId.startsWith('cron:') && !msg.chatId.startsWith('heartbeat')) {
+      const channel = this.findChannelForChat(msg.chatId);
+      sourceSessionKey = this.deps.agentResolver
+        ? this.deps.agentResolver.resolveSessionKey(agentId, { ...msg, channel, chatId: msg.chatId })
+        : `${agentId}:${channel}:${msg.chatId}`;
+    }
+    // 2. User-targeted job → find user's primary DM session via their profile identity
+    else if (msg.user?.userId) {
+      const profile = findUserProfile(msg.user.userId, this.deps.config);
+      const identity = profile?.identities.find(i => i.channelUserId);
+      if (identity?.channelUserId) {
+        sourceSessionKey = this.deps.agentResolver
+          ? this.deps.agentResolver.resolveSessionKey(agentId, {
+              ...msg,
+              channel: identity.channel,
+              chatId: identity.channelUserId,
+            })
+          : `${agentId}:${identity.channel}:${identity.channelUserId}`;
+      }
+    }
+
+    if (!sourceSessionKey) return null;
+
+    try {
+      const recentMessages = await this.deps.sessions.getHistory(sourceSessionKey, 10);
+      // Only include user/assistant text messages (skip tool_use/tool_result)
+      const textMessages = recentMessages
+        .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+        .slice(-10);
+
+      if (textMessages.length === 0) return null;
+
+      const formatted = textMessages
+        .map(m => `${m.role}: ${String(m.content).slice(0, 300)}`)
+        .join('\n');
+
+      return `[Recent messages from target user's conversation:\n${formatted}\nEnd of recent messages — if the user already confirmed or rejected the task, act accordingly (remove the cron job and notify the requester).]`;
+    } catch {
+      // Source session may not exist yet — that's fine, skip injection
+      return null;
     }
   }
 
