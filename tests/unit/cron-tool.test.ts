@@ -249,4 +249,127 @@ describe('CronTool', () => {
     const result = await tool.execute({ action: 'runs', id });
     expect(JSON.parse(result)).toEqual([]);
   });
+
+  describe('target_user_id (cross-user reminders)', () => {
+    it('should create job owned by target user', async () => {
+      const result = await tool.execute(
+        {
+          action: 'add',
+          name: 'laundry-reminder',
+          schedule_kind: 'every',
+          schedule_value: '300000',
+          task: 'Remind about laundry',
+          target_user_id: 'wojtek',
+        },
+        { userId: 'monika' },
+      );
+      const job = JSON.parse(result);
+      expect(job.userId).toBe('wojtek');
+      expect(job._notice).toContain('wojtek');
+      expect(job._notice).toContain('monika');
+    });
+
+    it('should append [Requested by] to task for cross-user jobs', async () => {
+      const result = await tool.execute(
+        {
+          action: 'add',
+          name: 'cross-user-test',
+          schedule_kind: 'every',
+          schedule_value: '60000',
+          task: 'Do something',
+          target_user_id: 'wojtek',
+        },
+        { userId: 'monika' },
+      );
+      const job = JSON.parse(result);
+      expect(job.task).toContain('[Requested by user: monika');
+      expect(job.task).toContain('notify them via the message tool');
+    });
+
+    it('should NOT append [Requested by] when target equals requester', async () => {
+      const result = await tool.execute(
+        {
+          action: 'add',
+          name: 'self-reminder',
+          schedule_kind: 'every',
+          schedule_value: '60000',
+          task: 'My own reminder',
+          target_user_id: 'wojtek',
+        },
+        { userId: 'wojtek' },
+      );
+      const job = JSON.parse(result);
+      expect(job.task).not.toContain('[Requested by');
+      expect(job._notice).toBeUndefined();
+    });
+
+    it('should make cross-user job visible to target in list', async () => {
+      // Monika creates a reminder for Wojtek
+      await tool.execute(
+        {
+          action: 'add',
+          name: 'for-wojtek',
+          schedule_kind: 'every',
+          schedule_value: '300000',
+          task: 'Laundry',
+          target_user_id: 'wojtek',
+        },
+        { userId: 'monika' },
+      );
+      // Monika's own job
+      await tool.execute(
+        { action: 'add', name: 'monika-private', schedule_kind: 'every', schedule_value: '60000', task: 'Private' },
+        { userId: 'monika' },
+      );
+
+      // Wojtek sees the job targeted at him
+      const wojtekResult = await tool.execute({ action: 'list' }, { userId: 'wojtek' });
+      const wojtekJobs = JSON.parse(wojtekResult);
+      expect(wojtekJobs).toHaveLength(1);
+      expect(wojtekJobs[0].name).toBe('for-wojtek');
+
+      // Monika does NOT see it (it belongs to Wojtek now)
+      const monikaResult = await tool.execute({ action: 'list' }, { userId: 'monika' });
+      const monikaJobs = JSON.parse(monikaResult);
+      expect(monikaJobs).toHaveLength(1);
+      expect(monikaJobs[0].name).toBe('monika-private');
+    });
+
+    it('should allow target user to remove cross-user job', async () => {
+      const addResult = await tool.execute(
+        {
+          action: 'add',
+          name: 'removable',
+          schedule_kind: 'every',
+          schedule_value: '60000',
+          task: 'Test',
+          target_user_id: 'wojtek',
+        },
+        { userId: 'monika' },
+      );
+      const { id } = JSON.parse(addResult);
+
+      // Wojtek can remove it (he's the owner now)
+      const removeResult = await tool.execute({ action: 'remove', id }, { userId: 'wojtek' });
+      expect(removeResult).toContain('removed');
+    });
+
+    it('should take precedence over user_id', async () => {
+      const result = await tool.execute(
+        {
+          action: 'add',
+          name: 'precedence-test',
+          schedule_kind: 'every',
+          schedule_value: '60000',
+          task: 'Test',
+          target_user_id: 'wojtek',
+          user_id: 'maciek',
+        },
+        { userId: 'monika' },
+      );
+      const job = JSON.parse(result);
+      // target_user_id wins over user_id
+      expect(job.userId).toBe('wojtek');
+    });
+  });
 });

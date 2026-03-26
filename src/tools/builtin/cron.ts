@@ -50,6 +50,10 @@ export class CronTool implements ContextualTool {
         type: 'string',
         description: 'Owner user ID. For update: reassign job ownership. For add: override auto-detected userId. Use "system" for system-wide jobs (no owner).',
       },
+      target_user_id: {
+        type: 'string',
+        description: 'Target user ID for cross-user reminders. Creates the job owned by the target user (they see it, control it). Use when one user asks to remind another user. The requesting user is recorded in the task for notification on completion.',
+      },
       chat_id: {
         type: 'string',
         description: 'Target group chat ID for group-scoped jobs. Response will be sent to this chat instead of a specific user.',
@@ -100,6 +104,8 @@ export class CronTool implements ContextualTool {
       case 'list': {
         const includeDisabled = args.include_disabled === true;
         // Scoped to own + system + current chat's group jobs
+        // Note: familyUserIds intentionally NOT passed — family members' personal jobs stay private.
+        // Cross-user reminders use target_user_id which sets userId to the target, making them visible.
         const jobs = this.cronService.listJobsForUser(
           reqCtx?.userId,
           undefined,
@@ -128,11 +134,19 @@ export class CronTool implements ContextualTool {
         if (!name || !scheduleKind || !scheduleValue || !task) {
           return 'Error: add requires name, schedule_kind, schedule_value, and task.';
         }
+        // Cross-user reminder: record the requester in the task for notification on completion/cancellation
+        const targetUserId = args.target_user_id ? String(args.target_user_id) : undefined;
+        if (targetUserId && reqCtx?.userId && targetUserId !== reqCtx.userId) {
+          task += `\n\n[Requested by user: ${reqCtx.userId}. When the task is confirmed or this job is cancelled, notify them via the message tool.]`;
+        }
         // Inject recent conversation context so cron job knows what the user was talking about
         if (reqCtx?.recentMessages?.length) {
           const context = reqCtx.recentMessages.join('\n');
           task += `\n\n[Conversation context when this job was created:\n${context}\n]`;
         }
+        // Resolve effective userId: target_user_id > user_id > reqCtx.userId
+        const effectiveUserId = targetUserId
+          ?? (args.user_id === 'system' ? undefined : (args.user_id ? String(args.user_id) : reqCtx?.userId));
         const job = this.cronService.addJob({
           name,
           scheduleKind,
@@ -140,9 +154,15 @@ export class CronTool implements ContextualTool {
           scheduleTz: args.schedule_tz ? String(args.schedule_tz) : undefined,
           task,
           enabled: args.enabled !== false,
-          userId: args.user_id === 'system' ? undefined : (args.user_id ? String(args.user_id) : reqCtx?.userId),
+          userId: effectiveUserId,
           chatId: args.chat_id ? String(args.chat_id) : undefined,
         });
+        // Guide the agent to notify both target and requester
+        if (targetUserId && reqCtx?.userId && targetUserId !== reqCtx.userId) {
+          const result = JSON.parse(JSON.stringify(job));
+          result._notice = `Job created for user "${targetUserId}". Use the message tool to: 1) notify the target user that this reminder was set up for them, 2) notify the requester ("${reqCtx.userId}") that the reminder is active.`;
+          return JSON.stringify(result, null, 2);
+        }
         return JSON.stringify(job, null, 2);
       }
 

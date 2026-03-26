@@ -231,6 +231,32 @@ describe('CronService missed job staggering', () => {
   });
 });
 
+describe('CronService execution context', () => {
+  it('should include job ID in cron execution message', async () => {
+    let publishedContent = '';
+    bus.publishInbound = async (msg) => {
+      publishedContent = msg.content;
+    };
+
+    const job = service.addJob({
+      name: 'id-test',
+      scheduleKind: 'every',
+      scheduleValue: '60000',
+      task: 'Check something',
+    });
+
+    // Force next_run_at to now so it fires
+    db.db.prepare('UPDATE cron_jobs SET next_run_at = ? WHERE id = ?')
+      .run(new Date(Date.now() - 1000).toISOString(), job.id);
+
+    await (service as unknown as { onTimer(): Promise<void> }).onTimer();
+
+    expect(publishedContent).toContain(`(id: ${job.id})`);
+    expect(publishedContent).toContain('[Cron job: id-test]');
+    expect(publishedContent).toContain('Check something');
+  });
+});
+
 describe('HeartbeatService → CronService sync', () => {
   it('should sync HEARTBEAT.md tasks to cron_jobs', async () => {
     const heartbeatContent = `# Heartbeat

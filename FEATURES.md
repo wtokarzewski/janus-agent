@@ -166,6 +166,9 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
   - Per-user job ownership: userId column (migration 6), ownership enforcement on update/delete/list.
   - Per-agent jobs: agentId column (migration 10), propagated to inbound messages.
   - Custom session IDs: optional sessionId per cron job — reuse same session across runs (migration 7).
+  - Cross-user reminders: `target_user_id` creates job owned by target user with `[Requested by]` metadata. Target sees/controls the job, requester is notified on completion/cancellation.
+  - Cron session context injection: last 10 messages from target user's primary session (DM or group) injected into cron execution context — agent sees confirmations like "done".
+  - Job ID in execution context: `(id: {jobId})` in cron message enables agent self-removal via `cron remove`.
   - CRUD: addJob, updateJob, removeJob, listJobs, getRuns.
 - **HeartbeatService** — Parses `HEARTBEAT.md` for periodic tasks.
   - Supports `every Xm/h/d` and cron expressions.
