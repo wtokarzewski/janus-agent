@@ -1,8 +1,8 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 414 passing tests.
+Canonical list of implemented, working features. Verified against source code and 433 passing tests.
 
-**Last updated:** 2026-03-22
+**Last updated:** 2026-03-28
 
 ---
 
@@ -26,7 +26,10 @@ Canonical list of implemented, working features. Verified against source code an
 - **Context pruning (pruneOldToolResults)** — Tool results older than 8 messages automatically trimmed to 200 chars. Reclaims context space without waiting for emergency compression.
 - **Compaction hardening** — Double-fire guard (no concurrent compaction on same session), post-compaction sanity check (verifies token reduction), task-aware summarization (preserves active task context).
 - **Compaction notifications** — Silent background summarization with ⏳ status indicator.
-- **SSRF guard** — Blocks private/reserved IPs (localhost, 10.x, 172.16-31.x, 192.168.x, link-local, cloud metadata) in web_fetch and browser tools.
+- **SSRF guard** — Blocks private/reserved IPs (localhost, 10.x, 172.16-31.x, 192.168.x, link-local, cloud metadata) and IPv6 private ranges (fc00::/7, fe80::/10, ff00::/8) in web_fetch and browser tools.
+- **Secret redaction in tool results** — Automatically masks secrets in tool output before sending to LLM: `KEY=`, `Bearer`, `sk-`/`ghp_`/`AKIA`/JWT patterns replaced with `[REDACTED]`.
+- **Token masking in logger** — Sensitive tokens and keys masked in log output to prevent credential leakage in logs.
+- **Strict ownerIds** — Unknown userId is never treated as owner in multi-user mode. Only explicitly listed `ownerIds` have elevated privileges.
 
 ## Multi-Agent
 
@@ -61,6 +64,7 @@ Three auth modes (mutually exclusive):
 | `codex` (OAuth) | Subscription, native OAuth | Responses API (PKCE) |
 
 - **Native OAuth (PKCE)** — Browser-based login for Anthropic + Codex with auto-refresh. Credential storage (`~/.janus/auth.json`, 0o600) — both OAuth tokens and API keys. Proactive refresh: 30-min interval checks for tokens expiring within 1 hour via `getExpiringProviders()`, auto-refreshes before failover is needed.
+- **Credential encryption** — AES-256-GCM encryption for `auth.json` at rest. Transparent encrypt/decrypt on read/write.
 - **Anthropic OAuth identity** — Injects required "You are Claude Code" system prompt + beta headers (`claude-code-20250219`, `oauth-2025-04-20`) for subscription OAuth tokens.
 - **Extended thinking** — `llm.thinking.enabled` + `budgetTokens`. Thinking levels: off/minimal/low/medium/high.
 - **Prompt caching** — `cache_control: ephemeral` on system prompt + last tool def. Timestamp in dynamic session tail for cache stability.
@@ -88,7 +92,7 @@ Three auth modes (mutually exclusive):
 | `spawn_agent` | Spawn child agent for subtasks (minimal prompt, isolated session). |
 | `cron` | Create, list, update, delete persistent cron jobs. |
 | `web_fetch` | Fetch URLs (HTML→markdown, JSON, size/redirect guards, CAPTCHA detection, Jina Reader option, SSRF guard, anti-Cloudflare retry with UA rotation and browser-like headers, escalation hint to browser tool, prompt injection guard: output wrapped in `<untrusted_content>` XML tags). |
-| `web_search` | Web search (Brave API or DuckDuckGo fallback, in-memory cache 15min TTL). |
+| `web_search` | Web search (Brave API or DuckDuckGo fallback, in-memory cache 15min TTL, prompt injection guard: output wrapped in `<untrusted_content>` XML tags). |
 | `browser` | **Real Chrome** via Playwright persistent context. AI-native snapshots with element refs. Auto-launches Chrome with dedicated profile. 30min idle timeout. Safety policy blocks checkout/payment. |
 | `heartbeat` | Manage periodic heartbeat tasks. |
 | `self_update` | Check/apply updates (git pull, npm install, test, self-respawn, auto-revert). |
@@ -97,6 +101,7 @@ Three auth modes (mutually exclusive):
 ### Tool Infrastructure
 
 - **Tool registry** — Centralized tool registration with per-user allow/deny lists.
+- **Exec master switch** — `tools.execEnabled` config flag disables exec tool entirely when set to `false`. Overrides all other exec permissions.
 - **Owner-only tools** — `ownerOnly` flag on tool definitions. `ownerIds` in config (defaults to first user). Enforced in ToolRegistry + filtered from system prompt for non-owners.
 - **Gate integration** — Pattern-based confirmation before destructive commands.
 - **Context injection** — Tools receive workspace dir, chatId, userId, browser config.
@@ -155,6 +160,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 - **Gate on file writes** — 11 sensitive path patterns (/etc, .ssh, .env, .git/config, etc.).
 - **Gate on spawn_agent** — Always gated with task preview.
 - **Process group kill** — `spawn({detached:true})` + `kill(-pid)` on exec timeout.
+- **Gate audit log** — All gate decisions (approve/deny/timeout) logged to SQLite `gate_audit_log` table (migration 11). Provides accountability trail for destructive operations.
 
 ## Scheduling
 
@@ -278,7 +284,7 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 ## Database
 
 - **SQLite** (better-sqlite3), WAL mode, numbered migrations.
-- **10 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id), per-user cron (user_id column), cron session IDs (session_id column), cron chat_id column, cron_runs finished_at column, cron_jobs agent_id column.
+- **11 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id), per-user cron (user_id column), cron session IDs (session_id column), cron chat_id column, cron_runs finished_at column, cron_jobs agent_id column, gate_audit_log table.
 - **Memory write validation** — Verify write succeeded by reading back. After 3 consecutive failures, dump to timestamped backup file.
 - **Graceful fallback** — File-based storage when database disabled.
 
@@ -291,7 +297,7 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 | `llm` | providers (object), slots (default/background), maxTokens, temperature (default 0.3), thinking, reasoningEffort |
 | `agent` | maxIterations (30), tokenBudget (750K), contextWindow (1M), summarizationThreshold (40), toolRetries, lanes |
 | `workspace` | dir, memoryDir, sessionsDir, skillsDir |
-| `tools` | execTimeout, execDenyPatterns[], maxFileSize |
+| `tools` | execEnabled, execTimeout, execDenyPatterns[], maxFileSize |
 | `database` | enabled, path |
 | `heartbeat` | enabled, checkIntervalMs |
 | `telegram` | enabled, token, allowlist[], denyByDefault (true), groupPolicy (all\|mention) |
@@ -319,7 +325,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 423 tests across 41 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 433 tests across 41 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 
 ## Commands
 
