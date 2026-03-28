@@ -3,6 +3,7 @@ import type { Tool, ToolContext, RequestContext } from './types.js';
 import type { PatternGate } from '../gates/pattern-gate.js';
 import type { GateService } from '../gates/types.js';
 import { isContextualTool, toolToDefinition } from './types.js';
+import { logGateDecision } from '../gates/gate-audit.js';
 import * as log from '../utils/logger.js';
 
 export class ToolRegistry {
@@ -75,7 +76,8 @@ export class ToolRegistry {
       const action = this.gate.patterns.formatAction(name, args);
       log.info(`Gate triggered: ${action}`);
 
-      const allowed = await this.gate.service.confirm({ tool: name, action, args, chatId: reqCtx?.chatId });
+      const allowed = await this.gate.service.confirm({ tool: name, action, args, chatId: reqCtx?.chatId, userId: reqCtx?.userId });
+      logGateDecision({ tool: name, action, approved: allowed, userId: reqCtx?.userId, chatId: reqCtx?.chatId });
       if (!allowed) {
         log.info(`Gate denied: ${action}`);
         return `Action denied by user: ${action}`;

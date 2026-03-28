@@ -115,4 +115,18 @@ export const migrations: string[] = [
   ALTER TABLE cron_jobs ADD COLUMN agent_id TEXT;
   CREATE INDEX IF NOT EXISTS idx_cron_jobs_agent_id ON cron_jobs(agent_id);
   `,
+
+  // Migration 11: gate audit log — track tool confirmation approvals/denials
+  `
+  CREATE TABLE IF NOT EXISTS gate_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool TEXT NOT NULL,
+    action TEXT NOT NULL,
+    approved INTEGER NOT NULL,
+    user_id TEXT,
+    chat_id TEXT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_gate_audit_timestamp ON gate_audit_log(timestamp);
+  `,
 ];
