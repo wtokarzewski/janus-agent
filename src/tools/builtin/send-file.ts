@@ -19,8 +19,8 @@ export class SendFileTool implements ContextualTool {
       path: { type: 'string', description: 'Path to the file (relative to workspace or absolute)' },
       file_type: {
         type: 'string',
-        enum: ['document', 'photo', 'audio', 'video'],
-        description: 'Type of file — affects how it is displayed. Default: document',
+        enum: ['document', 'photo', 'audio', 'video', 'voice'],
+        description: 'Type of file — affects how it is displayed. "voice" sends as Telegram voice bubble (OGG Opus). Default: document',
       },
       caption: { type: 'string', description: 'Optional caption for the file' },
     },
@@ -43,7 +43,7 @@ export class SendFileTool implements ContextualTool {
     const channel = String(args.channel ?? '');
     const chatId = String(args.chat_id ?? '');
     const filePath = String(args.path ?? '');
-    const fileType = String(args.file_type ?? 'document') as 'document' | 'photo' | 'audio' | 'video';
+    const fileType = String(args.file_type ?? 'document') as 'document' | 'photo' | 'audio' | 'video' | 'voice';
     const caption = args.caption ? String(args.caption) : '';
 
     if (!channel) return 'Error: No channel provided';
