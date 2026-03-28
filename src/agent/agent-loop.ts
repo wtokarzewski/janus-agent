@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
 import type { LLMMessage, ToolContentBlock } from '../llm/types.js';
@@ -67,7 +68,7 @@ interface IterateResult {
  */
 export class AgentLoop {
   private deps: AgentDeps;
-  private flushState = new Map<string, { lastFlushed: number; userId?: string; userName?: string; scope?: InboundMessage['scope']; idleTimer?: ReturnType<typeof setTimeout>; flushing?: boolean }>();
+  private flushState = new Map<string, { lastFlushed: number; lastFlushHash?: string; userId?: string; userName?: string; scope?: InboundMessage['scope']; idleTimer?: ReturnType<typeof setTimeout>; flushing?: boolean }>();
   private _iterationControllers = new Map<string, AbortController>();
   /** Guard against concurrent summarization (C2) */
   private summarizing = new Set<string>();
@@ -434,13 +435,19 @@ export class AgentLoop {
       }, idleMs);
     }
 
-    // Count-based flush trigger (pointer-based)
+    // Count-based flush trigger (pointer-based) with content hash dedup (CR-AS)
     const flushInterval = this.deps.config.agent.memoryFlushInterval;
     const unflushed = fullSession.messages.length - state.lastFlushed;
     if (this.deps.memory && !state.flushing && unflushed >= flushInterval) {
-      this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
-        log.warn(`Periodic memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      // Hash unflushed content to skip flush if content hasn't changed (false-duplicate prevention)
+      const unflushedContent = fullSession.messages.slice(state.lastFlushed).map(m => String(m.content ?? '')).join('|');
+      const contentHash = createHash('sha256').update(unflushedContent).digest('hex').slice(0, 16);
+      if (contentHash !== state.lastFlushHash) {
+        state.lastFlushHash = contentHash;
+        this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
+          log.warn(`Periodic memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
     }
 
     // Token-aware flush trigger (60% of budget)
@@ -453,9 +460,11 @@ export class AgentLoop {
     }
 
     // 7. Maybe summarize (async, non-blocking)
+    // CR-AU: Skip compaction for heartbeat/cron — they're short-lived, compaction wastes tokens
+    const isEphemeralLane = msg.lane === 'heartbeat' || msg.lane === 'cron';
     const tokenThreshold = this.deps.config.agent.tokenBudget * 0.75;
-    if (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
-        || sessionTokenEstimate > tokenThreshold) {
+    if (!isEphemeralLane && (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
+        || sessionTokenEstimate > tokenThreshold)) {
       // Double-fire guard: skip if already summarizing this session (C2)
       if (this.summarizing.has(sessionKey)) {
         log.debug(`[${sessionKey}] Skipping summarization — already in progress`);
@@ -999,7 +1008,8 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
           { role: 'user', content: `New messages to process:\n${messagesText}` },
         ],
         temperature: 0.3,
-        maxTokens: 2048,
+        // CR-AT: Reserve headroom — cap completion tokens so prompt + output fits context
+        maxTokens: Math.min(2048, Math.max(512, Math.floor(this.deps.config.agent.tokenBudget * 0.1))),
       }, 'summarize'), 90_000, 'Memory flush LLM call timed out');
 
       log.info(`[${sessionKey}] Memory flush: LLM call done in ${Date.now() - flushStart}ms`);
