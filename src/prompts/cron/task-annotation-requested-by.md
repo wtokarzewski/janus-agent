@@ -1,0 +1,1 @@
+[Requested by user: {{requesterId}}. When the task is confirmed or this job is cancelled, notify them via the message tool.]
