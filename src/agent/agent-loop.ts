@@ -13,7 +13,7 @@ import type { GateService } from '../gates/types.js';
 import { findUserProfile } from '../users/user-resolver.js';
 import { loadPrompt } from '../prompts/loader.js';
 import * as log from '../utils/logger.js';
-import { stripControlTokens } from '../utils/sanitize.js';
+import { stripControlTokens, redactSecrets } from '../utils/sanitize.js';
 import type { AgentResolver, AgentContext } from './agent-resolver.js';
 import { ensureAgentDir } from '../users/user-resolver.js';
 
@@ -290,11 +290,16 @@ export class AgentLoop {
       ? this.deps.config.users.map(u => u.id)
       : undefined;
 
-    // Owner check: ownerIds from config, or first user if not set
+    // Owner check: ownerIds from config, or first user if not set.
+    // In multi-user mode (users configured), unknown userId is NOT owner.
+    // In single-user CLI mode (no users), assume owner for backward compat.
     const ownerIds = this.deps.config.ownerIds.length > 0
       ? this.deps.config.ownerIds
       : this.deps.config.users.length > 0 ? [this.deps.config.users[0].id] : [];
-    const isOwner = !msg.user?.userId || ownerIds.includes(msg.user.userId);
+    const hasMultiUser = this.deps.config.users.length > 0;
+    const isOwner = hasMultiUser
+      ? !!msg.user?.userId && ownerIds.includes(msg.user.userId)
+      : !msg.user?.userId || ownerIds.includes(msg.user.userId);
 
     // Merge agent + user tool filters: allow ∩ (both must allow), deny ∪ (either can deny)
     const mergedToolAllow = agentCtx?.toolAllow && userProfile?.tools?.allow
@@ -1316,10 +1321,12 @@ function parseToolResult(rawResult: string): string | ToolContentBlock[] {
 const MAX_TOOL_RESULT_CHARS = 4000;
 
 function truncateToolResult(result: string): string {
-  if (result.length <= MAX_TOOL_RESULT_CHARS) return result;
+  // Redact secrets before sending to LLM (CR-BE)
+  const safe = redactSecrets(result);
+  if (safe.length <= MAX_TOOL_RESULT_CHARS) return safe;
   const half = Math.floor(MAX_TOOL_RESULT_CHARS / 2);
-  const trimmed = result.length - MAX_TOOL_RESULT_CHARS;
-  return `${result.slice(0, half)}\n\n[... truncated ${trimmed} characters ...]\n\n${result.slice(-half)}`;
+  const trimmed = safe.length - MAX_TOOL_RESULT_CHARS;
+  return `${safe.slice(0, half)}\n\n[... truncated ${trimmed} characters ...]\n\n${safe.slice(-half)}`;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
