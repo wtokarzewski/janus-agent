@@ -251,6 +251,9 @@ export class AgentLoop {
   }
 
   private async processMessage(msg: InboundMessage, externalReqCtx?: Partial<RequestContext>): Promise<OutboundMessage & { streamed?: boolean }> {
+    // LLM purpose routing: heartbeat → background (Haiku), everything else → default (Opus)
+    const llmPurpose = msg.lane === 'heartbeat' ? 'heartbeat' : 'chat';
+
     // 0. Resolve agent from bindings
     const agentCtx = this.deps.agentResolver?.resolve(msg);
     const agentId = agentCtx?.id ?? 'main';
@@ -381,7 +384,7 @@ export class AgentLoop {
       .slice(-5)
       .map(m => `${m.role}: ${'content' in m ? String(m.content).slice(0, 200) : ''}`);
 
-    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx);
+    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose);
 
     // 6. Save final assistant message
     await this.deps.sessions.append(sessionKey, [
@@ -623,6 +626,7 @@ export class AgentLoop {
     chatId?: string,
     reqCtx?: RequestContext,
     agentCtx?: AgentContext,
+    llmPurpose: string = 'chat',
   ): Promise<IterateResult> {
     let lastContent = '';
     let totalToolCalls = 0;
@@ -702,9 +706,9 @@ export class AgentLoop {
           const onChunk = (chunk: string) => {
             this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'chunk', chunk);
           };
-          response = await this.deps.llm.chatStream(chatRequest, onChunk, 'chat');
+          response = await this.deps.llm.chatStream(chatRequest, onChunk, llmPurpose);
         } else {
-          response = await this.deps.llm.chat(chatRequest, 'chat');
+          response = await this.deps.llm.chat(chatRequest, llmPurpose);
         }
         log.info(`[${sessionKey}] LLM call done in ${Date.now() - llmStart}ms (tokens=${response.usage.totalTokens})`);
       } catch (err) {
@@ -980,7 +984,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
         ],
         temperature: 0.3,
         maxTokens: 2048,
-      }, 'flush'), 90_000, 'Memory flush LLM call timed out');
+      }, 'summarize'), 90_000, 'Memory flush LLM call timed out');
 
       log.info(`[${sessionKey}] Memory flush: LLM call done in ${Date.now() - flushStart}ms`);
 
