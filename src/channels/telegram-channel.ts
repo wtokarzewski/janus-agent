@@ -10,6 +10,7 @@ import type { InviteStore } from '../invites/invite-store.js';
 import { saveConfig } from '../config/config.js';
 import { ensureUserDir, ensureChatDir } from '../users/user-resolver.js';
 import { transcribeVoice } from './voice-transcribe.js';
+import { synthesizeVoice } from './voice-synthesize.js';
 import * as log from '../utils/logger.js';
 
 const MAX_TELEGRAM_MSG = 4096;
@@ -117,6 +118,7 @@ export class TelegramChannel {
             case 'photo': await bot.api.sendPhoto(tgChatId, file, captionOpts); break;
             case 'audio': await bot.api.sendAudio(tgChatId, file, captionOpts); break;
             case 'video': await bot.api.sendVideo(tgChatId, file, captionOpts); break;
+            case 'voice': await bot.api.sendVoice(tgChatId, file, captionOpts); break;
             default: await bot.api.sendDocument(tgChatId, file, captionOpts); break;
           }
         } catch (err) {
@@ -164,6 +166,18 @@ export class TelegramChannel {
               log.error(`Telegram: retry also failed for ${msg.chatId}: ${retryErr instanceof Error ? retryErr.message : retryErr}`);
             }
           }
+        }
+      }
+
+      // Auto-TTS: send voice reply when responding to a voice message
+      if (msg.voiceReply && config.tts?.enabled && config.tts.apiKey && cleaned.length <= 4096) {
+        try {
+          log.info(`Telegram: synthesizing TTS for ${msg.chatId} (${cleaned.length} chars)`);
+          const audio = await synthesizeVoice(cleaned, config.tts.apiKey, config.tts.model, config.tts.voice);
+          await bot.api.sendVoice(tgChatId, new InputFile(Buffer.from(audio), 'reply.ogg'), topicOpts);
+          log.info(`Telegram: TTS voice sent to ${msg.chatId}`);
+        } catch (err) {
+          log.warn(`Telegram: TTS failed for ${msg.chatId}: ${err instanceof Error ? err.message : err}`);
         }
       }
     });
@@ -518,6 +532,7 @@ export class TelegramChannel {
         content: `[Voice message transcription]: ${transcript}${caption}`,
         author,
         timestamp: new Date(),
+        isVoice: true,
         user: resolved ? {
           userId: resolved.userId,
           name: resolved.name,

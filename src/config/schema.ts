@@ -189,6 +189,14 @@ const VoiceSchema = z.object({
   maxDurationSec: z.number().default(300),
 });
 
+const TTSSchema = z.object({
+  enabled: z.boolean().default(false),
+  provider: z.enum(['openai']).default('openai'),
+  apiKey: z.string().optional(),
+  model: z.enum(['tts-1', 'tts-1-hd']).default('tts-1'),
+  voice: z.enum(['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']).default('nova'),
+});
+
 const BrowserOperatorSchema = z.object({
   chromePath: z.string().optional(),
   profileDir: z.string().optional(),
@@ -333,6 +341,7 @@ export const JanusConfigSchema = z.object({
   gates: GatesSchema.optional().transform(v => GatesSchema.parse(v ?? {})),
   memory: MemorySchema.optional().transform(v => MemorySchema.parse(v ?? {})),
   voice: VoiceSchema.optional().transform(v => VoiceSchema.parse(v ?? {})),
+  tts: TTSSchema.optional().transform(v => TTSSchema.parse(v ?? {})),
   mcp: MCPSchema.optional().transform(v => MCPSchema.parse(v ?? {})),
   browserOperator: BrowserOperatorSchema.optional().transform(v => BrowserOperatorSchema.parse(v ?? {})),
   autoUpdate: AutoUpdateSchema.optional().transform(v => AutoUpdateSchema.parse(v ?? {})),

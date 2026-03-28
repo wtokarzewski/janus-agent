@@ -96,6 +96,14 @@
     "maxDurationSec": 300
   },
 
+  "tts": {
+    "enabled": false,
+    "provider": "openai",
+    "apiKey": "sk-...",
+    "model": "tts-1",
+    "voice": "nova"
+  },
+
   "streaming": {
     "enabled": true,
     "telegramThrottleMs": 500

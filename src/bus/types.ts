@@ -24,6 +24,8 @@ export interface InboundMessage {
   topicId?: number;
   /** Text of the message being replied to (e.g. Telegram reply-to). */
   replyContext?: string;
+  /** Whether this message originated from voice transcription (for auto-TTS replies). */
+  isVoice?: boolean;
   /** Resolved agent ID (set during processing, not by channels). */
   agentId?: string;
   /** Channel-specific routing metadata for binding resolution.
@@ -40,5 +42,7 @@ export interface OutboundMessage {
   /** Absolute path to file for send_file tool. */
   filePath?: string;
   /** How to send the file (affects Telegram API method). */
-  fileType?: 'document' | 'photo' | 'audio' | 'video';
+  fileType?: 'document' | 'photo' | 'audio' | 'video' | 'voice';
+  /** When true, the text content should also be sent as a voice message (TTS). */
+  voiceReply?: boolean;
 }

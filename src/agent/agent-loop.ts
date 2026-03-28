@@ -472,6 +472,7 @@ export class AgentLoop {
       content,
       timestamp: new Date(),
       streamed: !!streamCtx,
+      voiceReply: msg.isVoice && !!this.deps.config.tts?.enabled,
     };
   }
 
