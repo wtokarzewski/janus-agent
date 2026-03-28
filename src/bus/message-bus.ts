@@ -127,9 +127,7 @@ export class MessageBus {
         const msg = await this.consumeOutbound(signal);
         const handler = this.handlers.get(msg.channel);
         if (handler) {
-          await handler(msg).catch(err => {
-            console.error(`Bus: handler for "${msg.channel}" failed:`, err instanceof Error ? err.message : String(err));
-          });
+          await this.sendWithRetry(handler, msg, msg.channel);
         } else {
           if (msg.channel === 'system') {
             console.log(`Bus: system channel outbound dropped (expected — cron/heartbeat responses handled internally)`);
@@ -139,6 +137,25 @@ export class MessageBus {
         }
       } catch {
         if (signal.aborted) break;
+      }
+    }
+  }
+
+  /** Retry message delivery with exponential backoff (CR-BR). */
+  private async sendWithRetry(handler: OutboundHandler, msg: OutboundMessage, channel: string, maxRetries = 3): Promise<void> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        await handler(msg);
+        return;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (attempt === maxRetries) {
+          console.error(`Bus: handler for "${channel}" failed after ${maxRetries + 1} attempts: ${errMsg}`);
+          return;
+        }
+        const delay = Math.min(1000 * 2 ** attempt, 8000);
+        console.warn(`Bus: handler for "${channel}" failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${errMsg}`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
   }

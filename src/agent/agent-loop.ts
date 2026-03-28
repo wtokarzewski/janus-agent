@@ -714,6 +714,21 @@ export class AgentLoop {
       } catch (err) {
         const errorText = err instanceof Error ? err.message : String(err);
         const isContextError = /token|context|length|too long/i.test(errorText);
+        const isTimeout = /timeout|timed out|ETIMEDOUT|ECONNRESET/i.test(errorText);
+
+        // CR-BW: Timeout with high context usage → likely context too large, compress
+        if (isTimeout && contextRetries < 2 && messages.length > 6) {
+          const estTokens = estimateMessagesTokens(messages);
+          if (estTokens > tokenBudget * 0.7) {
+            contextRetries++;
+            log.warn(`[${sessionKey}] LLM timeout with high context (${estTokens}/${tokenBudget}), compressing`);
+            const nonSystem = messages.slice(1);
+            const half = Math.floor(nonSystem.length / 2);
+            const kept = nonSystem.slice(Math.max(half, nonSystem.length - 2));
+            messages = [messages[0], ...kept];
+            continue;
+          }
+        }
 
         if (isContextError && contextRetries < 2) {
           contextRetries++;
