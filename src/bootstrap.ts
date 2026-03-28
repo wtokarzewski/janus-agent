@@ -41,6 +41,7 @@ import { WebSearchDDGTool } from './tools/builtin/web-search-ddg.js';
 import { SelfUpdateTool } from './tools/builtin/self-update.js';
 import { BrowserOperatorTool } from './tools/builtin/browser-operator.js';
 import { MCPClient, createMCPProxyTool } from './mcp/client.js';
+import { initGateAudit } from './gates/gate-audit.js';
 import * as log from './utils/logger.js';
 import { setTimezone } from './utils/date.js';
 
@@ -68,6 +69,11 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   const db = config.database.enabled
     ? tryCreateDatabase(resolve(config.workspace.dir, config.database.path))
     : null;
+
+  // 1b. Gate audit log (requires DB)
+  if (db) {
+    initGateAudit(db.db);
+  }
 
   // 2. Core components
   const bus = new MessageBus();
@@ -131,7 +137,9 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
 
   // 3. Tools
   const tools = new ToolRegistry();
-  tools.register(new ExecTool());
+  if (config.tools.execEnabled) {
+    tools.register(new ExecTool());
+  }
   tools.register(new ReadFileTool());
   tools.register(new WriteFileTool());
   tools.register(new AppendFileTool());
