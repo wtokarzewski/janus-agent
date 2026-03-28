@@ -11,6 +11,7 @@ import type { JanusConfig } from '../config/schema.js';
 import type { MemoryStore } from '../memory/memory-store.js';
 import type { GateService } from '../gates/types.js';
 import { findUserProfile } from '../users/user-resolver.js';
+import { loadPrompt } from '../prompts/loader.js';
 import * as log from '../utils/logger.js';
 import { stripControlTokens } from '../utils/sanitize.js';
 import type { AgentResolver, AgentContext } from './agent-resolver.js';
@@ -282,7 +283,10 @@ export class AgentLoop {
     // Per-request context — passed to execute(), not shared across concurrent lanes
     const family = this.deps.config.family;
     const isFamilyChat = family && msg.chatId && family.groupChatIds.includes(msg.chatId);
-    const familyUserIds = isFamilyChat
+    // Family members see each other's reminders even in private chats (cross-user visibility)
+    const isFamilyMember = family && msg.user?.userId
+      && this.deps.config.users.some(u => u.id === msg.user?.userId);
+    const familyUserIds = (isFamilyChat || isFamilyMember)
       ? this.deps.config.users.map(u => u.id)
       : undefined;
 
@@ -587,7 +591,7 @@ export class AgentLoop {
         .map(m => `${m.role}: ${String(m.content).slice(0, 300)}`)
         .join('\n');
 
-      return `[Recent messages from target user's conversation:\n${formatted}\nEnd of recent messages — if the user already confirmed or rejected the task, act accordingly (remove the cron job and notify the requester).]`;
+      return loadPrompt('cron/cron-context-injection', { messages: formatted });
     } catch {
       // Source session may not exist yet — that's fine, skip injection
       return null;
