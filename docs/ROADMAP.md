@@ -8,7 +8,7 @@
 - **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
 - **Skills:** 9 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace, github, skill-creator, browser-operator)
 - **Channels:** 2 (CLI, Telegram) + MCP server + MCP client
-- **DB:** SQLite (WAL, 10 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron, cron session IDs, cron chat_id, cron_runs finished_at, cron agent_id)
+- **DB:** SQLite (WAL, 11 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron, cron session IDs, cron chat_id, cron_runs finished_at, cron agent_id, gate_audit_log)
 
 See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 
@@ -161,6 +161,16 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Cron session context injection: last 10 messages from target user's primary session injected into cron context
 - Solves: session isolation (cron didn't see confirmations), cross-user visibility, infinite reminder spam
 - 433 tests across 41 files
+
+### Security Hardening Sprint (#149)
+- IPv6 SSRF guard: blocks private/reserved IPv6 ranges (fc00::/7, fe80::/10, ff00::/8) in addition to existing IPv4 guards
+- Untrusted content tags on web_search: output wrapped in `<untrusted_content>` XML tags (already existed for web_fetch)
+- Strict ownerIds: unknown userId no longer treated as owner in multi-user mode
+- Secret redaction in tool results: masks `KEY=`, `Bearer`, `sk-`/`ghp_`/`AKIA`/JWT patterns before sending to LLM
+- Token masking in logger: sensitive tokens masked in log output
+- Exec master switch: `tools.execEnabled` config flag to disable exec tool entirely
+- Credential encryption: AES-256-GCM for auth.json at rest
+- Gate audit log: SQLite `gate_audit_log` table (migration 11) records all gate decisions
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
