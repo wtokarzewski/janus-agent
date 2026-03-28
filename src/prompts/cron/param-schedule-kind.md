@@ -1,0 +1,1 @@
+Schedule type: "at" (one-shot ISO timestamp in UTC), "delay" (one-shot, milliseconds from now — use for relative reminders like "in 10 minutes"), "every" (recurring interval in ms), "cron" (5-field cron expression). Prefer "delay" over "at" when the user asks for a relative time (e.g. "za 10 minut", "in an hour").

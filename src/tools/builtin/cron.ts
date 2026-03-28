@@ -1,10 +1,12 @@
 import type { ContextualTool, ToolContext, RequestContext } from '../types.js';
 import type { CronService, ScheduleKind } from '../../services/cron-service.js';
+import { loadPrompt } from '../../prompts/loader.js';
 
 /**
  * cron tool — allows the agent to manage scheduled tasks.
  * Blocks add/update when called from within a cron job (cronDepth > 0).
- * Filters jobs by userId — users only see their own + system jobs (+ family in group chats).
+ * Filters jobs by userId — users see their own + system + family members' jobs.
+ * Cross-user reminders via target_user_id (ownership transfers to target, requester recorded in task).
  */
 export class CronTool implements ContextualTool {
   name = 'cron';
@@ -27,8 +29,8 @@ export class CronTool implements ContextualTool {
       },
       schedule_kind: {
         type: 'string',
-        enum: ['at', 'every', 'cron'],
-        description: 'Schedule type: "at" (one-shot ISO timestamp), "every" (interval in ms), "cron" (5-field cron expression).',
+        enum: ['at', 'delay', 'every', 'cron'],
+        description: loadPrompt('cron/param-schedule-kind'),
       },
       schedule_value: {
         type: 'string',
@@ -52,7 +54,7 @@ export class CronTool implements ContextualTool {
       },
       target_user_id: {
         type: 'string',
-        description: 'Target user ID for cross-user reminders. Creates the job owned by the target user (they see it, control it). Use when one user asks to remind another user. The requesting user is recorded in the task for notification on completion.',
+        description: loadPrompt('cron/param-target-user-id'),
       },
       chat_id: {
         type: 'string',
@@ -103,12 +105,11 @@ export class CronTool implements ContextualTool {
     switch (action) {
       case 'list': {
         const includeDisabled = args.include_disabled === true;
-        // Scoped to own + system + current chat's group jobs
-        // Note: familyUserIds intentionally NOT passed — family members' personal jobs stay private.
-        // Cross-user reminders use target_user_id which sets userId to the target, making them visible.
+        // Family members see each other's reminders (cross-user reminders, heartbeats).
+        // Privacy: job task is truncated to preview — full task requires 'status' action.
         const jobs = this.cronService.listJobsForUser(
           reqCtx?.userId,
-          undefined,
+          reqCtx?.familyUserIds,
           includeDisabled,
           reqCtx?.chatId,
         );
@@ -122,22 +123,32 @@ export class CronTool implements ContextualTool {
           tz: j.scheduleTz,
           enabled: j.enabled,
           nextRunAt: j.nextRunAt,
+          taskPreview: j.task.split('\n')[0].slice(0, 120),
         }));
         return JSON.stringify(compact, null, 2);
       }
 
       case 'add': {
         const name = String(args.name ?? '');
-        const scheduleKind = String(args.schedule_kind ?? '') as ScheduleKind;
-        const scheduleValue = String(args.schedule_value ?? '');
+        let scheduleKind = String(args.schedule_kind ?? '') as ScheduleKind | 'delay';
+        let scheduleValue = String(args.schedule_value ?? '');
         let task = String(args.task ?? '');
         if (!name || !scheduleKind || !scheduleValue || !task) {
           return 'Error: add requires name, schedule_kind, schedule_value, and task.';
         }
+        // Convert delay (ms from now) → at (ISO timestamp) — no timezone confusion
+        if (scheduleKind === 'delay') {
+          const delayMs = parseInt(scheduleValue, 10);
+          if (isNaN(delayMs) || delayMs <= 0) {
+            return 'Error: delay schedule_value must be a positive number of milliseconds.';
+          }
+          scheduleKind = 'at';
+          scheduleValue = new Date(Date.now() + delayMs).toISOString();
+        }
         // Cross-user reminder: record the requester in the task for notification on completion/cancellation
         const targetUserId = args.target_user_id ? String(args.target_user_id) : undefined;
         if (targetUserId && reqCtx?.userId && targetUserId !== reqCtx.userId) {
-          task += `\n\n[Requested by user: ${reqCtx.userId}. When the task is confirmed or this job is cancelled, notify them via the message tool.]`;
+          task += '\n\n' + loadPrompt('cron/task-annotation-requested-by', { requesterId: reqCtx.userId });
         }
         // Inject recent conversation context so cron job knows what the user was talking about
         if (reqCtx?.recentMessages?.length) {
@@ -157,10 +168,12 @@ export class CronTool implements ContextualTool {
           userId: effectiveUserId,
           chatId: args.chat_id ? String(args.chat_id) : undefined,
         });
-        // Guide the agent to notify both target and requester
+        // Cross-user reminder: REQUIRE notification to both parties
         if (targetUserId && reqCtx?.userId && targetUserId !== reqCtx.userId) {
           const result = JSON.parse(JSON.stringify(job));
-          result._notice = `Job created for user "${targetUserId}". Use the message tool to: 1) notify the target user that this reminder was set up for them, 2) notify the requester ("${reqCtx.userId}") that the reminder is active.`;
+          result._action_required = loadPrompt('cron/cross-user-action-required', {
+            targetUserId, name, requesterId: reqCtx.userId,
+          });
           return JSON.stringify(result, null, 2);
         }
         return JSON.stringify(job, null, 2);

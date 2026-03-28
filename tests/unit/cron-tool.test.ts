@@ -113,7 +113,7 @@ describe('CronTool', () => {
     expect(wojtekJobs.map((j: { name: string }) => j.name).sort()).toEqual(['system', 'wojtek-task']);
   });
 
-  it('should NOT expose family members jobs in list (privacy)', async () => {
+  it('should expose family members jobs in list (cross-user visibility)', async () => {
     await tool.execute(
       { action: 'add', name: 'wojtek-task', schedule_kind: 'every', schedule_value: '1000', task: 'w' },
       { userId: 'wojtek' },
@@ -127,14 +127,14 @@ describe('CronTool', () => {
       { userId: 'maciek' },
     );
 
-    // Family chat: listing still only shows own jobs, not family members
+    // Family chat: listing shows own + family members' jobs
     const result = await tool.execute(
       { action: 'list' },
       { userId: 'wojtek', familyUserIds: ['wojtek', 'monika', 'zuzia'] },
     );
     const jobs = JSON.parse(result);
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0].name).toBe('wojtek-task');
+    expect(jobs).toHaveLength(2);
+    expect(jobs.map((j: { name: string }) => j.name).sort()).toEqual(['monika-task', 'wojtek-task']);
   });
 
   it('should allow family member access via status (targeted query)', async () => {
@@ -265,8 +265,8 @@ describe('CronTool', () => {
       );
       const job = JSON.parse(result);
       expect(job.userId).toBe('wojtek');
-      expect(job._notice).toContain('wojtek');
-      expect(job._notice).toContain('monika');
+      expect(job._action_required).toContain('wojtek');
+      expect(job._action_required).toContain('monika');
     });
 
     it('should append [Requested by] to task for cross-user jobs', async () => {
@@ -300,7 +300,7 @@ describe('CronTool', () => {
       );
       const job = JSON.parse(result);
       expect(job.task).not.toContain('[Requested by');
-      expect(job._notice).toBeUndefined();
+      expect(job._action_required).toBeUndefined();
     });
 
     it('should make cross-user job visible to target in list', async () => {

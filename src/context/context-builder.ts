@@ -8,7 +8,7 @@ import type { InboundMessage } from '../bus/types.js';
 import type { SkillLearner } from '../learner/learner.js';
 import { loadProfileMd, findUserProfile, sanitizeChatId } from '../users/user-resolver.js';
 import type { AgentContext } from '../agent/agent-resolver.js';
-import { localDate, localDateWithDay } from '../utils/date.js';
+import { localDate, localDateWithDay, localTimestamp, getTimezone } from '../utils/date.js';
 
 interface ContextDeps {
   skills: SkillLoader;
@@ -123,9 +123,12 @@ export class ContextBuilder {
     }
 
     // 8. Session info (dynamic — not cached by Anthropic prompt caching)
-    // Use date-only (no time) to maximize Anthropic prompt cache hits within a day
-    const now = localDateWithDay();
-    const sessionParts = [`Current date: ${now}`, `Channel: ${opts.channel}`, `Chat: ${opts.chatId}`];
+    // Include time rounded to 5 minutes (limits cache fragmentation while giving LLM time awareness)
+    const nowDate = localDateWithDay();
+    const nowTime = localTimestamp();
+    const tz = getTimezone();
+    const timePart = tz ? `${nowTime} ${tz}` : nowTime;
+    const sessionParts = [`Current time: ${timePart}`, `Date: ${nowDate}`, `Channel: ${opts.channel}`, `Chat: ${opts.chatId}`];
     if (opts.user) {
       const senderLabel = opts.user.name ? `${opts.user.name} (${opts.user.userId})` : opts.user.userId;
       sessionParts.push(`Sender: ${senderLabel}`);
