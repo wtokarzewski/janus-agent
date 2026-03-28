@@ -105,6 +105,8 @@ export class ExecTool implements ContextualTool {
       const timer = setTimeout(() => {
         killed = true;
         if (child.pid) killProcessTree(child.pid, { graceMs: 2000 });
+        // Ensure zombie reaping: unref child so Node doesn't wait, but OS reaps (CR-BG)
+        child.unref();
       }, this.timeoutMs);
 
       child.on('close', () => {

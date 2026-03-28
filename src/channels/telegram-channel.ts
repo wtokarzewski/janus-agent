@@ -76,7 +76,9 @@ export class TelegramChannel {
     // Register outbound handler — sends responses back to Telegram
     bus.registerHandler('telegram', async (msg: OutboundMessage) => {
       const { chatId: tgChatId, topicId: tgTopicId } = parseTelegramChatId(msg.chatId);
-      const topicOpts = tgTopicId ? { message_thread_id: tgTopicId } : {};
+      const topicOpts = tgTopicId
+        ? { message_thread_id: tgTopicId, allow_sending_without_reply: true as const }
+        : { allow_sending_without_reply: true as const };
 
       if (msg.type === 'typing') {
         await this.startTyping(bot, msg.chatId);
