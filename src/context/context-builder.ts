@@ -123,12 +123,9 @@ export class ContextBuilder {
     }
 
     // 8. Session info (dynamic — not cached by Anthropic prompt caching)
-    // Include time rounded to 5 minutes (limits cache fragmentation while giving LLM time awareness)
+    // Time is in <identity> (top of prompt) for LLM visibility; date + channel here
     const nowDate = localDateWithDay();
-    const nowTime = localTimestamp();
-    const tz = getTimezone();
-    const timePart = tz ? `${nowTime} ${tz}` : nowTime;
-    const sessionParts = [`Current time: ${timePart}`, `Date: ${nowDate}`, `Channel: ${opts.channel}`, `Chat: ${opts.chatId}`];
+    const sessionParts = [`Date: ${nowDate}`, `Channel: ${opts.channel}`, `Chat: ${opts.chatId}`];
     if (opts.user) {
       const senderLabel = opts.user.name ? `${opts.user.name} (${opts.user.userId})` : opts.user.userId;
       sessionParts.push(`Sender: ${senderLabel}`);
@@ -182,12 +179,13 @@ export class ContextBuilder {
     const toolList = tools.map(t => `- ${t.name}: ${t.description}`).join('\n');
     const agentName = agentCtx?.name ?? 'Janus';
     const agentDesc = agentCtx?.definition.description ? ` — ${agentCtx.definition.description}` : '';
-
-    // Anthropic OAuth identity prefix is now injected by AnthropicProvider itself
-    const oauthPrefix = '';
+    const nowTime = localTimestamp();
+    const tz = getTimezone();
+    const clockLine = tz ? `Current time: ${nowTime} (${tz})` : `Current time: ${nowTime}`;
 
     return `<identity>
-${oauthPrefix}You are ${agentName}${agentDesc}, a universal AI agent.
+You are ${agentName}${agentDesc}, a universal AI agent.
+${clockLine}
 
 Workspace: ${workspace}
 
