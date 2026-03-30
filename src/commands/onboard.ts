@@ -187,25 +187,25 @@ async function checkCommand(cmd: string): Promise<boolean> {
 async function installGcloud(): Promise<boolean> {
   try {
     if (IS_WIN) {
-      // winget is available on Windows 10 1709+ and Windows 11
       console.log(chalk.gray('  Running: winget install Google.CloudSDK ...'));
-      const code = await runInteractive(
+      await runInteractive(
         'winget', ['install', '--id', 'Google.CloudSDK', '--accept-source-agreements', '--accept-package-agreements'],
       );
-      if (code !== 0) return false;
-      // winget installs to default path — refresh PATH for current process
-      const gcloudDir = resolve(process.env.LOCALAPPDATA ?? '', 'Google', 'Cloud SDK', 'google-cloud-sdk', 'bin');
-      process.env.PATH = `${gcloudDir};${process.env.PATH}`;
+      // winget may return non-zero if already installed — that's fine
+      // Try common install paths to find gcloud
+      for (const base of [process.env.LOCALAPPDATA, process.env.ProgramFiles, process.env['ProgramFiles(x86)']]) {
+        if (!base) continue;
+        const bin = resolve(base, 'Google', 'Cloud SDK', 'google-cloud-sdk', 'bin');
+        process.env.PATH = `${bin};${process.env.PATH}`;
+      }
     } else if (process.platform === 'darwin') {
       console.log(chalk.gray('  Running: brew install --cask google-cloud-sdk ...'));
-      const code = await runInteractive('brew', ['install', '--cask', 'google-cloud-sdk']);
-      if (code !== 0) return false;
+      await runInteractive('brew', ['install', '--cask', 'google-cloud-sdk']);
     } else {
       console.log(chalk.gray('  Running: curl + install script ...'));
-      const code = await runInteractive('bash', ['-c', 'curl -sSL https://sdk.cloud.google.com | bash -s -- --disable-prompts']);
-      if (code !== 0) return false;
+      await runInteractive('bash', ['-c', 'curl -sSL https://sdk.cloud.google.com | bash -s -- --disable-prompts']);
     }
-    // Verify installation
+    // Verify — regardless of exit code, check if gcloud is now available
     return await checkCommand('gcloud');
   } catch {
     return false;
