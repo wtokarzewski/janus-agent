@@ -1,13 +1,27 @@
 import { mkdir, writeFile, readFile, access } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
+import * as readline from 'node:readline';
 import chalk from 'chalk';
 import type { UserProfile } from '../config/schema.js';
 
 const execAsync = promisify(execFile);
 const IS_WIN = process.platform === 'win32';
+
+function ask(prompt: string): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => rl.question(prompt, answer => { rl.close(); resolve(answer.trim()); }));
+}
+
+/** Run a command interactively (inherits stdin/stdout for browser OAuth flow). */
+function runInteractive(bin: string, args: string[]): Promise<number> {
+  return new Promise(resolve => {
+    const child = spawn(bin, args, { stdio: 'inherit', shell: IS_WIN });
+    child.on('close', code => resolve(code ?? 1));
+  });
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const EXAMPLES_DIR = resolve(__dirname, '..', '..', 'examples');
@@ -192,16 +206,28 @@ export async function ensureGws(): Promise<void> {
 
   if (!hasOAuthClient) {
     console.log(chalk.yellow('\n  Google Workspace: OAuth client not configured.'));
-    console.log(chalk.bold('  Setup (one-time):'));
-    console.log(chalk.cyan('    npx gws auth setup'));
-    console.log(chalk.gray('  This requires gcloud CLI. If you don\'t have gcloud:'));
-    console.log(chalk.gray('    1. Create a GCP project: https://console.cloud.google.com/projectcreate'));
-    console.log(chalk.gray('    2. Enable APIs: Gmail, Calendar, Drive, Sheets, Docs, People'));
-    console.log(chalk.gray('    3. OAuth consent screen → External → add yourself as test user'));
-    console.log(chalk.gray('    4. Credentials → Create OAuth client ID → Desktop app'));
-    console.log(chalk.gray('    5. Download JSON → save to ~/.config/gws/client_secret.json'));
-    console.log(chalk.gray('  Then run:'));
-    console.log(chalk.cyan('    npx gws auth login -s drive,gmail,calendar,sheets,docs,contacts\n'));
+    const answer = await ask('  Set up Google Workspace now? This requires gcloud CLI. [y/N] ');
+    if (answer.toLowerCase() === 'y') {
+      console.log(chalk.blue('\n  Running: gws auth setup'));
+      console.log(chalk.gray('  This will create a GCP project, enable APIs, and open browser for login.\n'));
+      const code = await runInteractive(gwsBin, ['auth', 'setup']);
+      if (code === 0) {
+        console.log(chalk.green('\n  Google Workspace: setup complete.'));
+        // After setup, also login with scopes
+        console.log(chalk.blue('  Running: gws auth login -s drive,gmail,calendar,sheets,docs,contacts\n'));
+        await runInteractive(gwsBin, ['auth', 'login', '-s', 'drive,gmail,calendar,sheets,docs,contacts']);
+      } else {
+        console.log(chalk.yellow('\n  Setup failed. You can set up manually:'));
+        console.log(chalk.gray('    1. Create a GCP project: https://console.cloud.google.com/projectcreate'));
+        console.log(chalk.gray('    2. Enable APIs: Gmail, Calendar, Drive, Sheets, Docs, People'));
+        console.log(chalk.gray('    3. OAuth consent screen → External → add yourself as test user'));
+        console.log(chalk.gray('    4. Credentials → Create OAuth client ID → Desktop app'));
+        console.log(chalk.gray('    5. Download JSON → save to ~/.config/gws/client_secret.json'));
+        console.log(chalk.gray('    6. Run: npx gws auth login -s drive,gmail,calendar,sheets,docs,contacts\n'));
+      }
+    } else {
+      console.log(chalk.gray('  Skipped. Run later: npx gws auth setup\n'));
+    }
     return;
   }
 
@@ -214,9 +240,19 @@ export async function ensureGws(): Promise<void> {
     console.log(chalk.green('  Google Workspace: authenticated'));
   } catch {
     console.log(chalk.yellow('\n  Google Workspace: OAuth client configured but not logged in.'));
-    console.log(chalk.bold('  Run this to log in:'));
-    console.log(chalk.cyan('    npx gws auth login -s drive,gmail,calendar,sheets,docs,contacts'));
-    console.log(chalk.gray('  This will open a browser for Google OAuth consent.\n'));
+    const answer = await ask('  Log in to Google Workspace now? [y/N] ');
+    if (answer.toLowerCase() === 'y') {
+      console.log(chalk.blue('\n  Running: gws auth login -s drive,gmail,calendar,sheets,docs,contacts'));
+      console.log(chalk.gray('  This will open a browser for Google OAuth consent.\n'));
+      const code = await runInteractive(gwsBin, ['auth', 'login', '-s', 'drive,gmail,calendar,sheets,docs,contacts']);
+      if (code === 0) {
+        console.log(chalk.green('\n  Google Workspace: authenticated'));
+      } else {
+        console.log(chalk.yellow('\n  Login failed. Run later: npx gws auth login -s drive,gmail,calendar,sheets,docs,contacts\n'));
+      }
+    } else {
+      console.log(chalk.gray('  Skipped. Run later: npx gws auth login -s drive,gmail,calendar,sheets,docs,contacts\n'));
+    }
   }
 }
 
