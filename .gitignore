@@ -192,8 +192,8 @@ janus.json
 # Janus per-user data (profiles, overrides)
 /.janus/
 
-# Google Workspace (gogcli) credentials
-gog-config/
+# Google Workspace (gws) credentials
+gws-config/
 
 # Config backups
 *.bak
