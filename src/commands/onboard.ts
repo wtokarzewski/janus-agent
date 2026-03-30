@@ -181,6 +181,30 @@ export async function ensureGws(): Promise<void> {
     return;
   }
 
+  // Check if OAuth client is configured
+  let hasOAuthClient = false;
+  try {
+    await execAsync(gwsBin, ['auth', 'status'], { timeout: 10_000, shell: IS_WIN });
+    hasOAuthClient = true;
+  } catch {
+    // auth status fails if no client configured
+  }
+
+  if (!hasOAuthClient) {
+    console.log(chalk.yellow('\n  Google Workspace: OAuth client not configured.'));
+    console.log(chalk.bold('  Setup (one-time):'));
+    console.log(chalk.cyan('    npx gws auth setup'));
+    console.log(chalk.gray('  This requires gcloud CLI. If you don\'t have gcloud:'));
+    console.log(chalk.gray('    1. Create a GCP project: https://console.cloud.google.com/projectcreate'));
+    console.log(chalk.gray('    2. Enable APIs: Gmail, Calendar, Drive, Sheets, Docs, People'));
+    console.log(chalk.gray('    3. OAuth consent screen → External → add yourself as test user'));
+    console.log(chalk.gray('    4. Credentials → Create OAuth client ID → Desktop app'));
+    console.log(chalk.gray('    5. Download JSON → save to ~/.config/gws/client_secret.json'));
+    console.log(chalk.gray('  Then run:'));
+    console.log(chalk.cyan('    npx gws auth login -s drive,gmail,calendar,sheets,docs,contacts\n'));
+    return;
+  }
+
   try {
     // Quick check: try listing calendars — will fail with exit code 2 if not authenticated
     await execAsync(gwsBin, ['calendar', 'calendarList', 'list', '--page-limit', '1'], {
@@ -189,7 +213,7 @@ export async function ensureGws(): Promise<void> {
     });
     console.log(chalk.green('  Google Workspace: authenticated'));
   } catch {
-    console.log(chalk.yellow('\n  Google Workspace CLI is installed but not authenticated.'));
+    console.log(chalk.yellow('\n  Google Workspace: OAuth client configured but not logged in.'));
     console.log(chalk.bold('  Run this to log in:'));
     console.log(chalk.cyan('    npx gws auth login -s drive,gmail,calendar,sheets,docs,contacts'));
     console.log(chalk.gray('  This will open a browser for Google OAuth consent.\n'));
