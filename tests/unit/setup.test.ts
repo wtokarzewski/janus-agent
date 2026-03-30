@@ -34,6 +34,13 @@ vi.mock('../../src/auth/token-store.js', () => ({
   FileTokenStore: vi.fn(),
 }));
 
+// Mock provider creation to avoid real HTTP requests in verifyProvider
+vi.mock('../../src/llm/openai-compatible-provider.js', () => ({
+  createProvider: vi.fn().mockResolvedValue({
+    chat: vi.fn().mockResolvedValue({ content: 'OK' }),
+  }),
+}));
+
 function createMockIO(answers: string[]) {
   let idx = 0;
   return {
