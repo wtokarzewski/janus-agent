@@ -135,6 +135,10 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
     await migrateFromHome(cwd);
     await ensureWorkspace(cwd);
     await ensureTimezone();
+    try {
+      const { ensureGws } = await import('./onboard.js');
+      await ensureGws();
+    } catch { /* non-critical */ }
     return;
   }
 
@@ -184,6 +188,14 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
 
   // 7. Auto-detect timezone if missing from config
   await ensureTimezone();
+
+  // 8. Check Google Workspace CLI auth
+  try {
+    const { ensureGws } = await import('./onboard.js');
+    await ensureGws();
+  } catch {
+    // Non-critical — skip silently
+  }
 
   console.log();
   console.log(chalk.green('Update complete. Restart Janus to use the new version.'));
