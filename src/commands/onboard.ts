@@ -1,8 +1,13 @@
 import { mkdir, writeFile, readFile, access } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import chalk from 'chalk';
 import type { UserProfile } from '../config/schema.js';
+
+const execAsync = promisify(execFile);
+const IS_WIN = process.platform === 'win32';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const EXAMPLES_DIR = resolve(__dirname, '..', '..', 'examples');
@@ -104,6 +109,9 @@ export async function runOnboard(dir?: string): Promise<void> {
     }
   }
 
+  // Check Google Workspace CLI auth
+  await ensureGws();
+
   console.log(chalk.bold('\nWorkspace ready!'));
   console.log(chalk.gray('Set your API key: export OPENROUTER_API_KEY=sk-...'));
   console.log(chalk.gray('Then run: npm start\n'));
@@ -148,6 +156,43 @@ export async function setupUserDirs(
       created ?? [],
       skipped ?? [],
     );
+  }
+}
+
+/**
+ * Check if gws (Google Workspace CLI) is installed and authenticated.
+ * Prints setup instructions if not configured.
+ * Called by both onboard and update commands.
+ */
+export async function ensureGws(): Promise<void> {
+  // Check if gws binary is available (installed via optionalDependencies)
+  const gwsBin = resolve('node_modules', '.bin', IS_WIN ? 'gws.cmd' : 'gws');
+  try {
+    await access(gwsBin);
+  } catch {
+    console.log(chalk.yellow('\n  Google Workspace CLI (gws) not found — skipping.'));
+    console.log(chalk.gray('  Run: npm install @googleworkspace/cli'));
+    return;
+  }
+
+  // Check if already authenticated
+  if (process.env.GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE || process.env.GOOGLE_WORKSPACE_CLI_TOKEN) {
+    console.log(chalk.green('  Google Workspace: authenticated (env credentials)'));
+    return;
+  }
+
+  try {
+    // Quick check: try listing calendars — will fail with exit code 2 if not authenticated
+    await execAsync(gwsBin, ['calendar', 'calendarList', 'list', '--page-limit', '1'], {
+      timeout: 15_000,
+      shell: IS_WIN,
+    });
+    console.log(chalk.green('  Google Workspace: authenticated'));
+  } catch {
+    console.log(chalk.yellow('\n  Google Workspace CLI is installed but not authenticated.'));
+    console.log(chalk.bold('  Run this to log in:'));
+    console.log(chalk.cyan('    npx gws auth login -s drive,gmail,calendar,sheets,docs,contacts'));
+    console.log(chalk.gray('  This will open a browser for Google OAuth consent.\n'));
   }
 }
 
