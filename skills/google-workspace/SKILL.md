@@ -1,76 +1,95 @@
 ---
 name: google-workspace
 description: "Google Workspace: Gmail, Calendar, Drive, Contacts, Sheets, Docs. Use when the user asks about email, calendar events, files on Drive, contacts, spreadsheets, or documents."
-version: "1.0.0"
+version: "2.0.0"
 requires:
-  bins: [gog]
+  bins: [gws]
 always: false
 ---
 
-# Google Workspace (via gogcli)
+# Google Workspace (via gws)
 
-Use `gog` CLI for all Google Workspace operations. Run commands via `exec`.
+Use `gws` CLI (googleworkspace/cli) for all Google Workspace operations. Run commands via `exec`.
+
+The CLI dynamically discovers all Google Workspace APIs via Google Discovery Service — when Google adds an endpoint, `gws` picks it up automatically.
 
 ## Setup (one-time)
 
-### Install gog
+### Install gws
 
-- **macOS**: `brew install steipete/tap/gogcli`
-- **Linux**: `curl -L https://github.com/steipete/gog/releases/latest/download/gog_Linux_x86_64.tar.gz | tar -xz -C /usr/local/bin`
-- **Docker**: Pre-installed in Janus Docker image
+- **macOS**: `brew install googleworkspace-cli`
+- **npm** (all platforms): `npm install -g @googleworkspace/cli`
+- **From source**: `cargo install --git https://github.com/googleworkspace/cli --locked`
 
-### Configure OAuth (native install)
+### Configure OAuth
 
-1. Import credentials: `gog auth credentials /path/to/client_secret.json`
-2. Add account: `gog auth add user@gmail.com --services gmail,calendar,drive,contacts,docs,sheets`
-3. Verify: `gog auth list`
-
-Set default account to avoid `--account` on every command:
+Interactive (creates GCP project automatically if `gcloud` is installed):
 ```bash
-export GOG_ACCOUNT=user@gmail.com
+gws auth setup
+gws auth login -s drive,gmail,calendar,sheets,docs,contacts
 ```
 
-### Configure OAuth (Docker)
+Manual (no gcloud):
+1. Create OAuth Desktop client at https://console.cloud.google.com/apis/credentials
+2. Download `client_secret.json` to `~/.config/gws/client_secret.json`
+3. Add yourself as test user in OAuth consent screen
+4. Run `gws auth login`
 
-Auth requires a browser, so run it on the host first, then mount credentials into the container.
+Headless / Docker:
+```bash
+# On host with browser:
+gws auth login
+gws auth export --unmasked > credentials.json
 
-1. Install gog on host (macOS/Linux/Windows — see above)
-2. Switch to file-based keyring:
-   ```bash
-   gog auth keyring file
-   export GOG_KEYRING_PASSWORD="your-password"
-   ```
-3. Import credentials and add account:
-   ```bash
-   gog auth credentials /path/to/client_secret.json
-   gog auth add user@gmail.com --services gmail,calendar,drive,contacts,docs,sheets
-   ```
-4. Copy config to project:
-   ```bash
-   cp -r ~/.config/gogcli ./gog-config
-   ```
-5. Set env vars in `.env`:
-   ```
-   GOG_KEYRING_PASSWORD=your-password
-   GOG_ACCOUNT=user@gmail.com
-   ```
-6. `docker compose up` — credentials are mounted read-only via volume
+# In container:
+export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/credentials.json
+```
+
+Set env vars in `.env` if needed:
+```
+GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/credentials.json
+```
+
+## CLI Syntax
+
+```bash
+gws <service> <resource> <method> --params '{"key": "val"}' --json '{"key": "val"}'
+```
+
+Key flags:
+| Flag | Description |
+|------|-------------|
+| `--params '{...}'` | URL/query parameters |
+| `--json '{...}'` | Request body |
+| `--dry-run` | Preview request without executing |
+| `--page-all` | Auto-paginate (NDJSON output) |
+| `--page-limit <N>` | Max pages (default: 10) |
+| `-o, --output <PATH>` | Save binary response to file |
+| `--upload <PATH>` | Upload file (multipart) |
+
+Discover any method's schema:
+```bash
+gws schema <service>.<resource>.<method>
+```
 
 ## Gmail
 
 ```bash
-# Search (threads)
-gog gmail search 'newer_than:7d' --max 10
-gog gmail search 'from:amazon.com subject:order' --max 5
+# Triage — unread inbox summary
+gws gmail +triage
 
-# Search (individual messages, ignores threading)
-gog gmail messages search "in:inbox from:bank.com" --max 20
+# Search messages
+gws gmail users messages list --params '{"q": "newer_than:7d", "maxResults": 10}'
+gws gmail users messages list --params '{"q": "from:amazon.com subject:order", "maxResults": 5}'
+
+# Read a message
+gws gmail +read --message-id <messageId>
 
 # Send plain text
-gog gmail send --to recipient@example.com --subject "Subject" --body "Message"
+gws gmail +send --to recipient@example.com --subject "Subject" --body "Message"
 
-# Send multi-line (heredoc via stdin)
-gog gmail send --to recipient@example.com --subject "Subject" --body-file - <<'EOF'
+# Send multi-line (heredoc via exec)
+gws gmail +send --to recipient@example.com --subject "Subject" --body-file - <<'EOF'
 Hi,
 
 Message body here.
@@ -79,87 +98,160 @@ Regards
 EOF
 
 # Send HTML
-gog gmail send --to a@b.com --subject "Hi" --body-html "<p>Hello</p>"
+gws gmail +send --to a@b.com --subject "Hi" --body "<p>Hello</p>" --html
+
+# Send with attachment
+gws gmail +send --to a@b.com --subject "Report" --body "See attached" -a report.pdf
 
 # Draft
-gog gmail drafts create --to a@b.com --subject "Hi" --body "Draft text"
-gog gmail drafts send <draftId>
+gws gmail +send --to a@b.com --subject "Hi" --body "Draft text" --draft
 
-# Reply
-gog gmail send --to a@b.com --subject "Re: Hi" --body "Reply" --reply-to-message-id <msgId>
+# Reply (handles threading automatically)
+gws gmail +reply --message-id <messageId> --body "Reply text"
+
+# Reply all
+gws gmail +reply-all --message-id <messageId> --body "Reply text"
+
+# Forward
+gws gmail +forward --message-id <messageId> --to other@example.com
+
+# Watch for new emails (streaming NDJSON)
+gws gmail +watch
 ```
 
 ## Calendar
 
 ```bash
-# List events
-gog calendar events <calendarId> --from 2026-03-08T00:00:00Z --to 2026-03-15T00:00:00Z
+# Show upcoming events (uses Google account timezone)
+gws calendar +agenda
+
+# Show today's agenda in specific timezone
+gws calendar +agenda --today --timezone Europe/Warsaw
 
 # Create event
-gog calendar create <calendarId> --summary "Meeting" --from 2026-03-10T10:00:00Z --to 2026-03-10T11:00:00Z
+gws calendar +insert --summary "Meeting" --start 2026-03-10T10:00:00 --end 2026-03-10T11:00:00
 
-# Create with color (IDs 1-11)
-gog calendar create <calendarId> --summary "Lunch" --from <iso> --to <iso> --event-color 5
+# List events (raw API)
+gws calendar events list --params '{"calendarId": "primary", "timeMin": "2026-03-08T00:00:00Z", "timeMax": "2026-03-15T00:00:00Z"}'
 
 # Update event
-gog calendar update <calendarId> <eventId> --summary "New Title" --event-color 4
+gws calendar events patch --params '{"calendarId": "primary", "eventId": "<eventId>"}' --json '{"summary": "New Title"}'
+
+# Delete event
+gws calendar events delete --params '{"calendarId": "primary", "eventId": "<eventId>"}'
+
+# Free/busy query
+gws calendar freebusy query --json '{"timeMin": "2026-03-10T00:00:00Z", "timeMax": "2026-03-10T23:59:59Z", "items": [{"id": "primary"}]}'
 
 # Show available colors
-gog calendar colors
+gws calendar colors get
 ```
-
-Calendar color IDs: 1=#a4bdfc, 2=#7ae7bf, 3=#dbadff, 4=#ff887c, 5=#fbd75b, 6=#ffb878, 7=#46d6db, 8=#e1e1e1, 9=#5484ed, 10=#51b749, 11=#dc2127
 
 ## Drive
 
 ```bash
 # Search files
-gog drive search "budget 2026" --max 10
+gws drive files list --params '{"q": "name contains '\''budget 2026'\''", "pageSize": 10}'
 
 # List files in folder
-gog drive list <folderId> --max 20
+gws drive files list --params '{"q": "'\''<folderId>'\'' in parents", "pageSize": 20}'
+
+# Upload file
+gws drive +upload ./report.pdf --name "Q1 Report"
+
+# Download file
+gws drive files get --params '{"fileId": "<fileId>", "alt": "media"}' -o ./downloaded.pdf
+
+# Create folder
+gws drive files create --json '{"name": "New Folder", "mimeType": "application/vnd.google-apps.folder"}'
+
+# Share file
+gws drive permissions create --params '{"fileId": "<fileId>"}' --json '{"role": "reader", "type": "user", "emailAddress": "user@example.com"}'
 ```
 
 ## Contacts
 
 ```bash
-gog contacts list --max 20
-gog contacts search "Jan Kowalski"
+# Search contacts
+gws people people searchContacts --params '{"query": "Jan Kowalski", "readMask": "names,emailAddresses,phoneNumbers"}'
+
+# List contacts
+gws people people connections list --params '{"resourceName": "people/me", "personFields": "names,emailAddresses,phoneNumbers", "pageSize": 20}'
+
+# Search directory (Workspace)
+gws people people searchDirectoryPeople --params '{"query": "Jan", "readMask": "names,emailAddresses", "sources": ["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"]}'
+
+# Create contact
+gws people people createContact --json '{"names": [{"givenName": "Jan", "familyName": "Kowalski"}], "emailAddresses": [{"value": "jan@example.com"}]}'
 ```
 
 ## Sheets
 
 ```bash
-# Read
-gog sheets get <sheetId> "Sheet1!A1:D10" --json
-
-# Write
-gog sheets update <sheetId> "Sheet1!A1:B2" --values-json '[["Name","Value"],["a","1"]]' --input USER_ENTERED
+# Read cells
+gws sheets +read --spreadsheet <spreadsheetId> --range "Sheet1!A1:D10"
 
 # Append row
-gog sheets append <sheetId> "Sheet1!A:C" --values-json '[["x","y","z"]]' --insert INSERT_ROWS
+gws sheets +append --spreadsheet <spreadsheetId> --values "Alice,95,Pass"
+
+# Write cells (raw API)
+gws sheets spreadsheets values update \
+  --params '{"spreadsheetId": "<id>", "range": "Sheet1!A1:B2", "valueInputOption": "USER_ENTERED"}' \
+  --json '{"values": [["Name","Value"],["a","1"]]}'
 
 # Clear range
-gog sheets clear <sheetId> "Sheet1!A2:Z"
+gws sheets spreadsheets values clear \
+  --params '{"spreadsheetId": "<id>", "range": "Sheet1!A2:Z"}'
 
-# Metadata (tabs, row counts)
-gog sheets metadata <sheetId> --json
+# Get spreadsheet metadata
+gws sheets spreadsheets get --params '{"spreadsheetId": "<id>"}'
+
+# Create spreadsheet
+gws sheets spreadsheets create --json '{"properties": {"title": "Q1 Budget"}}'
+```
+
+**Shell tip:** Sheet ranges use `!` which zsh interprets as history expansion. Use double quotes:
+```bash
+gws sheets +read --spreadsheet ID --range "Sheet1!A1:D10"
 ```
 
 ## Docs
 
 ```bash
 # Read document
-gog docs cat <docId>
+gws docs documents get --params '{"documentId": "<docId>"}'
 
-# Export to file
-gog docs export <docId> --format txt --out /tmp/doc.txt
+# Create document
+gws docs documents create --json '{"title": "New Document"}'
+
+# Append text
+gws docs +write --document-id <docId> --text "Hello, world!"
+```
+
+## Workflow Helpers
+
+```bash
+# Morning standup summary (today's meetings + open tasks)
+gws workflow +standup-report
+
+# Prepare for next meeting (agenda, attendees, linked docs)
+gws workflow +meeting-prep
+
+# Weekly digest (this week's meetings + unread email count)
+gws workflow +weekly-digest
+
+# Convert email to task
+gws workflow +email-to-task --message-id <messageId>
+
+# Announce a Drive file in Chat space
+gws workflow +file-announce --file-id <fileId> --space <spaceId>
 ```
 
 ## Rules
 
 - Always confirm before sending email or creating/modifying events.
-- Use `--json` and `--no-input` for structured output in automation.
-- `--body` does not interpret `\n` — use `--body-file -` with heredoc for multi-line.
-- `gog gmail search` returns threads; use `gog gmail messages search` for individual messages.
+- Use `--dry-run` for destructive operations when possible.
+- Use `gws schema <service>.<resource>.<method>` to discover parameters for any API method.
+- JSON values in `--params` and `--json` must be wrapped in single quotes for shell escaping.
 - Use ISO 8601 format for all dates/times.
+- Use `--page-all` for large result sets.

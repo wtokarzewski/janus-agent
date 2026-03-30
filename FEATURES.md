@@ -229,7 +229,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 | `meal-planner` | Weekly meal planning, dietary restrictions, shopping lists. |
 | `home-assistant` | Home Assistant REST API control (lights, climate, scenes, scripts). |
 | `stock-watcher` | Google Finance watchlist, Python scripts, multi-exchange. |
-| `google-workspace` | Gmail, Calendar, Drive, Contacts, Sheets, Docs via `gog` CLI. |
+| `google-workspace` | Gmail, Calendar, Drive, Contacts, Sheets, Docs via `gws` CLI (googleworkspace/cli). |
 | `personal-travel` | Travel planning, documents, wishlists, budgets. |
 | `github` | GitHub operations via `gh` CLI: repos, issues, PRs, CI, releases, gists, search. |
 | `skill-creator` | Meta-skill for creating new SKILL.md files from repeated task patterns. |

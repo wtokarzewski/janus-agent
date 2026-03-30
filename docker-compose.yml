@@ -7,10 +7,9 @@ services:
       - janus-data:/home/node/app/.janus
       - janus-memory:/home/node/app/memory
       - janus-sessions:/home/node/app/sessions
-      - ${GOG_CONFIG:-./gog-config}:/home/node/.config/gogcli:ro
+      - ${GWS_CONFIG:-./gws-config}:/home/node/.config/gws:ro
     environment:
-      - GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD:-}
-      - GOG_ACCOUNT=${GOG_ACCOUNT:-}
+      - GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=${GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE:-}
     restart: unless-stopped
 
   janus-cli:
@@ -21,10 +20,9 @@ services:
       - janus-data:/home/node/app/.janus
       - janus-memory:/home/node/app/memory
       - janus-sessions:/home/node/app/sessions
-      - ${GOG_CONFIG:-./gog-config}:/home/node/.config/gogcli:ro
+      - ${GWS_CONFIG:-./gws-config}:/home/node/.config/gws:ro
     environment:
-      - GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD:-}
-      - GOG_ACCOUNT=${GOG_ACCOUNT:-}
+      - GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=${GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE:-}
     stdin_open: true
     tty: true
     profiles:
