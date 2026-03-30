@@ -173,9 +173,48 @@ export async function setupUserDirs(
   }
 }
 
+/** Check if a command is available on PATH. */
+async function checkCommand(cmd: string): Promise<boolean> {
+  try {
+    await execAsync(IS_WIN ? 'where' : 'which', [cmd], { timeout: 5_000, shell: IS_WIN });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Install gcloud CLI automatically. Returns true on success. */
+async function installGcloud(): Promise<boolean> {
+  try {
+    if (IS_WIN) {
+      // winget is available on Windows 10 1709+ and Windows 11
+      console.log(chalk.gray('  Running: winget install Google.CloudSDK ...'));
+      const code = await runInteractive(
+        'winget', ['install', '--id', 'Google.CloudSDK', '--accept-source-agreements', '--accept-package-agreements'],
+      );
+      if (code !== 0) return false;
+      // winget installs to default path — refresh PATH for current process
+      const gcloudDir = resolve(process.env.LOCALAPPDATA ?? '', 'Google', 'Cloud SDK', 'google-cloud-sdk', 'bin');
+      process.env.PATH = `${gcloudDir};${process.env.PATH}`;
+    } else if (process.platform === 'darwin') {
+      console.log(chalk.gray('  Running: brew install --cask google-cloud-sdk ...'));
+      const code = await runInteractive('brew', ['install', '--cask', 'google-cloud-sdk']);
+      if (code !== 0) return false;
+    } else {
+      console.log(chalk.gray('  Running: curl + install script ...'));
+      const code = await runInteractive('bash', ['-c', 'curl -sSL https://sdk.cloud.google.com | bash -s -- --disable-prompts']);
+      if (code !== 0) return false;
+    }
+    // Verify installation
+    return await checkCommand('gcloud');
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Check if gws (Google Workspace CLI) is installed and authenticated.
- * Prints setup instructions if not configured.
+ * Automatically installs gcloud + runs setup if needed.
  * Called by both onboard and update commands.
  */
 export async function ensureGws(): Promise<void> {
@@ -214,26 +253,30 @@ export async function ensureGws(): Promise<void> {
     return;
   }
 
-  // Step 1: try gws auth setup (requires gcloud)
-  console.log(chalk.blue('\n  Running: gws auth setup'));
-  console.log(chalk.gray('  This will create a GCP project, enable APIs, and open browser for login.\n'));
-  const setupCode = await runInteractive(gwsBin, ['auth', 'setup']);
+  // Step 1: ensure gcloud is installed
+  const hasGcloud = await checkCommand('gcloud');
+  if (!hasGcloud) {
+    console.log(chalk.blue('\n  Installing Google Cloud SDK (required for OAuth setup)...'));
+    const installed = await installGcloud();
+    if (!installed) {
+      console.log(chalk.red('  Could not install gcloud automatically.'));
+      console.log(chalk.gray('  Install manually: https://cloud.google.com/sdk/docs/install'));
+      console.log(chalk.gray('  Then run: npx gws auth setup\n'));
+      return;
+    }
+    console.log(chalk.green('  Google Cloud SDK installed.'));
+  }
 
+  // Step 2: gws auth setup (creates GCP project, enables APIs, opens browser)
+  console.log(chalk.blue('\n  Setting up Google Cloud project and OAuth...'));
+  const setupCode = await runInteractive(gwsBin, ['auth', 'setup']);
   if (setupCode !== 0) {
-    console.log(chalk.yellow('\n  gws auth setup failed (gcloud may not be installed).'));
-    console.log(chalk.bold('  Manual setup:'));
-    console.log(chalk.gray('    1. Create a GCP project: https://console.cloud.google.com/projectcreate'));
-    console.log(chalk.gray('    2. Enable APIs: Gmail, Calendar, Drive, Sheets, Docs, People'));
-    console.log(chalk.gray('    3. OAuth consent screen → External → add yourself as test user'));
-    console.log(chalk.gray('    4. Credentials → Create OAuth client ID → Desktop app'));
-    console.log(chalk.gray('    5. Download JSON → save to ~/.config/gws/client_secret.json'));
-    console.log(chalk.gray('  After manual setup, run: npx gws auth login -s drive,gmail,calendar,sheets,docs,contacts\n'));
+    console.log(chalk.yellow('\n  Setup failed. Run manually: npx gws auth setup\n'));
     return;
   }
 
-  // Step 2: login with scopes
-  console.log(chalk.blue('\n  Running: gws auth login -s drive,gmail,calendar,sheets,docs,contacts'));
-  console.log(chalk.gray('  This will open a browser for Google OAuth consent.\n'));
+  // Step 3: login with scopes
+  console.log(chalk.blue('\n  Logging in to Google Workspace...'));
   const loginCode = await runInteractive(gwsBin, ['auth', 'login', '-s', 'drive,gmail,calendar,sheets,docs,contacts']);
   if (loginCode === 0) {
     console.log(chalk.green('\n  Google Workspace: authenticated'));
