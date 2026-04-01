@@ -106,6 +106,17 @@ const SubagentsSchema = z.object({
   maxConcurrentSubagents: z.number().default(8),
 });
 
+const ContextSchema = z.object({
+  keepRecentTokens: z.number().default(20_000),
+  reserveTokens: z.number().default(20_000),
+  toolResultMaxShare: z.number().min(0.01).max(1.0).default(0.3),
+  toolResultHardMax: z.number().default(400_000),
+  softTrimChars: z.number().default(4000),
+  compactionThresholds: z.tuple([z.number(), z.number(), z.number()]).default([0.75, 0.80, 0.85]),
+  emergencyThreshold: z.number().default(0.95),
+  protectedTailTurns: z.number().min(0).default(3),
+});
+
 const AgentSchema = z.object({
   summarizationThreshold: z.number().default(40),
   tokenBudget: z.number().default(750_000),
@@ -119,6 +130,7 @@ const AgentSchema = z.object({
   memoryIdleFlushMs: z.number().default(120_000),
   lanes: LanesSchema.optional().transform(v => LanesSchema.parse(v ?? {})),
   subagents: SubagentsSchema.optional().transform(v => SubagentsSchema.parse(v ?? {})),
+  context: ContextSchema.optional().transform(v => ContextSchema.parse(v ?? {})),
 });
 
 const WorkspaceSchema = z.object({

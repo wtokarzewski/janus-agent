@@ -129,4 +129,9 @@ export const migrations: string[] = [
   );
   CREATE INDEX IF NOT EXISTS idx_gate_audit_timestamp ON gate_audit_log(timestamp);
   `,
+
+  // Migration 12: not_before on cron jobs — prevent jobs from firing before intended start
+  `
+  ALTER TABLE cron_jobs ADD COLUMN not_before TEXT;
+  `,
 ];

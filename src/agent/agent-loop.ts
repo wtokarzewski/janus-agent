@@ -17,6 +17,7 @@ import * as log from '../utils/logger.js';
 import { stripControlTokens, redactSecrets } from '../utils/sanitize.js';
 import type { AgentResolver, AgentContext } from './agent-resolver.js';
 import { ensureAgentDir } from '../users/user-resolver.js';
+import { enforceContextBudget } from './context-budget.js';
 
 const THINKING_LEVEL_BUDGETS: Record<string, number> = {
   off: 0, minimal: 2000, low: 5000, medium: 10000, high: 20000,
@@ -344,7 +345,6 @@ export class AgentLoop {
     //    Trim history if estimated tokens exceed token budget
     const history = await this.deps.sessions.getHistory(sessionKey);
     const cleanHistory = repairToolMessages(history);
-    const maxTokens = this.deps.config.agent.tokenBudget;
     let userContent = msg.replyContext
       ? `[Reply to ${msg.replyContext}]\n\n${msg.content}`
       : msg.content;
@@ -358,12 +358,12 @@ export class AgentLoop {
       }
     }
 
-    const trimmedHistory = trimHistoryToTokenBudget(cleanHistory, systemPrompt, userContent, maxTokens);
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
-      ...trimmedHistory,
+      ...cleanHistory,
       { role: 'user', content: userContent },
     ];
+    enforceContextBudget(messages, this.deps.config.agent);
 
     log.info(`[${sessionKey}] Context built in ${Date.now() - t0}ms`);
 
@@ -597,7 +597,7 @@ export class AgentLoop {
     if (!sourceSessionKey) return null;
 
     try {
-      const recentMessages = await this.deps.sessions.getHistory(sourceSessionKey, 10);
+      const recentMessages = await this.deps.sessions.getHistory(sourceSessionKey);
       // Only include user/assistant text messages (skip tool_use/tool_result)
       const textMessages = recentMessages
         .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
@@ -674,19 +674,13 @@ export class AgentLoop {
         }
       }
 
-      // Proactive context overflow detection (CR-Q)
-      const currentTokens = estimateMessagesTokens(messages);
-      const tokenBudget = this.deps.config.agent.tokenBudget;
-      if (currentTokens > tokenBudget * 0.9) {
-        log.warn(`[${sessionKey}] Context at ${Math.round(currentTokens / tokenBudget * 100)}% of budget (${currentTokens}/${tokenBudget}), pruning old tool results`);
-        pruneOldToolResults(messages);
-        if (estimateMessagesTokens(messages) > tokenBudget * 0.95) {
-          log.warn(`[${sessionKey}] Still over budget after pruning, forcing emergency compression`);
-          const nonSystem = messages.slice(1);
-          const half = Math.floor(nonSystem.length / 2);
-          const kept = nonSystem.slice(Math.max(half, nonSystem.length - 2));
-          messages.splice(1, messages.length - 1, ...kept);
-        }
+      // Proactive context budget enforcement
+      enforceContextBudget(messages, this.deps.config.agent);
+      // Emergency: if still over threshold, run without protected tail
+      const emergencyThreshold = this.deps.config.agent.context.emergencyThreshold;
+      if (estimateMessagesTokens(messages) > this.deps.config.agent.tokenBudget * emergencyThreshold) {
+        log.warn(`[${sessionKey}] Emergency compression — over ${Math.round(emergencyThreshold * 100)}% budget`);
+        enforceContextBudget(messages, this.deps.config.agent, true);
       }
 
       let response;
@@ -729,13 +723,10 @@ export class AgentLoop {
         // CR-BW: Timeout with high context usage → likely context too large, compress
         if (isTimeout && contextRetries < 2 && messages.length > 6) {
           const estTokens = estimateMessagesTokens(messages);
-          if (estTokens > tokenBudget * 0.7) {
+          if (estTokens > this.deps.config.agent.tokenBudget * 0.7) {
             contextRetries++;
-            log.warn(`[${sessionKey}] LLM timeout with high context (${estTokens}/${tokenBudget}), compressing`);
-            const nonSystem = messages.slice(1);
-            const half = Math.floor(nonSystem.length / 2);
-            const kept = nonSystem.slice(Math.max(half, nonSystem.length - 2));
-            messages = [messages[0], ...kept];
+            log.warn(`[${sessionKey}] LLM timeout with high context (${estTokens}/${this.deps.config.agent.tokenBudget}), compressing`);
+            enforceContextBudget(messages, this.deps.config.agent, true);
             continue;
           }
         }
@@ -743,11 +734,7 @@ export class AgentLoop {
         if (isContextError && contextRetries < 2) {
           contextRetries++;
           log.warn(`Context overflow, emergency compression (attempt ${contextRetries})`);
-          // Keep system prompt (index 0) + drop oldest 50% of remaining messages
-          const nonSystem = messages.slice(1);
-          const half = Math.floor(nonSystem.length / 2);
-          const kept = nonSystem.slice(Math.max(half, nonSystem.length - 2));
-          messages = [messages[0], ...kept];
+          enforceContextBudget(messages, this.deps.config.agent, true);
           continue;
         }
 
@@ -1122,17 +1109,38 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     messages: LLMMessage[],
     userId?: string,
     scope?: InboundMessage['scope'],
-    preTokenEstimate?: number,
+    _preTokenEstimate?: number,
   ): Promise<void> {
     log.info(`[${sessionKey}] Summarization: start`);
     const sumStart = Date.now();
-    const halfIdx = Math.floor(messages.length / 2);
-    const toSummarize = messages.slice(0, halfIdx);
-    const keepCount = 4; // must match SessionManager.summarize()
-    const discardUpTo = messages.length - keepCount;
+    const keepRecentTokens = this.deps.config.agent.context.keepRecentTokens;
 
-    // Memory flush — extract key facts from ALL messages about to be discarded
-    // Retry up to 3 times with exponential backoff before giving up
+    // Token-based cut point: walk backwards keeping keepRecentTokens
+    let tokens = 0;
+    let cutIndex = messages.length;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      const content = 'content' in msg ? msg.content : '';
+      const msgTokens = typeof content === 'string' ? Math.ceil(content.length / 2.5) : 100;
+      if (tokens + msgTokens > keepRecentTokens) {
+        cutIndex = i + 1;
+        // Snap forward to user message boundary
+        for (let j = cutIndex; j < messages.length; j++) {
+          if (messages[j].role === 'user') { cutIndex = j; break; }
+        }
+        break;
+      }
+      tokens += msgTokens;
+    }
+
+    const toSummarize = messages.slice(0, cutIndex);
+    if (toSummarize.length < 4) {
+      log.info(`[${sessionKey}] Summarization: too few messages to summarize, skipping`);
+      return;
+    }
+
+    // Pre-compaction memory flush
+    const discardUpTo = cutIndex;
     let flushed = false;
     for (let attempt = 1; attempt <= 3 && !flushed; attempt++) {
       try {
@@ -1144,7 +1152,25 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
       }
     }
     if (!flushed) {
-      log.error(`[${sessionKey}] All flush attempts failed — proceeding with summarization. Some memory may be lost.`);
+      log.error(`[${sessionKey}] All flush attempts failed — proceeding with summarization.`);
+    }
+
+    // Input filtering: only user + assistant (no tool results — they add noise)
+    const filtered = toSummarize.filter(m => m.role === 'user' || m.role === 'assistant');
+    const conversationText = filtered.map(m => {
+      const content = 'content' in m ? m.content : '';
+      return `${m.role}: ${typeof content === 'string' ? content : '[multimodal]'}`;
+    }).join('\n');
+
+    // Check for previous summary → iterative merge
+    const session = await this.deps.sessions.getOrCreate(sessionKey);
+    const previousSummary = session.metadata.summary;
+
+    let systemContent: string;
+    if (previousSummary) {
+      systemContent = loadPrompt('summarization/update', { previousSummary });
+    } else {
+      systemContent = loadPrompt('summarization/initial');
     }
 
     log.info(`[${sessionKey}] Summarization: LLM call start`);
@@ -1152,29 +1178,39 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     const summaryResponse = await withTimeout(this.deps.llm.chat({
       model: '',
       messages: [
-        { role: 'system', content: 'Summarize this conversation concisely. Focus on: 1) what task the user requested, 2) what progress was made, 3) what remains to be done, 4) key decisions and context. If the user had an active task in progress, make sure to preserve what it was and where it stopped.' },
-        { role: 'user', content: toSummarize.map(m => `${m.role}: ${'content' in m ? m.content : ''}`).join('\n') },
+        { role: 'system', content: systemContent },
+        { role: 'user', content: conversationText },
       ],
       temperature: 0.3,
-      maxTokens: 1024,
+      maxTokens: 2048,
     }, 'summarize'), 90_000, 'Summarization LLM call timed out');
     log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
 
-    // Sanity check: verify compaction actually reduced token count (C1)
-    const postSession = await this.deps.sessions.getOrCreate(sessionKey);
-    const summaryTokens = estimateTokens(summaryResponse.content);
-    const keptTokens = estimateMessagesTokens(postSession.messages.slice(-keepCount));
-    const postEstimate = summaryTokens + keptTokens;
-    const preEstimate = preTokenEstimate ?? estimateMessagesTokens(messages);
-    if (postEstimate >= preEstimate) {
-      log.warn(`[${sessionKey}] Compaction sanity check failed: post (${postEstimate}) >= pre (${preEstimate}) — summary may be too long`);
-    } else {
-      log.info(`[${sessionKey}] Compaction: ${preEstimate} → ${postEstimate} tokens (${Math.round((1 - postEstimate / preEstimate) * 100)}% reduction)`);
+    let summary = summaryResponse.content;
+
+    // Quality check: if conversation has scheduling content, verify Critical Context
+    const hasScheduling = /\b(cron|calendar|schedule|remind|alarm|heartbeat|\d{1,2}:\d{2})\b/i.test(conversationText);
+    const hasCriticalContext = summary.includes('## Critical Context') && !summary.match(/## Critical Context\s*\n+None/i);
+    if (hasScheduling && !hasCriticalContext) {
+      log.warn(`[${sessionKey}] Summarization quality check: Critical Context empty on scheduling conversation, regenerating`);
+      try {
+        const retryResponse = await withTimeout(this.deps.llm.chat({
+          model: '',
+          messages: [
+            { role: 'system', content: systemContent + '\n\nIMPORTANT: The previous summary had an empty Critical Context section. This conversation contains scheduling/timing content. You MUST extract and preserve exact times, dates, and constraints in the Critical Context section.' },
+            { role: 'user', content: conversationText },
+          ],
+          temperature: 0.3,
+          maxTokens: 2048,
+        }, 'summarize'), 90_000, 'Summarization retry timed out');
+        summary = retryResponse.content;
+      } catch (err) {
+        log.warn(`[${sessionKey}] Summarization quality retry failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
-    await this.deps.sessions.summarize(sessionKey, summaryResponse.content);
+    await this.deps.sessions.summarize(sessionKey, summary, keepRecentTokens);
 
-    // Reset pointer AFTER summarization completes (prevents mismatch on crash)
     const state = this.flushState.get(sessionKey);
     if (state) state.lastFlushed = 0;
 
@@ -1243,16 +1279,6 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 2.5);
 }
 
-/** Extract estimatable string from message content (handles multimodal). */
-function contentToString(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return (content as ToolContentBlock[])
-      .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-      .map(b => b.text).join('\n');
-  }
-  return '';
-}
 
 function estimateMessagesTokens(messages: LLMMessage[]): number {
   let total = 0;
@@ -1274,58 +1300,6 @@ function estimateMessagesTokens(messages: LLMMessage[]): number {
     }
   }
   return total;
-}
-
-/**
- * Trim history from the front until total estimated tokens fit within budget.
- * Preserves message pairs (assistant+tool) to avoid orphan tool messages.
- */
-function trimHistoryToTokenBudget(
-  history: LLMMessage[],
-  systemPrompt: string,
-  userContent: string,
-  maxTokens: number,
-): LLMMessage[] {
-  const fixedTokens = estimateTokens(systemPrompt) + estimateTokens(userContent);
-  let historyTokens = estimateMessagesTokens(history);
-
-  if (fixedTokens + historyTokens <= maxTokens) return history;
-
-  const trimmed = [...history];
-  while (trimmed.length > 2 && fixedTokens + historyTokens > maxTokens) {
-    const removed = trimmed.shift()!;
-    historyTokens -= estimateTokens(contentToString('content' in removed ? removed.content : ''));
-
-    // If we removed an assistant message, also remove following tool messages
-    // to avoid orphan tool_call_id references
-    while (trimmed.length > 0 && trimmed[0].role === 'tool') {
-      const toolRemoved = trimmed.shift()!;
-      historyTokens -= estimateTokens(contentToString('content' in toolRemoved ? toolRemoved.content : ''));
-    }
-  }
-
-  if (trimmed.length < history.length) {
-    log.warn(`Trimmed ${history.length - trimmed.length} messages from history to fit token budget (est. ${fixedTokens + estimateMessagesTokens(trimmed)} / ${maxTokens})`);
-  }
-
-  return trimmed;
-}
-
-/**
- * Prune old tool results in-place to reclaim context space (OD-B).
- * Replaces verbose tool results older than the last 4 turns with truncated summaries.
- * Preserves the most recent tool results (they're likely still relevant).
- */
-function pruneOldToolResults(messages: LLMMessage[]): void {
-  const KEEP_RECENT = 8; // Keep last 8 messages untouched
-  const PRUNED_MAX = 200; // Max chars for pruned tool result
-  const cutoff = messages.length - KEEP_RECENT;
-  for (let i = 0; i < cutoff; i++) {
-    const msg = messages[i];
-    if (msg.role === 'tool' && typeof msg.content === 'string' && msg.content.length > PRUNED_MAX) {
-      (msg as { content: string }).content = msg.content.slice(0, PRUNED_MAX) + '\n[... pruned to save context space]';
-    }
-  }
 }
 
 /**

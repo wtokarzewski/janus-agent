@@ -45,6 +45,16 @@
       "maxSpawnDepth": 1,
       "maxChildrenPerAgent": 5,
       "maxConcurrentSubagents": 8
+    },
+    "context": {
+      "keepRecentTokens": 20000,
+      "reserveTokens": 20000,
+      "toolResultMaxShare": 0.3,
+      "toolResultHardMax": 400000,
+      "softTrimChars": 4000,
+      "compactionThresholds": [0.75, 0.80, 0.85],
+      "emergencyThreshold": 0.95,
+      "protectedTailTurns": 3
     }
   },
 

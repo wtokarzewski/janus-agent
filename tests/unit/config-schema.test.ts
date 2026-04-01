@@ -106,6 +106,58 @@ describe('JanusConfigSchema', () => {
     expect(config.agent.subagents.maxConcurrentSubagents).toBe(4);
   });
 
+  it('should produce context defaults', () => {
+    const config = JanusConfigSchema.parse({});
+    expect(config.agent.context.keepRecentTokens).toBe(20_000);
+    expect(config.agent.context.reserveTokens).toBe(20_000);
+    expect(config.agent.context.toolResultMaxShare).toBe(0.3);
+    expect(config.agent.context.toolResultHardMax).toBe(400_000);
+    expect(config.agent.context.softTrimChars).toBe(4000);
+    expect(config.agent.context.compactionThresholds).toEqual([0.75, 0.80, 0.85]);
+    expect(config.agent.context.emergencyThreshold).toBe(0.95);
+    expect(config.agent.context.protectedTailTurns).toBe(3);
+  });
+
+  it('should accept custom context config', () => {
+    const config = JanusConfigSchema.parse({
+      agent: {
+        context: {
+          keepRecentTokens: 30_000,
+          reserveTokens: 10_000,
+          toolResultMaxShare: 0.5,
+          toolResultHardMax: 200_000,
+          softTrimChars: 8000,
+          compactionThresholds: [0.60, 0.70, 0.80],
+          emergencyThreshold: 0.90,
+          protectedTailTurns: 5,
+        },
+      },
+    });
+    expect(config.agent.context.keepRecentTokens).toBe(30_000);
+    expect(config.agent.context.reserveTokens).toBe(10_000);
+    expect(config.agent.context.toolResultMaxShare).toBe(0.5);
+    expect(config.agent.context.toolResultHardMax).toBe(200_000);
+    expect(config.agent.context.softTrimChars).toBe(8000);
+    expect(config.agent.context.compactionThresholds).toEqual([0.60, 0.70, 0.80]);
+    expect(config.agent.context.emergencyThreshold).toBe(0.90);
+    expect(config.agent.context.protectedTailTurns).toBe(5);
+  });
+
+  it('should reject toolResultMaxShare outside 0.01–1.0', () => {
+    expect(() => JanusConfigSchema.parse({
+      agent: { context: { toolResultMaxShare: 0 } },
+    })).toThrow();
+    expect(() => JanusConfigSchema.parse({
+      agent: { context: { toolResultMaxShare: 1.5 } },
+    })).toThrow();
+  });
+
+  it('should reject negative protectedTailTurns', () => {
+    expect(() => JanusConfigSchema.parse({
+      agent: { context: { protectedTailTurns: -1 } },
+    })).toThrow();
+  });
+
   it('should default users to empty array', () => {
     const config = JanusConfigSchema.parse({});
     expect(config.users).toEqual([]);

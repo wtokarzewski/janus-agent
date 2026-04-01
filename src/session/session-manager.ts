@@ -25,11 +25,17 @@ export interface Session {
  */
 export class SessionManager {
   private sessionsDir: string;
+  private contextWindow: number;
+  private toolResultMaxShare: number;
+  private toolResultHardMax: number;
   private cache = new Map<string, Session>();
   private locks = new Map<string, Promise<void>>();
 
   constructor(config: JanusConfig) {
     this.sessionsDir = resolve(config.workspace.dir, config.workspace.sessionsDir);
+    this.contextWindow = config.agent.contextWindow;
+    this.toolResultMaxShare = config.agent.context.toolResultMaxShare;
+    this.toolResultHardMax = config.agent.context.toolResultHardMax;
   }
 
   private withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -93,7 +99,16 @@ export class SessionManager {
     return this.withLock(key, async () => {
       const session = await this.getOrCreateInner(key);
       const isNew = session.messages.length === 0;
-      session.messages.push(...messages);
+
+      // Truncate oversized tool results at persist time
+      const processed = messages.map(m => {
+        if (m.role === 'tool' && typeof m.content === 'string') {
+          return { ...m, content: this.truncateToolResult(m.content) };
+        }
+        return m;
+      });
+
+      session.messages.push(...processed);
       session.metadata.messageCount = session.messages.length;
       session.metadata.updated = new Date().toISOString();
 
@@ -102,40 +117,71 @@ export class SessionManager {
         await this.save(key, session);
       } else {
         // Incremental — append new lines + rewrite metadata header
-        await this.appendIncremental(key, session, messages);
+        await this.appendIncremental(key, session, processed);
       }
     });
   }
 
-  async getHistory(key: string, maxMessages = 50): Promise<LLMMessage[]> {
+  async getHistory(key: string): Promise<LLMMessage[]> {
     return this.withLock(key, async () => {
       const session = await this.getOrCreateInner(key);
-      if (session.messages.length <= maxMessages) return session.messages;
-      return session.messages.slice(-maxMessages);
+      return session.messages;
     });
   }
 
   /**
    * Summarize old messages when conversation gets too long.
-   * Strategy: split-half-merge — summarize first half, keep last 4 messages.
+   * Token-based retention: walk backwards keeping keepRecentTokens worth of messages,
+   * snapping the cut point forward to the nearest user message boundary.
    */
-  async summarize(key: string, summaryText: string): Promise<void> {
+  async summarize(key: string, summaryText: string, keepRecentTokens: number): Promise<void> {
     return this.withLock(key, async () => {
       const session = await this.getOrCreateInner(key);
 
-      if (session.messages.length <= 8) return; // nothing to summarize
+      // Token-based cut point: walk backwards counting tokens
+      let tokens = 0;
+      let cutIndex = 0; // default: keep everything (cut at start)
+      for (let i = session.messages.length - 1; i >= 0; i--) {
+        const msg = session.messages[i];
+        const content = 'content' in msg ? msg.content : '';
+        const msgTokens = typeof content === 'string' ? Math.ceil(content.length / 2.5) : 100;
+        if (tokens + msgTokens > keepRecentTokens) {
+          cutIndex = i + 1;
+          // Snap forward to nearest user message boundary
+          for (let j = cutIndex; j < session.messages.length; j++) {
+            if (session.messages[j].role === 'user') { cutIndex = j; break; }
+          }
+          break;
+        }
+        tokens += msgTokens;
+      }
 
-      // Keep last 4 messages
-      const keepCount = 4;
-      session.messages = session.messages.slice(-keepCount);
+      // If cut would remove fewer than 4 messages, skip (not worth summarizing)
+      if (cutIndex < 4) return;
+
+      session.messages = session.messages.slice(cutIndex);
       session.metadata.summary = summaryText;
       session.metadata.messageCount = session.messages.length;
       session.metadata.lastFlushed = 0; // Reset pointer — remaining messages may need re-flush
 
       // Full rewrite — truncates JSONL to only post-compaction messages
       await this.save(key, session);
-      log.debug(`Summarized session ${key}, kept ${keepCount} messages (JSONL truncated)`);
+      log.debug(`Summarized session ${key}, kept ${session.messages.length} messages from index ${cutIndex} (JSONL truncated)`);
     });
+  }
+
+  private truncateToolResult(content: string): string {
+    // Dynamic cap: contextWindow tokens × 2.5 chars/token × share fraction
+    const dynamicCap = Math.floor(this.contextWindow * 2.5 * this.toolResultMaxShare);
+    const cap = Math.min(dynamicCap, this.toolResultHardMax);
+    if (content.length <= cap) return content;
+
+    // Head+tail truncation: 70% head + marker + 30% tail
+    const headLen = Math.floor(cap * 0.7);
+    const tailLen = cap - headLen;
+    const removed = content.length - headLen - tailLen;
+    const marker = `\n\n[truncated: ${removed} chars removed to fit context budget]\n\n`;
+    return content.slice(0, headLen) + marker + content.slice(-tailLen);
   }
 
   private async appendIncremental(key: string, session: Session, newMessages: LLMMessage[]): Promise<void> {

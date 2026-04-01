@@ -185,7 +185,6 @@ janus.json
 *.db-shm
 
 # Workspace bootstrap files (local copies from examples/)
-/AGENTS.md
 /JANUS.md
 /HEARTBEAT.md
 
