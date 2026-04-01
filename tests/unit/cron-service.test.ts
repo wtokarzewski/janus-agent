@@ -257,6 +257,84 @@ describe('CronService execution context', () => {
   });
 });
 
+describe('CronService not_before', () => {
+  it('computeNextRun skips cron matches before notBefore', () => {
+    const notBefore = new Date(Date.now() + 2 * 3_600_000).toISOString(); // 2 hours from now
+    const job = service.addJob({
+      name: 'nb-cron',
+      scheduleKind: 'cron',
+      scheduleValue: '* * * * *', // every minute
+      task: 'test',
+      notBefore,
+    });
+    expect(job.nextRunAt).toBeTruthy();
+    expect(new Date(job.nextRunAt!).getTime()).toBeGreaterThanOrEqual(new Date(notBefore).getTime());
+  });
+
+  it('computeNextRun clamps every-interval result to notBefore', () => {
+    const notBefore = new Date(Date.now() + 3_600_000).toISOString(); // 1 hour from now
+    const job = service.addJob({
+      name: 'nb-every',
+      scheduleKind: 'every',
+      scheduleValue: '60000', // 1 minute
+      task: 'test',
+      notBefore,
+    });
+    expect(job.nextRunAt).toBeTruthy();
+    expect(new Date(job.nextRunAt!).getTime()).toBeGreaterThanOrEqual(new Date(notBefore).getTime());
+  });
+
+  it('computeNextRun returns null for at-job before notBefore', () => {
+    const notBefore = new Date(Date.now() + 2 * 3_600_000).toISOString(); // 2 hours from now
+    const target = new Date(Date.now() + 1 * 3_600_000).toISOString(); // 1 hour from now (before notBefore)
+    const job = service.addJob({
+      name: 'nb-at',
+      scheduleKind: 'at',
+      scheduleValue: target,
+      task: 'test',
+      notBefore,
+    });
+    expect(job.nextRunAt).toBeNull();
+  });
+
+  it('stores notBefore on the job', () => {
+    const notBefore = new Date(Date.now() + 3_600_000).toISOString();
+    const job = service.addJob({
+      name: 'nb-store',
+      scheduleKind: 'every',
+      scheduleValue: '60000',
+      task: 'test',
+      notBefore,
+    });
+    expect(job.notBefore).toBe(notBefore);
+  });
+
+  it('onTimer skips job when now < notBefore', async () => {
+    const publishedIds: string[] = [];
+    bus.publishInbound = async (msg) => {
+      publishedIds.push(msg.id);
+    };
+
+    const notBefore = new Date(Date.now() + 3_600_000).toISOString(); // 1 hour from now
+    const job = service.addJob({
+      name: 'nb-skip',
+      scheduleKind: 'every',
+      scheduleValue: '60000',
+      task: 'test',
+      notBefore,
+    });
+
+    // Force next_run_at to now so it would normally fire
+    db.db.prepare('UPDATE cron_jobs SET next_run_at = ? WHERE id = ?')
+      .run(new Date(Date.now() - 1000).toISOString(), job.id);
+
+    await (service as unknown as { onTimer(): Promise<void> }).onTimer();
+
+    // Should not have fired because notBefore is in the future
+    expect(publishedIds).toHaveLength(0);
+  });
+});
+
 describe('HeartbeatService → CronService sync', () => {
   it('should sync HEARTBEAT.md tasks to cron_jobs', async () => {
     const heartbeatContent = `# Heartbeat

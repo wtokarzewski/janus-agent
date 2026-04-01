@@ -35,6 +35,8 @@ export interface CronJobInput {
   agentId?: string;
   /** If true, each run gets a disposable session (no cross-run contamination). */
   isolatedSession?: boolean;
+  /** ISO timestamp — job will not fire before this time even if schedule matches. */
+  notBefore?: string;
 }
 
 export interface CronJob {
@@ -53,6 +55,7 @@ export interface CronJob {
   nextRunAt: string | null;
   lastStatus: string | null;
   lastError: string | null;
+  notBefore: string | null;
   consecutiveErrors: number;
   createdAt: string;
 }
@@ -131,12 +134,13 @@ export class CronService {
       scheduleValue: input.scheduleValue,
       scheduleTz: input.scheduleTz ?? null,
       lastRunAt: null,
+      notBefore: input.notBefore ?? null,
     });
 
     this.db.db.prepare(`
-      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at, user_id, chat_id, session_id, agent_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt, input.userId ?? null, input.chatId ?? null, input.sessionId ?? null, input.agentId ?? null);
+      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at, user_id, chat_id, session_id, agent_id, not_before)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt, input.userId ?? null, input.chatId ?? null, input.sessionId ?? null, input.agentId ?? null, input.notBefore ?? null);
 
     return this.getJob(id)!;
   }
@@ -156,6 +160,7 @@ export class CronService {
     if (patch.enabled !== undefined) { updates.push('enabled = ?'); values.push(patch.enabled ? 1 : 0); }
     if (patch.userId !== undefined) { updates.push('user_id = ?'); values.push(patch.userId); }
     if (patch.chatId !== undefined) { updates.push('chat_id = ?'); values.push(patch.chatId); }
+    if (patch.notBefore !== undefined) { updates.push('not_before = ?'); values.push(patch.notBefore); }
 
     if (updates.length > 0) {
       values.push(id);
@@ -259,6 +264,7 @@ export class CronService {
     for (const job of jobs) {
       if (!job.nextRunAt) continue;
       if (this.runningJobs.has(job.id)) continue;
+      if (job.notBefore && now < new Date(job.notBefore)) continue;
       if (this.isOutsideActiveHours(job, now)) continue;
 
       const nextRun = new Date(job.nextRunAt);
@@ -415,27 +421,39 @@ export class CronService {
     }
   }
 
-  private computeNextRun(job: Pick<CronJob, 'scheduleKind' | 'scheduleValue' | 'scheduleTz' | 'lastRunAt'>): string | null {
+  private computeNextRun(job: Pick<CronJob, 'scheduleKind' | 'scheduleValue' | 'scheduleTz' | 'lastRunAt' | 'notBefore'>): string | null {
     const now = new Date();
+    const notBefore = job.notBefore ? new Date(job.notBefore) : null;
 
     switch (job.scheduleKind) {
       case 'at': {
         const target = new Date(job.scheduleValue);
-        return target > now ? target.toISOString() : null;
+        if (target <= now) return null;
+        if (notBefore && target < notBefore) return null;
+        return target.toISOString();
       }
 
       case 'every': {
         const intervalMs = parseInt(job.scheduleValue, 10);
         if (isNaN(intervalMs) || intervalMs <= 0) return null;
         const base = job.lastRunAt ? new Date(job.lastRunAt) : now;
-        return new Date(base.getTime() + intervalMs).toISOString();
+        let result = new Date(base.getTime() + intervalMs);
+        if (notBefore && result < notBefore) result = notBefore;
+        return result.toISOString();
       }
 
       case 'cron': {
         try {
           const opts = job.scheduleTz ? { timezone: job.scheduleTz } : undefined;
           const cron = new Cron(job.scheduleValue, opts);
-          const next = cron.nextRun();
+          let next = cron.nextRun();
+          if (notBefore && next) {
+            let iterations = 0;
+            while (next && next < notBefore && iterations < 1000) {
+              next = cron.nextRun(next);
+              iterations++;
+            }
+          }
           return next ? next.toISOString() : null;
         } catch {
           log.warn(`Invalid cron expression: ${job.scheduleValue}`);
@@ -469,6 +487,7 @@ function rowToJob(row: unknown): CronJob {
     nextRunAt: r.next_run_at ? String(r.next_run_at) : null,
     lastStatus: r.last_status ? String(r.last_status) : null,
     lastError: r.last_error ? String(r.last_error) : null,
+    notBefore: r.not_before ? String(r.not_before) : null,
     consecutiveErrors: Number(r.consecutive_errors ?? 0),
     createdAt: String(r.created_at),
   };
