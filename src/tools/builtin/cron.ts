@@ -60,6 +60,10 @@ export class CronTool implements ContextualTool {
         type: 'string',
         description: 'Target group chat ID for group-scoped jobs. Response will be sent to this chat instead of a specific user.',
       },
+      not_before: {
+        type: 'string',
+        description: 'ISO timestamp — job will not fire before this time even if schedule matches. Use for "start from X" patterns (e.g. user says "every hour 8-20 but today from 12:00").',
+      },
       limit: {
         type: 'number',
         description: 'Limit for run history (default: 20).',
@@ -167,6 +171,7 @@ export class CronTool implements ContextualTool {
           enabled: args.enabled !== false,
           userId: effectiveUserId,
           chatId: args.chat_id ? String(args.chat_id) : undefined,
+          notBefore: args.not_before ? String(args.not_before) : undefined,
         });
         // Cross-user reminder: REQUIRE notification to both parties
         if (targetUserId && reqCtx?.userId && targetUserId !== reqCtx.userId) {
@@ -195,6 +200,7 @@ export class CronTool implements ContextualTool {
           if (args.enabled !== undefined) patch.enabled = Boolean(args.enabled);
           if (args.user_id !== undefined) patch.userId = args.user_id === 'system' ? null : String(args.user_id);
           if (args.chat_id !== undefined) patch.chatId = String(args.chat_id);
+          if (args.not_before !== undefined) patch.notBefore = args.not_before ? String(args.not_before) : null;
           const job = this.cronService.updateJob(id, patch);
           return JSON.stringify(job, null, 2);
         } catch (err) {
