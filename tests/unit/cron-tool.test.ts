@@ -6,6 +6,7 @@ import { CronTool } from '../../src/tools/builtin/cron.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createTestConfig } from '../helpers/test-fixtures.js';
 
 let db: Database;
 let bus: MessageBus;
@@ -250,8 +251,8 @@ describe('CronTool', () => {
     expect(JSON.parse(result)).toEqual([]);
   });
 
-  describe('target_user_id (cross-user reminders)', () => {
-    it('should create job owned by target user', async () => {
+  describe('target_user_id (cross-user reminders — backward compat)', () => {
+    it('should keep ownership with requester, target in targets array', async () => {
       const result = await tool.execute(
         {
           action: 'add',
@@ -264,12 +265,16 @@ describe('CronTool', () => {
         { userId: 'monika' },
       );
       const job = JSON.parse(result);
-      expect(job.userId).toBe('wojtek');
+      // Owner = requester (monika), NOT the target
+      expect(job.userId).toBe('monika');
+      // Target is in targets array
+      expect(job.targets).toEqual([{ userId: 'wojtek', status: 'pending' }]);
+      // _action_required still emitted for cross-user
       expect(job._action_required).toContain('wojtek');
       expect(job._action_required).toContain('monika');
     });
 
-    it('should append [Requested by] to task for cross-user jobs', async () => {
+    it('should append [Created by] annotation to task for cross-user jobs', async () => {
       const result = await tool.execute(
         {
           action: 'add',
@@ -282,11 +287,10 @@ describe('CronTool', () => {
         { userId: 'monika' },
       );
       const job = JSON.parse(result);
-      expect(job.task).toContain('[Requested by user: monika');
-      expect(job.task).toContain('notify them via the message tool');
+      expect(job.task).toContain('[Created by: monika. Targets: wojtek]');
     });
 
-    it('should NOT append [Requested by] when target equals requester', async () => {
+    it('should NOT append [Created by] when target equals requester', async () => {
       const result = await tool.execute(
         {
           action: 'add',
@@ -299,11 +303,11 @@ describe('CronTool', () => {
         { userId: 'wojtek' },
       );
       const job = JSON.parse(result);
-      expect(job.task).not.toContain('[Requested by');
+      expect(job.task).not.toContain('[Created by');
       expect(job._action_required).toBeUndefined();
     });
 
-    it('should make cross-user job visible to target in list', async () => {
+    it('should make cross-user job visible to both owner and target in list', async () => {
       // Monika creates a reminder for Wojtek
       await tool.execute(
         {
@@ -316,26 +320,25 @@ describe('CronTool', () => {
         },
         { userId: 'monika' },
       );
-      // Monika's own job
+      // Monika's own job (self-reminder)
       await tool.execute(
         { action: 'add', name: 'monika-private', schedule_kind: 'every', schedule_value: '60000', task: 'Private' },
         { userId: 'monika' },
       );
 
-      // Wojtek sees the job targeted at him
+      // Wojtek sees the job targeted at him (via targets array)
       const wojtekResult = await tool.execute({ action: 'list' }, { userId: 'wojtek' });
       const wojtekJobs = JSON.parse(wojtekResult);
-      expect(wojtekJobs).toHaveLength(1);
-      expect(wojtekJobs[0].name).toBe('for-wojtek');
+      expect(wojtekJobs.some((j: { name: string }) => j.name === 'for-wojtek')).toBe(true);
 
-      // Monika does NOT see it (it belongs to Wojtek now)
+      // Monika sees BOTH — she's the owner of for-wojtek and monika-private
       const monikaResult = await tool.execute({ action: 'list' }, { userId: 'monika' });
       const monikaJobs = JSON.parse(monikaResult);
-      expect(monikaJobs).toHaveLength(1);
-      expect(monikaJobs[0].name).toBe('monika-private');
+      expect(monikaJobs).toHaveLength(2);
+      expect(monikaJobs.map((j: { name: string }) => j.name).sort()).toEqual(['for-wojtek', 'monika-private']);
     });
 
-    it('should allow target user to remove cross-user job', async () => {
+    it('should self-reject when target user calls remove', async () => {
       const addResult = await tool.execute(
         {
           action: 'add',
@@ -349,12 +352,37 @@ describe('CronTool', () => {
       );
       const { id } = JSON.parse(addResult);
 
-      // Wojtek can remove it (he's the owner now)
+      // Wojtek is a target, not the owner — self-reject instead of delete
       const removeResult = await tool.execute({ action: 'remove', id }, { userId: 'wojtek' });
+      expect(removeResult).toContain('rejected');
+
+      // Job still exists, target status is rejected
+      const statusResult = await tool.execute({ action: 'status', id }, { userId: 'wojtek' });
+      const job = JSON.parse(statusResult);
+      expect(job.targets[0].status).toBe('rejected');
+      expect(job.targets[0].statusAt).toBeTruthy();
+    });
+
+    it('should allow owner to remove cross-user job', async () => {
+      const addResult = await tool.execute(
+        {
+          action: 'add',
+          name: 'owner-removable',
+          schedule_kind: 'every',
+          schedule_value: '60000',
+          task: 'Test',
+          target_user_id: 'wojtek',
+        },
+        { userId: 'monika' },
+      );
+      const { id } = JSON.parse(addResult);
+
+      // Monika is the owner — can remove
+      const removeResult = await tool.execute({ action: 'remove', id }, { userId: 'monika' });
       expect(removeResult).toContain('removed');
     });
 
-    it('should take precedence over user_id', async () => {
+    it('should use user_id as owner when both user_id and target_user_id are set', async () => {
       const result = await tool.execute(
         {
           action: 'add',
@@ -368,8 +396,89 @@ describe('CronTool', () => {
         { userId: 'monika' },
       );
       const job = JSON.parse(result);
-      // target_user_id wins over user_id
-      expect(job.userId).toBe('wojtek');
+      // user_id determines owner, target_user_id goes to targets
+      expect(job.userId).toBe('maciek');
+      expect(job.targets).toEqual([{ userId: 'wojtek', status: 'pending' }]);
+    });
+  });
+
+  describe('targets validation', () => {
+    it('rejects unknown userId in targets', async () => {
+      const config = createTestConfig({
+        users: [
+          { id: 'wojtek', name: 'Wojtek', identities: [{ channel: 'telegram', channelUserId: '123' }] },
+        ],
+      });
+      const toolWithConfig = new CronTool(service, config);
+      const result = await toolWithConfig.execute({
+        action: 'add', name: 'test', schedule_kind: 'every', schedule_value: '60000',
+        task: 'remind', targets: [{ userId: 'nonexistent' }],
+      }, { userId: 'wojtek' });
+      expect(result).toContain('not found');
+    });
+
+    it('auto-materializes owner when no targets provided', async () => {
+      const result = await tool.execute({
+        action: 'add', name: 'self', schedule_kind: 'every', schedule_value: '60000',
+        task: 'remind',
+      }, { userId: 'wojtek' });
+      const job = JSON.parse(result);
+      expect(job.targets).toHaveLength(1);
+      expect(job.targets[0].userId).toBe('wojtek');
+      expect(job.targets[0].status).toBe('pending');
+    });
+
+    it('converts legacy target_user_id to targets', async () => {
+      const result = await tool.execute({
+        action: 'add', name: 'legacy', schedule_kind: 'every', schedule_value: '60000',
+        task: 'remind', target_user_id: 'wojtek',
+      }, { userId: 'monika' });
+      const job = JSON.parse(result);
+      expect(job.targets[0].userId).toBe('wojtek');
+      expect(job.targets[0].status).toBe('pending');
+    });
+
+    it('target remove sets status to rejected, not delete', async () => {
+      // Create job owned by monika with wojtek as target
+      const addResult = await tool.execute({
+        action: 'add', name: 'target-reject', schedule_kind: 'every', schedule_value: '60000',
+        task: 'Test', targets: [{ userId: 'wojtek' }],
+      }, { userId: 'monika' });
+      const { id } = JSON.parse(addResult);
+
+      // Wojtek (target) calls remove — should reject self, not delete
+      const removeResult = await tool.execute({ action: 'remove', id }, { userId: 'wojtek' });
+      expect(removeResult).toContain('rejected');
+
+      // Job should still exist
+      const job = service.getJob(id)!;
+      expect(job).toBeTruthy();
+      expect(job.targets[0].status).toBe('rejected');
+    });
+
+    it('owner remove deletes entire job', async () => {
+      const addResult = await tool.execute({
+        action: 'add', name: 'owner-delete', schedule_kind: 'every', schedule_value: '60000',
+        task: 'Test', targets: [{ userId: 'wojtek' }],
+      }, { userId: 'monika' });
+      const { id } = JSON.parse(addResult);
+
+      // Monika (owner) calls remove — should delete
+      const removeResult = await tool.execute({ action: 'remove', id }, { userId: 'monika' });
+      expect(removeResult).toContain('removed');
+      expect(service.getJob(id)).toBeNull();
+    });
+
+    it('target cannot update job', async () => {
+      const addResult = await tool.execute({
+        action: 'add', name: 'no-update', schedule_kind: 'every', schedule_value: '60000',
+        task: 'Test', targets: [{ userId: 'wojtek' }],
+      }, { userId: 'monika' });
+      const { id } = JSON.parse(addResult);
+
+      // Wojtek (target) tries to update — should be denied
+      const updateResult = await tool.execute({ action: 'update', id, task: 'hacked' }, { userId: 'wojtek' });
+      expect(updateResult).toContain('Access denied');
     });
   });
 });

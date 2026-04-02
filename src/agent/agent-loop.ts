@@ -16,6 +16,7 @@ import { loadPrompt } from '../prompts/loader.js';
 import * as log from '../utils/logger.js';
 import { stripControlTokens, redactSecrets } from '../utils/sanitize.js';
 import type { AgentResolver, AgentContext } from './agent-resolver.js';
+import type { CronService } from '../services/cron-service.js';
 import { ensureAgentDir } from '../users/user-resolver.js';
 import { enforceContextBudget } from './context-budget.js';
 
@@ -35,6 +36,7 @@ export interface AgentDeps {
   memory?: MemoryStore;
   gateService?: GateService;
   agentResolver?: AgentResolver;
+  cronService?: CronService;
 }
 
 export interface ExecutionRecord {
@@ -564,22 +566,88 @@ export class AgentLoop {
   }
 
   /**
-   * Inject recent messages from the target user's primary session into cron context.
-   * This lets the cron agent see confirmations ("done", "cancel") from the user's main conversation.
-   *
-   * Resolution: real chatId (group) → group session; userId → user's DM session; else → skip.
+   * Inject recent messages from target users' sessions into cron context.
+   * Multi-target: looks up job targets, builds status summary, injects messages from pending targets.
+   * Fallback: for legacy jobs without targets, delegates to injectOwnerSessionContext.
    */
   private async injectTargetSessionContext(msg: InboundMessage, agentId: string): Promise<string | null> {
+    // Extract job ID from message content
+    const jobIdMatch = typeof msg.content === 'string' ? msg.content.match(/\(id: ([a-f0-9-]+)\)/) : null;
+    if (!jobIdMatch) {
+      return this.injectOwnerSessionContext(msg, agentId);
+    }
+
+    const jobId = jobIdMatch[1];
+    const job = this.deps.cronService?.getJob(jobId);
+    if (!job || !job.targets.length) {
+      return this.injectOwnerSessionContext(msg, agentId);
+    }
+
+    const targets = job.targets;
+    const userTargets = targets.filter(t => t.userId);
+    const pendingTargets = userTargets.filter(t => t.status === 'pending');
+
+    // Build status summary
+    const statusLines = targets.map(t => {
+      const id = t.userId ?? t.chatId ?? 'unknown';
+      return `- ${id}: ${t.status}${t.statusAt ? ` (${t.statusAt})` : ''}`;
+    }).join('\n');
+
+    // Inject recent messages from pending targets (max 3 targets, 5 msgs each)
+    let recentMessages = '';
+    const injectTargets = pendingTargets.slice(0, 3);
+    for (const target of injectTargets) {
+      if (!target.userId) continue;
+      const profile = findUserProfile(target.userId, this.deps.config);
+      const identity = profile?.identities.find(i => i.channelUserId);
+      if (!identity) {
+        recentMessages += `\n--- Cannot read session for ${target.userId} — profile or identity not found ---\n`;
+        log.warn(`Cron context injection: cannot resolve session for user ${target.userId}`);
+        continue;
+      }
+      const sessionKey = this.deps.agentResolver
+        ? this.deps.agentResolver.resolveSessionKey(agentId, { ...msg, channel: identity.channel, chatId: identity.channelUserId! })
+        : `${agentId}:${identity.channel}:${identity.channelUserId}`;
+      try {
+        const history = await this.deps.sessions.getHistory(sessionKey);
+        const textMsgs = history
+          .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+          .slice(-5);
+        if (textMsgs.length > 0) {
+          recentMessages += `\n--- Recent messages from ${target.userId} ---\n`;
+          recentMessages += textMsgs.map(m => `${m.role}: ${String(m.content).slice(0, 300)}`).join('\n');
+          recentMessages += `\n--- End ---\n`;
+        }
+      } catch {
+        recentMessages += `\n--- Cannot read session for ${target.userId} ---\n`;
+      }
+    }
+
+    if (pendingTargets.length > 3) {
+      recentMessages += `\n(${pendingTargets.length - 3} more pending targets — messages not shown)\n`;
+    }
+
+    return loadPrompt('cron/cron-context-injection', {
+      name: job.name,
+      jobId: job.id,
+      owner: job.userId ?? 'system',
+      targetStatus: statusLines,
+      recentMessages,
+    });
+  }
+
+  /** Fallback: inject from owner's session for self-reminder/legacy jobs (old behavior). */
+  private async injectOwnerSessionContext(msg: InboundMessage, agentId: string): Promise<string | null> {
     let sourceSessionKey: string | null = null;
 
-    // 1. Real group chat ID (not cron:/heartbeat prefixed) → use group session
+    // 1. Real group chat ID → use group session
     if (msg.chatId && !msg.chatId.startsWith('cron:') && !msg.chatId.startsWith('heartbeat')) {
       const channel = this.findChannelForChat(msg.chatId);
       sourceSessionKey = this.deps.agentResolver
         ? this.deps.agentResolver.resolveSessionKey(agentId, { ...msg, channel, chatId: msg.chatId })
         : `${agentId}:${channel}:${msg.chatId}`;
     }
-    // 2. User-targeted job → find user's primary DM session via their profile identity
+    // 2. User-targeted job → find user's primary DM session
     else if (msg.user?.userId) {
       const profile = findUserProfile(msg.user.userId, this.deps.config);
       const identity = profile?.identities.find(i => i.channelUserId);
@@ -598,7 +666,6 @@ export class AgentLoop {
 
     try {
       const recentMessages = await this.deps.sessions.getHistory(sourceSessionKey);
-      // Only include user/assistant text messages (skip tool_use/tool_result)
       const textMessages = recentMessages
         .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
         .slice(-10);
@@ -609,9 +676,9 @@ export class AgentLoop {
         .map(m => `${m.role}: ${String(m.content).slice(0, 300)}`)
         .join('\n');
 
-      return loadPrompt('cron/cron-context-injection', { messages: formatted });
+      // Use inline format for legacy injection (prompt template now uses multi-target variables)
+      return `[Recent messages from target user's conversation:\n${formatted}\nEnd of recent messages — if the user already confirmed or rejected the task, update the cron job status accordingly using cron update.]`;
     } catch {
-      // Source session may not exist yet — that's fine, skip injection
       return null;
     }
   }

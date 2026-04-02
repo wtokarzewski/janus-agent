@@ -335,6 +335,126 @@ describe('CronService not_before', () => {
   });
 });
 
+describe('targets', () => {
+  it('stores and retrieves targets on job', () => {
+    const job = service.addJob({
+      name: 'multi-target',
+      scheduleKind: 'every',
+      scheduleValue: '60000',
+      task: 'remind',
+      targets: [
+        { userId: 'wojtek', status: 'pending' },
+        { userId: 'zuzia', status: 'pending' },
+      ],
+    });
+    expect(job.targets).toHaveLength(2);
+    expect(job.targets[0].userId).toBe('wojtek');
+    expect(job.targets[0].status).toBe('pending');
+  });
+
+  it('normalizes null targets to empty array', () => {
+    const job = service.addJob({
+      name: 'no-targets',
+      scheduleKind: 'every',
+      scheduleValue: '60000',
+      task: 'remind',
+    });
+    expect(job.targets).toEqual([]);
+  });
+
+  it('updates target status', () => {
+    const job = service.addJob({
+      name: 'status-test',
+      scheduleKind: 'every',
+      scheduleValue: '60000',
+      task: 'remind',
+      targets: [{ userId: 'wojtek', status: 'pending' }],
+    });
+    const updated = service.updateJob(job.id, {
+      targets: [{ userId: 'wojtek', status: 'confirmed', statusAt: new Date().toISOString() }],
+    });
+    expect(updated.targets[0].status).toBe('confirmed');
+  });
+
+  it('auto-disables when all user targets responded', async () => {
+    // Create job with all targets confirmed
+    const job = service.addJob({
+      name: 'auto-disable-test',
+      scheduleKind: 'every',
+      scheduleValue: '3600000',
+      task: 'remind targets',
+      targets: [
+        { userId: 'wojtek', status: 'confirmed', statusAt: new Date().toISOString() },
+        { userId: 'zuzia', status: 'rejected', statusAt: new Date().toISOString() },
+      ],
+    });
+
+    // Force next_run_at to now
+    db.db.prepare('UPDATE cron_jobs SET next_run_at = ? WHERE id = ?')
+      .run(new Date(Date.now() - 1000).toISOString(), job.id);
+
+    // Spy on publishInbound
+    let published = false;
+    bus.publishInbound = async () => { published = true; };
+
+    await (service as unknown as { onTimer(): Promise<void> }).onTimer();
+
+    // Should NOT have published (auto-disabled before LLM call)
+    expect(published).toBe(false);
+
+    // Job should be disabled
+    const refreshed = service.getJob(job.id)!;
+    expect(refreshed.enabled).toBe(false);
+  });
+
+  it('excludes group chat targets from auto-disable check', async () => {
+    // Job with user confirmed + group chat still pending
+    const job = service.addJob({
+      name: 'mixed-target',
+      scheduleKind: 'every',
+      scheduleValue: '3600000',
+      task: 'remind',
+      targets: [
+        { userId: 'wojtek', status: 'confirmed', statusAt: new Date().toISOString() },
+        { chatId: '-100group', status: 'pending' },
+      ],
+    });
+
+    db.db.prepare('UPDATE cron_jobs SET next_run_at = ? WHERE id = ?')
+      .run(new Date(Date.now() - 1000).toISOString(), job.id);
+
+    let published = false;
+    bus.publishInbound = async () => { published = true; };
+
+    await (service as unknown as { onTimer(): Promise<void> }).onTimer();
+
+    // Should auto-disable because all USER targets responded (group chat excluded)
+    expect(published).toBe(false);
+    expect(service.getJob(job.id)!.enabled).toBe(false);
+  });
+
+  it('recomputes stale nextRunAt on startup', () => {
+    // Create a recurring job
+    const job = service.addJob({
+      name: 'stale-test',
+      scheduleKind: 'every',
+      scheduleValue: '60000',
+      task: 'test',
+    });
+
+    // Set nextRunAt to the past
+    const pastTime = new Date(Date.now() - 300_000).toISOString();
+    db.db.prepare('UPDATE cron_jobs SET next_run_at = ? WHERE id = ?').run(pastTime, job.id);
+
+    // Call recomputeStaleNextRunAt
+    (service as unknown as { recomputeStaleNextRunAt(): void }).recomputeStaleNextRunAt();
+
+    // nextRunAt should be in the future now
+    const refreshed = service.getJob(job.id)!;
+    expect(new Date(refreshed.nextRunAt!).getTime()).toBeGreaterThan(Date.now() - 5000);
+  });
+});
+
 describe('HeartbeatService → CronService sync', () => {
   it('should sync HEARTBEAT.md tasks to cron_jobs', async () => {
     const heartbeatContent = `# Heartbeat

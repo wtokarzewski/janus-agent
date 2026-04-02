@@ -1,1 +1,3 @@
-REQUIRED when setting a reminder/job for ANOTHER user (e.g. "Remind Wojtek...", "Przypomnij X żeby..."). Look up the target user ID from <known_users>. The job will be owned by the target user (they see it in their list). Without this, the target user CANNOT see the reminder. After creating, you MUST send messages to BOTH users: notify the target about the new reminder AND confirm to the requester.
+DEPRECATED — use `targets` parameter instead. `target_user_id` is still accepted for backward compatibility and will be converted to targets: [{ userId: value }].
+
+The `targets` parameter accepts an array of recipients: [{ userId: "wojtek" }, { userId: "zuzia" }]. Each target must be a known user from <known_users>. Channel defaults to the requester's channel.
