@@ -134,4 +134,9 @@ export const migrations: string[] = [
   `
   ALTER TABLE cron_jobs ADD COLUMN not_before TEXT;
   `,
+
+  // Migration 13: targets array for multi-user cron delivery
+  `
+ALTER TABLE cron_jobs ADD COLUMN targets TEXT;
+`,
 ];

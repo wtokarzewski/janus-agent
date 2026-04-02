@@ -19,6 +19,14 @@ import { localTimestamp, getTimezone } from '../utils/date.js';
 
 export type ScheduleKind = 'at' | 'every' | 'cron';
 
+export interface CronTarget {
+  userId?: string;
+  chatId?: string;
+  channel?: string;
+  status: 'pending' | 'confirmed' | 'rejected';
+  statusAt?: string;
+}
+
 export interface CronJobInput {
   name: string;
   scheduleKind: ScheduleKind;
@@ -37,6 +45,7 @@ export interface CronJobInput {
   isolatedSession?: boolean;
   /** ISO timestamp — job will not fire before this time even if schedule matches. */
   notBefore?: string;
+  targets?: CronTarget[];
 }
 
 export interface CronJob {
@@ -58,6 +67,7 @@ export interface CronJob {
   notBefore: string | null;
   consecutiveErrors: number;
   createdAt: string;
+  targets: CronTarget[];
 }
 
 export interface CronRunEntry {
@@ -88,6 +98,8 @@ export class CronService {
 
   start(signal: AbortSignal): void {
     this.backfillHeartbeatUserIds();
+    this.recomputeStaleNextRunAt();
+    this.migrateTargetUserIdJobs();
     this.running = true;
     this.armTimer();
 
@@ -125,6 +137,50 @@ export class CronService {
     }
   }
 
+  /** Recompute nextRunAt for recurring jobs where it's in the past (stale after restart/deploy). */
+  private recomputeStaleNextRunAt(): void {
+    const now = new Date();
+    const jobs = this.listJobs();
+    let updated = 0;
+    for (const job of jobs) {
+      if (job.scheduleKind === 'at') continue; // one-shot, don't recompute
+      if (!job.nextRunAt) continue;
+      if (new Date(job.nextRunAt) >= now) continue; // still in future
+      const fresh = this.computeNextRun(job);
+      if (fresh) {
+        this.db.db.prepare('UPDATE cron_jobs SET next_run_at = ? WHERE id = ?').run(fresh, job.id);
+        updated++;
+      }
+    }
+    if (updated > 0) {
+      log.info(`Cron: recomputed stale nextRunAt for ${updated} job(s)`);
+    }
+  }
+
+  /** Best-effort migration: convert old target_user_id-style jobs to new targets format. */
+  private migrateTargetUserIdJobs(): void {
+    const jobs = this.listJobs(true); // include disabled
+    let migrated = 0;
+    for (const job of jobs) {
+      if (job.targets.length > 0) continue; // already has targets
+      const match = job.task.match(/\[Requested by user: (\w+)/);
+      if (match) {
+        const requesterId = match[1];
+        const targets: CronTarget[] = [{ userId: job.userId!, status: 'pending' }];
+        this.db.db.prepare('UPDATE cron_jobs SET user_id = ?, targets = ? WHERE id = ?')
+          .run(requesterId, JSON.stringify(targets), job.id);
+        migrated++;
+      } else if (job.userId) {
+        // Job has an owner but no annotation and no targets — may be a legacy cross-user job
+        // with hardcoded chat_id in task text. Can't auto-migrate.
+        log.warn(`Cron: cannot migrate job "${job.name}" (${job.id}) — no [Requested by user:] annotation found`);
+      }
+    }
+    if (migrated > 0) {
+      log.info(`Cron: migrated ${migrated} legacy target_user_id job(s) to targets format`);
+    }
+  }
+
   // --- CRUD ---
 
   addJob(input: CronJobInput): CronJob {
@@ -137,10 +193,12 @@ export class CronService {
       notBefore: input.notBefore ?? null,
     });
 
+    const targetsJson = input.targets?.length ? JSON.stringify(input.targets) : null;
+
     this.db.db.prepare(`
-      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at, user_id, chat_id, session_id, agent_id, not_before)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt, input.userId ?? null, input.chatId ?? null, input.sessionId ?? null, input.agentId ?? null, input.notBefore ?? null);
+      INSERT INTO cron_jobs (id, name, schedule_kind, schedule_value, schedule_tz, task, enabled, next_run_at, user_id, chat_id, session_id, agent_id, not_before, targets)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.name, input.scheduleKind, input.scheduleValue, input.scheduleTz ?? null, input.task, input.enabled !== false ? 1 : 0, nextRunAt, input.userId ?? null, input.chatId ?? null, input.sessionId ?? null, input.agentId ?? null, input.notBefore ?? null, targetsJson);
 
     return this.getJob(id)!;
   }
@@ -161,6 +219,10 @@ export class CronService {
     if (patch.userId !== undefined) { updates.push('user_id = ?'); values.push(patch.userId); }
     if (patch.chatId !== undefined) { updates.push('chat_id = ?'); values.push(patch.chatId); }
     if (patch.notBefore !== undefined) { updates.push('not_before = ?'); values.push(patch.notBefore); }
+    if (patch.targets !== undefined) {
+      updates.push('targets = ?');
+      values.push(patch.targets.length ? JSON.stringify(patch.targets) : null);
+    }
 
     if (updates.length > 0) {
       values.push(id);
@@ -205,7 +267,9 @@ export class CronService {
     const conditions = [
       `(user_id IS NULL AND chat_id IS NULL)`,
       `user_id IN (${userPlaceholders})`,
+      `targets LIKE '%"userId":"' || ? || '"%'`,
     ];
+    params.push(userId);
     if (chatId) {
       conditions.push(`chat_id = ?`);
       params.push(chatId);
@@ -322,6 +386,36 @@ export class CronService {
       const isIsolated = job.name.startsWith('heartbeat:') && this.isIsolatedSession(job);
       const chatId = job.chatId
         ?? (isIsolated ? `cron:${job.id}:${Date.now()}` : (job.sessionId ? `cron:${job.sessionId}` : `cron:${job.id}`));
+
+      // Auto-disable when all user targets have responded
+      const targets = job.targets;
+      const userTargets = targets.filter(t => t.userId);
+      if (userTargets.length > 0 && userTargets.every(t => t.status !== 'pending')) {
+        this.db.db.prepare('UPDATE cron_jobs SET enabled = 0 WHERE id = ?').run(job.id);
+        log.info(`Cron: auto-disabled job "${job.name}" — all user targets responded`);
+
+        // Notify owner about auto-disable
+        if (job.userId) {
+          const statusSummary = targets.map(t => {
+            const id = t.userId ?? t.chatId ?? 'unknown';
+            return `${id}: ${t.status}`;
+          }).join(', ');
+          await this.bus.publishInbound({
+            id: `cron-complete-${job.id}-${Date.now()}`,
+            channel: 'system',
+            chatId: job.chatId ?? `cron:${job.id}`,
+            content: `[Cron job completed: "${job.name}"] All targets responded. Status: ${statusSummary}. Job auto-disabled.`,
+            author: 'system',
+            timestamp: new Date(),
+            lane: 'cron',
+            user: { userId: job.userId },
+            agentId: job.agentId ?? undefined,
+          });
+        }
+
+        this.runningJobs.delete(job.id);
+        return; // skip LLM call
+      }
 
       await this.bus.publishInbound({
         id: `cron-${job.id}-${Date.now()}`,
@@ -490,6 +584,7 @@ function rowToJob(row: unknown): CronJob {
     notBefore: r.not_before ? String(r.not_before) : null,
     consecutiveErrors: Number(r.consecutive_errors ?? 0),
     createdAt: String(r.created_at),
+    targets: r.targets ? JSON.parse(String(r.targets)) as CronTarget[] : [],
   };
 }
 
