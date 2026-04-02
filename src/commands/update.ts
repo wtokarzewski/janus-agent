@@ -3,7 +3,7 @@
  * CLI equivalent of the self_update agent tool.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { cp, readdir, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -189,7 +189,10 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
   // 7. Auto-detect timezone if missing from config
   await ensureTimezone();
 
-  // 8. Check Google Workspace CLI auth
+  // 8. Check for new config sections
+  checkNewConfigSections(cwd);
+
+  // 9. Check Google Workspace CLI auth
   try {
     const { ensureGws } = await import('./onboard.js');
     await ensureGws();
@@ -215,5 +218,30 @@ async function ensureTimezone(): Promise<void> {
     console.log(chalk.green(`  + timezone: ${tz} (auto-detected, saved to janus.json)`));
   } catch {
     // Non-critical — skip silently
+  }
+}
+
+/** Compare janus.json top-level keys against janus.example.json and report new sections. */
+function checkNewConfigSections(cwd: string): void {
+  try {
+    const examplePath = resolve(cwd, 'janus.example.json');
+    const configPath = resolve(cwd, 'janus.json');
+    if (!existsSync(examplePath) || !existsSync(configPath)) return;
+
+    const example = JSON.parse(readFileSync(examplePath, 'utf-8'));
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+
+    const newSections: string[] = [];
+    for (const key of Object.keys(example)) {
+      if (!(key in config)) {
+        newSections.push(key);
+      }
+    }
+
+    if (newSections.length > 0) {
+      console.log(chalk.yellow(`  New config sections available: ${newSections.join(', ')} — see janus.example.json`));
+    }
+  } catch {
+    // Non-critical
   }
 }

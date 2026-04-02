@@ -95,7 +95,15 @@
     "enabled": true,
     "token": "123456789:AABBccDDeeFFggHHiiJJkkLLmmNNoo",
     "allowlist": ["123456789"],
+    "denyByDefault": true,
     "groupPolicy": "all"
+  },
+
+  "whatsapp": {
+    "enabled": false,
+    "authDir": "~/.janus/whatsapp-auth",
+    "allowlist": [],
+    "maxMessageLength": 4000
   },
 
   "voice": {
