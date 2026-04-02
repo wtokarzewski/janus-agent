@@ -152,6 +152,20 @@ const DatabaseSchema = z.object({
   path: z.string().default('.janus/janus.db'),
 });
 
+const CronSchema = z.object({
+  cleanup: z.object({
+    enabled: z.boolean().default(true),
+    /** How often to run cleanup (days). */
+    intervalDays: z.number().default(7),
+    /** Time of day to run cleanup (HH:MM, local time). */
+    time: z.string().regex(/^\d{2}:\d{2}$/).default('00:05'),
+    /** Delete disabled one-shot (at) jobs older than this many days. */
+    maxAgeDaysOneShot: z.number().default(7),
+    /** Delete disabled recurring (every/cron) jobs older than this many days. */
+    maxAgeDaysRecurring: z.number().default(30),
+  }).optional().transform(v => v ?? { enabled: true, intervalDays: 7, time: '00:05', maxAgeDaysOneShot: 7, maxAgeDaysRecurring: 30 }),
+});
+
 const HeartbeatSchema = z.object({
   enabled: z.boolean().default(false),
   checkIntervalMs: z.number().default(60_000),
@@ -346,6 +360,7 @@ export const JanusConfigSchema = z.object({
   workspace: WorkspaceSchema.optional().transform(v => WorkspaceSchema.parse(v ?? {})),
   tools: ToolsSchema.optional().transform(v => ToolsSchema.parse(v ?? {})),
   database: DatabaseSchema.optional().transform(v => DatabaseSchema.parse(v ?? {})),
+  cron: CronSchema.optional().transform(v => CronSchema.parse(v ?? {})),
   heartbeat: HeartbeatSchema.optional().transform(v => HeartbeatSchema.parse(v ?? {})),
   whatsapp: WhatsAppSchema.optional().transform(v => WhatsAppSchema.parse(v ?? {})),
   telegram: TelegramSchema.optional().transform(v => TelegramSchema.parse(v ?? {})),

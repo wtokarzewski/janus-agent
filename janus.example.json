@@ -119,6 +119,16 @@
     "telegramThrottleMs": 500
   },
 
+  "cron": {
+    "cleanup": {
+      "enabled": true,
+      "intervalDays": 7,
+      "time": "00:05",
+      "maxAgeDaysOneShot": 7,
+      "maxAgeDaysRecurring": 30
+    }
+  },
+
   "heartbeat": {
     "enabled": false,
     "checkIntervalMs": 60000
