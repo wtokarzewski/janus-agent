@@ -170,9 +170,9 @@ export class CronService {
         this.db.db.prepare('UPDATE cron_jobs SET user_id = ?, targets = ? WHERE id = ?')
           .run(requesterId, JSON.stringify(targets), job.id);
         migrated++;
-      } else if (job.userId) {
-        // Job has an owner but no annotation and no targets — may be a legacy cross-user job
-        // with hardcoded chat_id in task text. Can't auto-migrate.
+      } else if (job.userId && !job.enabled && !job.name.startsWith('heartbeat:')) {
+        // Disabled non-heartbeat job with owner but no annotation — may be a legacy cross-user
+        // job with hardcoded chat_id in task text. Can't auto-migrate.
         log.warn(`Cron: cannot migrate job "${job.name}" (${job.id}) — no [Requested by user:] annotation found`);
       }
     }
