@@ -1,14 +1,14 @@
 # Roadmap
 
-## Current State (Phase 11 complete)
+## Current State (Phase 12 complete)
 
-- **Codebase:** ~13,500 LOC TypeScript, 433 tests across 41 files, CI
+- **Codebase:** ~13,500 LOC TypeScript, 466 tests across 42 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
 - **Skills:** 9 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace, github, skill-creator, browser-operator)
 - **Channels:** 2 (CLI, Telegram) + MCP server + MCP client
-- **DB:** SQLite (WAL, 11 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron, cron session IDs, cron chat_id, cron_runs finished_at, cron agent_id, gate_audit_log)
+- **DB:** SQLite (WAL, 13 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron, cron session IDs, cron chat_id, cron_runs finished_at, cron agent_id, gate_audit_log, not_before, cron targets)
 
 See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 
@@ -171,6 +171,15 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Exec master switch: `tools.execEnabled` config flag to disable exec tool entirely
 - Credential encryption: AES-256-GCM for auth.json at rest
 - Gate audit log: SQLite `gate_audit_log` table (migration 11) records all gate decisions
+
+### Cron Targets Overhaul (#164-167)
+- Multi-target delivery model: owner+targets[] replacing target_user_id. Per-target status (pending/confirmed/rejected), auto-disable on full response
+- Recursion guard removed (cron jobs can create/modify other cron jobs)
+- known_users with channel info in context builder
+- Multi-target context injection (per-target status, max 3 pending targets, 5 msgs each)
+- Auto-cleanup of old disabled cron jobs (configurable via cron.cleanup)
+- Update command detects new config sections (compares janus.example.json vs janus.json)
+- 466 tests across 42 files
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
