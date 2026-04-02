@@ -68,9 +68,15 @@ export class ContextBuilder {
       if (userSection) parts.push(userSection);
     }
 
-    // 1c. Known users (id + name only — no sensitive data)
+    // 1c. Known users (id + name + channel identities)
     if (this.deps.config.users.length > 0) {
-      const userLines = this.deps.config.users.map(u => `- ${u.id} (${u.name})`);
+      const userLines = this.deps.config.users.map(u => {
+        const channels = u.identities
+          ?.filter(i => i.channelUserId)
+          .map(i => `${i.channel}:${i.channelUserId}`)
+          .join(', ') ?? '';
+        return `- ${u.id} (${u.name})${channels ? ` channels: ${channels}` : ''}`;
+      });
       parts.push(`<known_users>\n${userLines.join('\n')}\n</known_users>`);
     }
 

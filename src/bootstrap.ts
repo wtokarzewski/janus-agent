@@ -202,7 +202,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   // 7. Cron service (requires database)
   const cronService = db ? new CronService(db, bus, config) : null;
   if (cronService) {
-    tools.register(new CronTool(cronService));
+    tools.register(new CronTool(cronService, config));
   }
 
   // 8. MCP clients (external tool servers)
@@ -225,7 +225,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   // 9. Agent loop (with spawn_agent tool + subagent registry)
   const subagentRegistry = new SubagentRegistry();
   const agentResolver = new AgentResolver(config);
-  const agentDeps = { bus, llm, tools, sessions, context, skills, config, learner, memory, agentResolver };
+  const agentDeps = { bus, llm, tools, sessions, context, skills, config, learner, memory, agentResolver, cronService: cronService ?? undefined };
   tools.register(new SpawnAgentTool(agentDeps, subagentRegistry));
   const agent = new AgentLoop(agentDeps);
 
