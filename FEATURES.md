@@ -1,8 +1,8 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 433 passing tests.
+Canonical list of implemented, working features. Verified against source code and 466 passing tests.
 
-**Last updated:** 2026-03-28
+**Last updated:** 2026-04-02
 
 ---
 
@@ -172,8 +172,15 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
   - Per-user job ownership: userId column (migration 6), ownership enforcement on update/delete/list.
   - Per-agent jobs: agentId column (migration 10), propagated to inbound messages.
   - Custom session IDs: optional sessionId per cron job — reuse same session across runs (migration 7).
-  - Cross-user reminders: `target_user_id` creates job owned by target user with `[Requested by]` metadata. Target sees/controls the job, requester is notified on completion/cancellation.
-  - Cron session context injection: last 10 messages from target user's primary session (DM or group) injected into cron execution context — agent sees confirmations like "done".
+  - Multi-target delivery: `targets[]` parameter with CronTarget[] (userId/chatId per target, pending/confirmed/rejected status). Replaces legacy `target_user_id`.
+  - Auto-disable: jobs automatically disabled when all user targets have responded (code-level guarantee).
+  - Target self-reject: `cron remove` on a target sets status=rejected instead of deleting the job.
+  - Owner-only update: only job owner can update/delete. Privacy filtering in list/status for targets.
+  - Recursion guard removed: cron jobs can now create/modify other cron jobs.
+  - Stale nextRunAt recompute on startup: fixes jobs that missed their window during downtime.
+  - Multi-target context injection: per-target status, max 3 pending targets, 5 messages each from target's primary session injected into cron execution context.
+  - Startup migration for legacy `target_user_id` jobs: auto-converts to new targets[] format.
+  - Auto-cleanup of old disabled jobs: configurable via `cron.cleanup` (enabled, intervalDays, time, maxAgeDaysOneShot, maxAgeDaysRecurring). Runs on startup + periodically.
   - Job ID in execution context: `(id: {jobId})` in cron message enables agent self-removal via `cron remove`.
   - CRUD: addJob, updateJob, removeJob, listJobs, getRuns.
 - **HeartbeatService** — Parses `HEARTBEAT.md` for periodic tasks.
@@ -263,6 +270,7 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 
 - **Sender name in session context** — Shows `Sender: Name (userId)` instead of `User: userId` in family chats. Agent knows WHO is writing, enabling proper identity-aware responses ("remind me" knows who to remind).
 - **Agent identity in context** — Agent name in identity section, `Agent:` line in session context. Per-agent memory section via agentId when not shared.
+- **known_users with channel info** — User identities in context include channel info (channel:channelUserId per user identity) for precise cross-channel targeting.
 - **All behavioral instructions externalized to AGENTS.md** — context-builder code has zero hardcoded rules. All tool usage rules, skill instructions, and behavioral guidance live in editable .md files.
 - **Date-only timestamp** — ISO date (no time) in session info maximizes Anthropic prompt cache hits within a day.
 
@@ -284,7 +292,7 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 ## Database
 
 - **SQLite** (better-sqlite3), WAL mode, numbered migrations.
-- **11 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id), per-user cron (user_id column), cron session IDs (session_id column), cron chat_id column, cron_runs finished_at column, cron_jobs agent_id column, gate_audit_log table.
+- **13 migrations:** memory_chunks + FTS5, learner_records, cron_jobs + cron_runs, embedding column, multi-user columns (owner, scope, scope_id), per-user cron (user_id column), cron session IDs (session_id column), cron chat_id column, cron_runs finished_at column, cron_jobs agent_id column, gate_audit_log table, not_before on cron_jobs, cron targets column.
 - **Memory write validation** — Verify write succeeded by reading back. After 3 consecutive failures, dump to timestamped backup file.
 - **Graceful fallback** — File-based storage when database disabled.
 
@@ -305,6 +313,7 @@ Subagents use minimal mode (identity + user + skills only) to save tokens.
 | `gates` | enabled, execPatterns[] |
 | `voice` | enabled, provider (groq), apiKey, language, maxDurationSec |
 | `memory` | vectorSearch, vectorWeight, textWeight, recentDays |
+| `cron` | cleanup (enabled, intervalDays, time, maxAgeDaysOneShot, maxAgeDaysRecurring) |
 | `browserOperator` | chromePath, profileDir, headless |
 | `users[]` | id, name, identities[], tools{allow,deny}, skills{allow,deny} |
 | `ownerIds` | User IDs with elevated privileges (owner-only tools) |
@@ -325,7 +334,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 433 tests across 41 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 466 tests across 42 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 
 ## Commands
 
