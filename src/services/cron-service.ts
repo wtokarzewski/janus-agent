@@ -89,6 +89,7 @@ export class CronService {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private runningJobs = new Set<string>();
+  private lastCleanupAt = 0;
 
   constructor(db: Database, bus: MessageBus, config?: JanusConfig) {
     this.db = db;
@@ -100,6 +101,7 @@ export class CronService {
     this.backfillHeartbeatUserIds();
     this.recomputeStaleNextRunAt();
     this.migrateTargetUserIdJobs();
+    this.purgeDisabledJobs();
     this.running = true;
     this.armTimer();
 
@@ -178,6 +180,46 @@ export class CronService {
     }
     if (migrated > 0) {
       log.info(`Cron: migrated ${migrated} legacy target_user_id job(s) to targets format`);
+    }
+  }
+
+  /** Purge old disabled jobs based on config thresholds. Runs at configured hour, every N days. */
+  private purgeDisabledJobs(): void {
+    const cleanup = this.config?.cron?.cleanup;
+    if (!cleanup?.enabled) return;
+
+    const intervalMs = cleanup.intervalDays * 86_400_000;
+    if (Date.now() - this.lastCleanupAt < intervalMs) return;
+
+    // Only run at the configured time (skip check on first startup to not delay boot)
+    if (this.lastCleanupAt > 0) {
+      const [h, m] = cleanup.time.split(':').map(Number);
+      const now = new Date();
+      if (now.getHours() !== h || now.getMinutes() !== m) return;
+    }
+
+    this.lastCleanupAt = Date.now();
+
+    const now = Date.now();
+    const maxOneShotMs = cleanup.maxAgeDaysOneShot * 86_400_000;
+    const maxRecurringMs = cleanup.maxAgeDaysRecurring * 86_400_000;
+    const jobs = this.listJobs(true); // include disabled
+    let purged = 0;
+
+    for (const job of jobs) {
+      if (job.enabled) continue;
+      const age = now - new Date(job.createdAt).getTime();
+      if (job.scheduleKind === 'at' && age > maxOneShotMs) {
+        this.db.db.prepare('DELETE FROM cron_jobs WHERE id = ?').run(job.id);
+        purged++;
+      } else if ((job.scheduleKind === 'every' || job.scheduleKind === 'cron') && age > maxRecurringMs) {
+        this.db.db.prepare('DELETE FROM cron_jobs WHERE id = ?').run(job.id);
+        purged++;
+      }
+    }
+
+    if (purged > 0) {
+      log.info(`Cron: purged ${purged} old disabled job(s)`);
     }
   }
 
@@ -319,6 +361,9 @@ export class CronService {
   private static MISSED_THRESHOLD_MS = 60_000;
 
   private async onTimer(): Promise<void> {
+    // Periodic cleanup check
+    this.purgeDisabledJobs();
+
     const now = new Date();
     const jobs = this.listJobs();
 
