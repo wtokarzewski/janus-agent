@@ -4,7 +4,7 @@
  * session so the agent remembers what it sent.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { MessageTool } from '../../src/tools/builtin/message.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import type { RequestContext } from '../../src/tools/types.js';
