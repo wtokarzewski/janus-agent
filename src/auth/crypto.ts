@@ -53,21 +53,9 @@ function getMachineId(): string {
     }
   } catch { /* not macOS or no ioreg */ }
 
-  // Windows: MachineGuid from registry
-  try {
-    const out = execSync('reg query HKLM\\SOFTWARE\\Microsoft\\Cryptography /v MachineGuid', {
-      encoding: 'utf-8',
-      timeout: 3000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    const match = out.match(/MachineGuid\s+REG_SZ\s+(\S+)/);
-    if (match) {
-      _machineIdCache = match[1];
-      return _machineIdCache;
-    }
-  } catch { /* not Windows or no registry access */ }
-
   // Fallback: hostname (weaker but deterministic)
+  // Note: Windows uses this path. Do NOT add registry-based ID here — it would
+  // change the encryption key and break existing auth.json files.
   _machineIdCache = hostname();
   return _machineIdCache;
 }
