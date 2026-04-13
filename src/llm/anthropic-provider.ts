@@ -5,6 +5,36 @@ import { getAnthropicToken } from '../auth/anthropic-oauth.js';
 import * as log from '../utils/logger.js';
 
 /**
+ * Apply prompt cache markers to tool definitions.
+ * Places markers at two boundaries for optimal cache retention:
+ * 1. Last built-in tool (stable across MCP changes)
+ * 2. Last tool overall (captures MCP tools)
+ * If no MCP tools present, only marks the last tool (same as before).
+ */
+export function applyCacheMarkers(tools: Array<{ name: string; cache_control?: unknown }>): void {
+  if (tools.length === 0) return;
+
+  const lastIdx = tools.length - 1;
+
+  // Find last built-in tool (non-mcp_ prefix)
+  let lastBuiltinIdx = -1;
+  for (let i = lastIdx; i >= 0; i--) {
+    if (!tools[i].name.startsWith('mcp_')) {
+      lastBuiltinIdx = i;
+      break;
+    }
+  }
+
+  // Mark built-in boundary (if it exists and differs from last tool)
+  if (lastBuiltinIdx >= 0 && lastBuiltinIdx !== lastIdx) {
+    tools[lastBuiltinIdx].cache_control = { type: 'ephemeral' };
+  }
+
+  // Always mark last tool
+  tools[lastIdx].cache_control = { type: 'ephemeral' };
+}
+
+/**
  * Anthropic Messages API provider using official SDK.
  * Built-in retry, proper TypeScript types, streaming-ready.
  * Supports both API key and OAuth token authentication.
@@ -108,18 +138,15 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     if (request.tools && request.tools.length > 0) {
-      params.tools = request.tools.map((t, i, arr) => {
+      params.tools = request.tools.map((t) => {
         const tool: Anthropic.Tool = {
           name: t.function.name,
           description: t.function.description ?? '',
           input_schema: t.function.parameters as Anthropic.Tool.InputSchema,
         };
-        // Cache breakpoint on last tool for prompt caching
-        if (i === arr.length - 1) {
-          (tool as Anthropic.Tool & { cache_control?: unknown }).cache_control = { type: 'ephemeral' };
-        }
         return tool;
       });
+      applyCacheMarkers(params.tools);
       // Tool choice with fallback (L14)
       if (request.toolChoice === 'required') {
         params.tool_choice = { type: 'any' };
@@ -235,17 +262,15 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     if (request.tools && request.tools.length > 0) {
-      params.tools = request.tools.map((t, i, arr) => {
+      params.tools = request.tools.map((t) => {
         const tool: Anthropic.Tool = {
           name: t.function.name,
           description: t.function.description ?? '',
           input_schema: t.function.parameters as Anthropic.Tool.InputSchema,
         };
-        if (i === arr.length - 1) {
-          (tool as Anthropic.Tool & { cache_control?: unknown }).cache_control = { type: 'ephemeral' };
-        }
         return tool;
       });
+      applyCacheMarkers(params.tools);
     }
 
     const stream = this.client.messages.stream(params);
