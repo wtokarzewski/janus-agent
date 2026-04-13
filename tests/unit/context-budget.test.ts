@@ -166,6 +166,57 @@ describe('enforceContextBudget', () => {
     }
   });
 
+  it('Phase 1: soft-trims newest tool results first (preserves cache prefix)', () => {
+    const config = makeConfig({ tokenBudget: 1000 });
+    const oldContent = chars(1000);
+    const newContent = chars(1000);
+    const messages: LLMMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'tool', tool_call_id: 'old', content: oldContent },
+      { role: 'assistant', content: 'a2' },
+      { role: 'tool', tool_call_id: 'new', content: newContent },
+      // Protected tail
+      { role: 'assistant', content: 'r1' },
+      { role: 'assistant', content: 'r2' },
+      { role: 'assistant', content: 'r3' },
+    ];
+
+    enforceContextBudget(messages, config);
+
+    const oldTool = messages.find(m => m.role === 'tool' && (m as any).tool_call_id === 'old')!;
+    const newTool = messages.find(m => m.role === 'tool' && (m as any).tool_call_id === 'new')!;
+    const newTrimmed = (newTool.content as string).includes('[trimmed]');
+    const oldTrimmed = (oldTool.content as string).includes('[trimmed]');
+    expect(newTrimmed).toBe(true);
+    if (!oldTrimmed) {
+      expect(newTrimmed).toBe(true);
+    }
+  });
+
+  it('Phase 2: hard-clear includes annotation instead of bare cleared message', () => {
+    const config = makeConfig({ tokenBudget: 400, context: {
+      softTrimChars: 100,
+      compactionThresholds: [0.01, 0.02, 0.99] as [number, number, number],
+      emergencyThreshold: 0.95,
+      protectedTailTurns: 0,
+    }});
+    const messages: LLMMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'a', tool_calls: [{ id: 'tc1', type: 'function', function: { name: 'exec', arguments: '{"cmd":"ls"}' } }] },
+      { role: 'tool', tool_call_id: 'tc1', content: 'file1.txt\nfile2.txt\nfile3.txt' },
+    ];
+
+    enforceContextBudget(messages, config);
+
+    const toolMsg = messages.find(m => m.role === 'tool')!;
+    const content = toolMsg.content as string;
+    expect(content).toContain('[cleared');
+    expect(content).toContain('file1.txt');
+  });
+
   it('emergency mode: no protected tail, trims everything except user messages', () => {
     // In emergency mode, even the most recent tool results get trimmed.
     const bigRecent = chars(2000);

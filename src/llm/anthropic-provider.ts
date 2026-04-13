@@ -11,7 +11,7 @@ import * as log from '../utils/logger.js';
  * 2. Last tool overall (captures MCP tools)
  * If no MCP tools present, only marks the last tool (same as before).
  */
-export function applyCacheMarkers(tools: Array<{ name: string; [k: string]: unknown }>): void {
+export function applyCacheMarkers(tools: Array<{ name: string; cache_control?: unknown }>): void {
   if (tools.length === 0) return;
 
   const lastIdx = tools.length - 1;

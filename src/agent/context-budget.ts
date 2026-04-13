@@ -51,6 +51,17 @@ function estimateTotal(messages: LLMMessage[]): number {
 }
 
 // ---------------------------------------------------------------------------
+// Annotation extraction for hard-cleared tool results
+// ---------------------------------------------------------------------------
+
+function extractAnnotation(msg: LLMMessage): string {
+  if (msg.role !== 'tool' || typeof msg.content !== 'string') return '';
+  const content = msg.content;
+  const firstLine = content.split('\n')[0]?.slice(0, 120) ?? '';
+  return firstLine.replace(/\n/g, ' ').trim();
+}
+
+// ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
 
@@ -84,7 +95,7 @@ export function enforceContextBudget(
 
   // Protected tail — walk backwards counting assistant messages.
   let tailStart = messages.length;
-  if (!emergency) {
+  if (!emergency && context.protectedTailTurns > 0) {
     let assistantsSeen = 0;
     for (let i = messages.length - 1; i >= firstUserIndex; i--) {
       if (messages[i].role === 'assistant') {
@@ -104,7 +115,7 @@ export function enforceContextBudget(
     log.info(`[context-budget] Phase 1: soft-trim (${tokens}/${tokenBudget} tokens, ${Math.round(tokens / tokenBudget * 100)}%)`);
     const halfTrim = Math.floor(context.softTrimChars * 0.375);
 
-    for (let i = firstUserIndex; i < tailStart && tokens > t1 * tokenBudget; i++) {
+    for (let i = tailStart - 1; i >= firstUserIndex && tokens > t1 * tokenBudget; i--) {
       const msg = messages[i];
       if (msg.role !== 'tool') continue;
       if (typeof msg.content !== 'string') continue;
@@ -125,14 +136,16 @@ export function enforceContextBudget(
   if (tokens > t2 * tokenBudget) {
     log.info(`[context-budget] Phase 2: hard-clear (${tokens}/${tokenBudget} tokens, ${Math.round(tokens / tokenBudget * 100)}%)`);
 
-    for (let i = firstUserIndex; i < tailStart && tokens > t2 * tokenBudget; i++) {
+    for (let i = tailStart - 1; i >= firstUserIndex && tokens > t2 * tokenBudget; i--) {
       const msg = messages[i];
       if (msg.role !== 'tool') continue;
       if (typeof msg.content !== 'string') continue;
 
       const before = estimateTokens(msg.content);
-      (msg as { content: string }).content = '[tool result cleared]';
-      const after = estimateTokens('[tool result cleared]');
+      const annotation = extractAnnotation(msg);
+      const replacement = annotation ? `[cleared — ${annotation}]` : '[tool result cleared]';
+      (msg as { content: string }).content = replacement;
+      const after = estimateTokens(replacement);
       tokens -= (before - after);
     }
   }

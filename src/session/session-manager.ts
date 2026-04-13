@@ -162,7 +162,11 @@ export class SessionManager {
       session.messages = session.messages.slice(cutIndex);
       session.metadata.summary = summaryText;
       session.metadata.messageCount = session.messages.length;
-      session.metadata.lastFlushed = 0; // Reset pointer — remaining messages may need re-flush
+      // Mark remaining messages as already flushed — pre-compaction flush captured
+      // old context, and the summary preserves conversation state. This prevents
+      // the idle flush from re-processing all remaining messages (which was causing
+      // 50+ second LLM calls processing 150+ messages on every interaction).
+      session.metadata.lastFlushed = session.messages.length;
 
       // Full rewrite — truncates JSONL to only post-compaction messages
       await this.save(key, session);

@@ -145,7 +145,18 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   tools.register(new AppendFileTool());
   tools.register(new EditFileTool());
   tools.register(new ListDirTool());
-  tools.register(new MessageTool(bus));
+  // Message tool with cross-session injection: when agent sends a message to
+  // another user's chat, a ghost message is appended to the recipient's session
+  // so the agent remembers what it sent when the recipient replies.
+  const defaultAgentId = config.defaultAgentId ?? 'main';
+  const sessionInjector = async (channel: string, chatId: string, content: string) => {
+    const sessionKey = `${defaultAgentId}:${channel}:${chatId}`;
+    await sessions.append(sessionKey, [{
+      role: 'assistant',
+      content: `[Delivered message]: ${content}`,
+    }]);
+  };
+  tools.register(new MessageTool(bus, sessionInjector));
   tools.register(new SendFileTool(bus));
   tools.register(new HeartbeatTool());
   // Web tools
