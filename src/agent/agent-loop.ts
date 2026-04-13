@@ -1278,8 +1278,14 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
 
     await this.deps.sessions.summarize(sessionKey, summary, keepRecentTokens);
 
+    // Sync flush pointer with post-compaction session state.
+    // summarize() sets lastFlushed = remaining message count, so idle flush
+    // won't re-process messages that were already covered by pre-compaction flush.
     const state = this.flushState.get(sessionKey);
-    if (state) state.lastFlushed = 0;
+    if (state) {
+      const postSession = await this.deps.sessions.getOrCreate(sessionKey);
+      state.lastFlushed = postSession.metadata.lastFlushed ?? postSession.messages.length;
+    }
 
     log.info(`[${sessionKey}] Summarization: complete in ${Date.now() - sumStart}ms`);
   }
