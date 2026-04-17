@@ -14,7 +14,7 @@ import type { GateService } from '../gates/types.js';
 import { findUserProfile } from '../users/user-resolver.js';
 import { loadPrompt } from '../prompts/loader.js';
 import * as log from '../utils/logger.js';
-import { stripControlTokens, redactSecrets } from '../utils/sanitize.js';
+import { stripControlTokens, redactSecrets, stripOrphanSurrogates } from '../utils/sanitize.js';
 import type { AgentResolver, AgentContext } from './agent-resolver.js';
 import type { CronService } from '../services/cron-service.js';
 import { ensureAgentDir } from '../users/user-resolver.js';
@@ -961,8 +961,10 @@ export class AgentLoop {
       }
 
       // Cross-tool loop detection (OD-A): track tool call signatures
+      // Include args hash so web_fetch(url1) ≠ web_fetch(url2) — prevents false positives on parallel batch calls
       for (const tc of uniqueCalls) {
-        recentToolSigs.push(tc.function.name);
+        const argsHash = tc.function.arguments.length > 0 ? simpleHash(tc.function.arguments) : '';
+        recentToolSigs.push(`${tc.function.name}:${argsHash}`);
         if (recentToolSigs.length > LOOP_WINDOW * 2) recentToolSigs.shift();
       }
       if (recentToolSigs.length >= LOOP_WINDOW) {
@@ -1400,10 +1402,20 @@ const MAX_TOOL_RESULT_CHARS = 4000;
 function truncateToolResult(result: string): string {
   // Redact secrets before sending to LLM (CR-BE)
   const safe = redactSecrets(result);
-  if (safe.length <= MAX_TOOL_RESULT_CHARS) return safe;
+  if (safe.length <= MAX_TOOL_RESULT_CHARS) return stripOrphanSurrogates(safe);
   const half = Math.floor(MAX_TOOL_RESULT_CHARS / 2);
   const trimmed = safe.length - MAX_TOOL_RESULT_CHARS;
-  return `${safe.slice(0, half)}\n\n[... truncated ${trimmed} characters ...]\n\n${safe.slice(-half)}`;
+  // .slice() can split UTF-16 surrogate pairs — strip orphans after truncation
+  return stripOrphanSurrogates(`${safe.slice(0, half)}\n\n[... truncated ${trimmed} characters ...]\n\n${safe.slice(-half)}`);
+}
+
+/** Fast non-crypto hash for loop detection signatures. */
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

@@ -1,5 +1,6 @@
 import { AsyncQueue } from './async-queue.js';
 import type { InboundMessage, OutboundMessage, Lane } from './types.js';
+import * as log from '../utils/logger.js';
 
 export type OutboundHandler = (msg: OutboundMessage) => Promise<void>;
 
@@ -17,7 +18,9 @@ export class MessageBus {
   private outbound: AsyncQueue<OutboundMessage>;
   private handlers = new Map<string, OutboundHandler>();
   private steering = new Map<string, InboundMessage[]>();
-  private processingChats = new Set<string>();
+  /** chatId → timestamp when markProcessing was called. Entries older than PROCESSING_TTL_MS are stale. */
+  private processingChats = new Map<string, number>();
+  private static readonly PROCESSING_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
   constructor(maxSize = 100) {
     this.inboundLanes = new Map();
@@ -76,7 +79,7 @@ export class MessageBus {
 
   /** Mark a chat as being processed by the agent loop. */
   markProcessing(chatId: string): void {
-    this.processingChats.add(chatId);
+    this.processingChats.set(chatId, Date.now());
   }
 
   /** Clear processing state; re-queue any undrained steering messages as inbound. */
@@ -93,9 +96,16 @@ export class MessageBus {
     }
   }
 
-  /** Check if a chat is currently being processed. */
+  /** Check if a chat is currently being processed. Auto-clears stale entries (>5 min). */
   isProcessing(chatId: string): boolean {
-    return this.processingChats.has(chatId);
+    const ts = this.processingChats.get(chatId);
+    if (ts === undefined) return false;
+    if (Date.now() - ts > MessageBus.PROCESSING_TTL_MS) {
+      log.warn(`Stale processing state for chat ${chatId} (${Math.round((Date.now() - ts) / 60000)}m), auto-clearing`);
+      this.clearProcessing(chatId);
+      return false;
+    }
+    return true;
   }
 
   /** Buffer a steering message for a chat that is currently processing. */
