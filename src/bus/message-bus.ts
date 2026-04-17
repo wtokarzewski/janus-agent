@@ -82,17 +82,21 @@ export class MessageBus {
     this.processingChats.set(chatId, Date.now());
   }
 
-  /** Clear processing state; re-queue any undrained steering messages as inbound. */
+  /** Clear processing state; re-queue ONE pending steering message to maintain per-chat serialization. */
   clearProcessing(chatId: string): void {
-    this.processingChats.delete(chatId);
     const pending = this.steering.get(chatId);
     if (pending && pending.length > 0) {
-      this.steering.delete(chatId);
-      for (const msg of pending) {
-        const lane = msg.lane ?? 'user';
-        const queue = this.inboundLanes.get(lane) ?? this.inboundLanes.get('user')!;
-        queue.publish(msg).catch(() => {});
-      }
+      // Re-queue only the FIRST message — remaining stay buffered.
+      // Keep processingChats alive so new Telegram messages stay buffered
+      // until the re-queued message calls markProcessing in processLaneMessage.
+      const first = pending.shift()!;
+      if (pending.length === 0) this.steering.delete(chatId);
+      this.processingChats.set(chatId, Date.now());
+      const lane = first.lane ?? 'user';
+      const queue = this.inboundLanes.get(lane) ?? this.inboundLanes.get('user')!;
+      queue.publish(first).catch(() => {});
+    } else {
+      this.processingChats.delete(chatId);
     }
   }
 
