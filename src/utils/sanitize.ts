@@ -65,6 +65,18 @@ const SECRET_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
     replacement: '[REDACTED_JWT]' },
 ];
 
+/**
+ * Strip orphan UTF-16 surrogates that break JSON.stringify.
+ * A high surrogate (D800-DBFF) without a following low surrogate (DC00-DFFF),
+ * or a lone low surrogate, will cause "no low surrogate in string" errors.
+ * Common cause: string .slice() splitting a surrogate pair, or TextDecoder
+ * producing replacement artifacts from truncated multi-byte UTF-8.
+ */
+export function stripOrphanSurrogates(text: string): string {
+  // Orphan high surrogate (not followed by low) OR orphan low surrogate (not preceded by high)
+  return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
+
 export function redactSecrets(text: string): string {
   let result = text;
   for (const { re, replacement } of SECRET_PATTERNS) {
