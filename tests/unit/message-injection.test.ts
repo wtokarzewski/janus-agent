@@ -4,7 +4,7 @@
  * session so the agent remembers what it sent.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { MessageTool } from '../../src/tools/builtin/message.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import type { RequestContext } from '../../src/tools/types.js';
@@ -99,9 +99,35 @@ describe('MessageBus processing TTL', () => {
     expect(bus.isProcessing('chat2')).toBe(false);
   });
 
-  it('clearProcessing removes the entry', () => {
+  it('clearProcessing removes the entry when no steering pending', () => {
     const bus = new MessageBus();
     bus.markProcessing('chat1');
+    bus.clearProcessing('chat1');
+    expect(bus.isProcessing('chat1')).toBe(false);
+  });
+
+  it('clearProcessing keeps entry alive when steering messages pending', () => {
+    const bus = new MessageBus();
+    bus.markProcessing('chat1');
+
+    bus.pushSteering({
+      id: '1', channel: 'telegram', chatId: 'chat1', content: 'msg1',
+      author: 'user', timestamp: new Date(),
+    });
+    bus.pushSteering({
+      id: '2', channel: 'telegram', chatId: 'chat1', content: 'msg2',
+      author: 'user', timestamp: new Date(),
+    });
+
+    // After clearProcessing, chat stays "processing" because msg2 is still pending
+    bus.clearProcessing('chat1');
+    expect(bus.isProcessing('chat1')).toBe(true);
+
+    // Second clearProcessing re-queues msg2, keeps entry alive (msg2 in flight)
+    bus.clearProcessing('chat1');
+    expect(bus.isProcessing('chat1')).toBe(true);
+
+    // Third clearProcessing — no more steering → now it clears
     bus.clearProcessing('chat1');
     expect(bus.isProcessing('chat1')).toBe(false);
   });
@@ -109,36 +135,31 @@ describe('MessageBus processing TTL', () => {
   it('auto-clears stale entries older than 5 minutes', () => {
     const bus = new MessageBus();
     bus.markProcessing('chat1');
-    // Advance time past the 5-minute TTL
-    vi.spyOn(Date, 'now')
-      .mockReturnValueOnce(Date.now()) // for the first isProcessing internal check
-      .mockRestore();
-    // Instead: directly manipulate by re-marking with old timestamp
-    // Access private field for testing
     const processingChats = (bus as unknown as { processingChats: Map<string, number> }).processingChats;
     processingChats.set('chat1', Date.now() - 6 * 60 * 1000); // 6 minutes ago
 
     expect(bus.isProcessing('chat1')).toBe(false);
   });
 
-  it('re-queues steering messages when stale entry auto-clears', () => {
+  it('re-queues ONE steering message at a time (serialization)', () => {
     const bus = new MessageBus();
     bus.markProcessing('chat1');
 
-    // Buffer a steering message
     bus.pushSteering({
-      id: '1', channel: 'telegram', chatId: 'chat1', content: 'Hej',
+      id: '1', channel: 'telegram', chatId: 'chat1', content: 'first',
+      author: 'user', timestamp: new Date(),
+    });
+    bus.pushSteering({
+      id: '2', channel: 'telegram', chatId: 'chat1', content: 'second',
       author: 'user', timestamp: new Date(),
     });
 
-    // Make the processing entry stale
-    const processingChats = (bus as unknown as { processingChats: Map<string, number> }).processingChats;
-    processingChats.set('chat1', Date.now() - 6 * 60 * 1000);
+    // clearProcessing re-queues only the first message
+    bus.clearProcessing('chat1');
 
-    // isProcessing should auto-clear and re-queue
-    expect(bus.isProcessing('chat1')).toBe(false);
-
-    // Steering should have been re-queued (drained from buffer)
-    expect(bus.drainSteering('chat1')).toHaveLength(0); // already re-queued
+    // Second message should still be in steering buffer
+    const remaining = bus.drainSteering('chat1');
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].content).toBe('second');
   });
 });
