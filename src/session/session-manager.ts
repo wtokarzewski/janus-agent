@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { LLMMessage } from '../llm/types.js';
 import type { JanusConfig } from '../config/schema.js';
 import * as log from '../utils/logger.js';
+import { stripOrphanSurrogates } from '../utils/sanitize.js';
 
 export interface SessionMetadata {
   key: string;
@@ -245,7 +246,9 @@ export class SessionManager {
     const messages: LLMMessage[] = [];
     for (let i = startIdx; i < lines.length; i++) {
       try {
-        messages.push(JSON.parse(lines[i]) as LLMMessage);
+        // Sanitize orphan surrogates before parsing — corrupt UTF-16 in stored
+        // tool results causes "no low surrogate" errors on JSON.stringify later
+        messages.push(JSON.parse(stripOrphanSurrogates(lines[i])) as LLMMessage);
       } catch {
         log.warn(`Skipping invalid JSONL line ${i} in session ${key}`);
       }

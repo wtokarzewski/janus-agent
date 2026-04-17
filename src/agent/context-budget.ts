@@ -5,6 +5,7 @@
 
 import type { LLMMessage, ToolContentBlock } from '../llm/types.js';
 import * as log from '../utils/logger.js';
+import { stripOrphanSurrogates } from '../utils/sanitize.js';
 
 export interface ContextBudgetConfig {
   tokenBudget: number;
@@ -124,7 +125,8 @@ export function enforceContextBudget(
       const before = estimateTokens(msg.content);
       const head = msg.content.slice(0, halfTrim);
       const tail = msg.content.slice(-halfTrim);
-      (msg as { content: string }).content = head + '\n[trimmed]\n' + tail;
+      // .slice() can split UTF-16 surrogate pairs — strip orphans after truncation
+      (msg as { content: string }).content = stripOrphanSurrogates(head + '\n[trimmed]\n' + tail);
       const after = estimateTokens(msg.content);
       tokens -= (before - after);
     }
