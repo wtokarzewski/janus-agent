@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripControlTokens, stripOrphanSurrogates } from '../../src/utils/sanitize.js';
+import { stripControlTokens, stripOrphanSurrogates, stripJsonSurrogates } from '../../src/utils/sanitize.js';
 
 describe('stripControlTokens', () => {
   it('strips <|...|> tokens', () => {
@@ -75,5 +75,51 @@ describe('stripOrphanSurrogates', () => {
     const broken = 'data\uD800\uD83D\uDE80more\uDC00end';
     const clean = stripOrphanSurrogates(broken);
     expect(() => JSON.stringify(clean)).not.toThrow();
+  });
+});
+
+describe('stripJsonSurrogates', () => {
+  it('strips JSON-encoded orphan high surrogate', () => {
+    // As stored in JSONL: literal \uD800 (6 ASCII chars, not actual surrogate)
+    const json = '{"content":"hello\\uD800world"}';
+    const clean = stripJsonSurrogates(json);
+    expect(clean).toBe('{"content":"helloworld"}');
+    expect(() => JSON.parse(clean)).not.toThrow();
+  });
+
+  it('strips JSON-encoded orphan low surrogate', () => {
+    const json = '{"content":"hello\\uDC00world"}';
+    const clean = stripJsonSurrogates(json);
+    expect(clean).toBe('{"content":"helloworld"}');
+  });
+
+  it('preserves JSON-encoded valid surrogate pair (emoji)', () => {
+    // 🚀 = \uD83D\uDE80 — valid pair, should NOT be stripped
+    const json = '{"content":"rocket\\uD83D\\uDE80!"}';
+    const clean = stripJsonSurrogates(json);
+    expect(clean).toBe(json);
+    const parsed = JSON.parse(clean);
+    expect(parsed.content).toBe('rocket🚀!');
+  });
+
+  it('strips orphan high but keeps valid pair in same string', () => {
+    const json = '{"content":"\\uD800ok\\uD83D\\uDE80"}';
+    const clean = stripJsonSurrogates(json);
+    expect(clean).toBe('{"content":"ok\\uD83D\\uDE80"}');
+  });
+
+  it('handles real-world JSONL line with corrupt tool result', () => {
+    // Simulate a stored tool result with orphan surrogate from truncated emoji
+    const jsonLine = '{"role":"tool","content":"data at pos 4000\\uD83Dmore text"}';
+    const clean = stripJsonSurrogates(jsonLine);
+    const parsed = JSON.parse(clean);
+    expect(parsed.content).toBe('data at pos 4000more text');
+    // Verify re-serialization is safe for API
+    expect(() => JSON.stringify(parsed)).not.toThrow();
+  });
+
+  it('also strips raw orphan surrogate chars', () => {
+    const json = 'hello\uD800world';
+    expect(stripJsonSurrogates(json)).toBe('helloworld');
   });
 });

@@ -77,6 +77,24 @@ export function stripOrphanSurrogates(text: string): string {
   return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
 }
 
+/**
+ * Strip orphan surrogates from JSON text — both raw chars AND \uXXXX escape sequences.
+ * Use on JSONL lines before JSON.parse to heal corrupt session data where surrogates
+ * were stored as JSON escapes (e.g. \uD800) by a previous JSON.stringify.
+ *
+ * High surrogates: \uD800-\uDBFF (hex D[89AB]xx)
+ * Low surrogates:  \uDC00-\uDFFF (hex D[CDEF]xx)
+ */
+export function stripJsonSurrogates(json: string): string {
+  // 1. Strip raw orphan surrogate chars
+  let result = json.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+  // 2. Strip JSON-encoded orphan high surrogates (not followed by encoded low surrogate)
+  result = result.replace(/\\u[Dd][89AaBb][0-9A-Fa-f]{2}(?!\\u[Dd][CcDdEeFf][0-9A-Fa-f]{2})/g, '');
+  // 3. Strip JSON-encoded orphan low surrogates (not preceded by encoded high surrogate)
+  result = result.replace(/(?<!\\u[Dd][89AaBb][0-9A-Fa-f]{2})\\u[Dd][CcDdEeFf][0-9A-Fa-f]{2}/g, '');
+  return result;
+}
+
 export function redactSecrets(text: string): string {
   let result = text;
   for (const { re, replacement } of SECRET_PATTERNS) {
