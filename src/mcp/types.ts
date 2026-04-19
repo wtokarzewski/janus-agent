@@ -4,6 +4,10 @@
  * Based on the MCP specification for connecting AI models to external tools.
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { version: JANUS_VERSION } = require('../../package.json') as { version: string };
+
 export const MCP_PROTOCOL_VERSION = '2024-11-05';
 
 export interface JsonRpcRequest {
@@ -141,7 +145,7 @@ export interface MCPServerConfig {
 
 export const DEFAULT_SERVER_CONFIG: MCPServerConfig = {
   name: 'janus-mcp-server',
-  version: '0.1.0',
+  version: JANUS_VERSION,
   capabilities: {
     tools: { listChanged: true },
     prompts: { listChanged: true },
