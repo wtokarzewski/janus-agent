@@ -155,6 +155,45 @@ program
     await runUpdate(opts);
   });
 
+program
+  .command('doctor')
+  .description('Verify Janus installation and data integrity')
+  .action(async () => {
+    const { runDoctor } = await import('./commands/doctor.js');
+    await runDoctor();
+  });
+
+program
+  .command('backup')
+  .description('Create a full backup of Janus data')
+  .option('--output <path>', 'Output file path')
+  .option('--password <password>', 'Encrypt credentials with password')
+  .option('--password-file <path>', 'Read password from file')
+  .option('--only-global', 'Only backup ~/.janus/')
+  .option('--only-workspace', 'Only backup workspace data')
+  .option('--no-sessions', 'Exclude session history')
+  .option('--include-chrome', 'Include Chrome profile')
+  .option('--dry-run', 'Show what would be backed up')
+  .option('--verify', 'Verify archive checksums after creation')
+  .option('--skip-auth', 'Skip auth.json if undecryptable')
+  .action(async (opts) => {
+    const { runBackup } = await import('./commands/backup.js');
+    await runBackup(opts);
+  });
+
+program
+  .command('restore <archive>')
+  .description('Restore Janus data from a backup archive')
+  .option('--password <password>', 'Password for encrypted backup')
+  .option('--password-file <path>', 'Read password from file')
+  .option('--no-global', 'Skip restoring ~/.janus/')
+  .option('--no-workspace', 'Skip restoring workspace data')
+  .option('--dry-run', 'Show what would be restored')
+  .action(async (archive: string, opts) => {
+    const { runRestore } = await import('./commands/restore.js');
+    await runRestore(archive, opts);
+  });
+
 program.parseAsync().catch((err) => {
   console.error('Fatal:', err instanceof Error ? err.message : String(err));
   process.exit(1);
