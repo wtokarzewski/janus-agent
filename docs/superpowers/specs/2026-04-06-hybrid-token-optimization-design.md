@@ -247,4 +247,3 @@ Single new field. All other behavior changes are internal improvements with no c
 - **No budget-aware assembly** — current post-hoc compaction with reversed direction achieves 80% of the benefit
 - **No cursor-based history tracking** — current pointer-based `lastFlushed` is sufficient
 - **No checkpoint/resume system** — adds complexity for edge case recovery
-
