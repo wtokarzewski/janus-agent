@@ -5,7 +5,11 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { createRequire } from 'node:module';
 import type { JsonRpcRequest, JsonRpcResponse, Tool as MCPTool } from './types.js';
+
+const require = createRequire(import.meta.url);
+const { version: JANUS_VERSION } = require('../../package.json') as { version: string };
 import { MCP_PROTOCOL_VERSION } from './types.js';
 import type { Tool } from '../tools/types.js';
 import * as log from '../utils/logger.js';
@@ -82,7 +86,7 @@ export class MCPClient {
     await this.request('initialize', {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: 'janus', version: '1.0.0' },
+      clientInfo: { name: 'janus', version: JANUS_VERSION },
     });
 
     await this.notify('notifications/initialized');
