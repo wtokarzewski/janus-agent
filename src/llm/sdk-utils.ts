@@ -7,6 +7,7 @@
  */
 
 import type { LLMMessage, ToolDefinition, ChatResponse, ToolCall } from './types.js';
+import { userContentText } from './types.js';
 import * as log from '../utils/logger.js';
 
 /**
@@ -20,7 +21,7 @@ export function serializeMessages(messages: LLMMessage[]): string {
     if (msg.role === 'system') continue;
 
     if (msg.role === 'user') {
-      parts.push(`[User]\n${msg.content}`);
+      parts.push(`[User]\n${userContentText(msg.content)}`);
     } else if (msg.role === 'assistant') {
       let text = msg.content;
       if (msg.tool_calls?.length) {

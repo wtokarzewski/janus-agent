@@ -3,9 +3,20 @@ import type { LLMProvider, ChatRequest, ChatResponse, ToolCall, StreamCallback, 
 import { AnthropicProvider } from './anthropic-provider.js';
 import * as log from '../utils/logger.js';
 
-/** Flatten multimodal tool content blocks to string for OpenAI-compatible providers. */
+/** Convert multimodal content blocks to OpenAI-compatible format. */
 function flattenToolContent(messages: LLMMessage[]): OpenAI.ChatCompletionMessageParam[] {
   return messages.map(msg => {
+    // User multimodal messages → OpenAI image_url format
+    if (msg.role === 'user' && typeof msg.content !== 'string') {
+      return {
+        role: 'user' as const,
+        content: msg.content.map(b =>
+          b.type === 'image'
+            ? { type: 'image_url' as const, image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } }
+            : { type: 'text' as const, text: b.text },
+        ),
+      };
+    }
     if (msg.role === 'tool' && Array.isArray(msg.content)) {
       const text = msg.content
         .filter((b): b is { type: 'text'; text: string } => b.type === 'text')

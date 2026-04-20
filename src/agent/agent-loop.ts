@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
-import type { LLMMessage, ToolContentBlock } from '../llm/types.js';
+import type { LLMMessage, ToolContentBlock, UserContentBlock } from '../llm/types.js';
+import { userContentText } from '../llm/types.js';
 import type { ProviderRegistry } from '../llm/provider-registry.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import type { RequestContext } from '../tools/types.js';
@@ -360,19 +361,31 @@ export class AgentLoop {
       }
     }
 
+    // Build user message — multimodal if images attached, plain string otherwise
+    const userMessage: LLMMessage = msg.images?.length
+      ? {
+          role: 'user',
+          content: [
+            { type: 'text', text: userContent },
+            ...msg.images.map(img => ({
+              type: 'image' as const,
+              source: { type: 'base64' as const, media_type: img.mimeType, data: img.data },
+            })),
+          ],
+        }
+      : { role: 'user', content: userContent };
+
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
       ...cleanHistory,
-      { role: 'user', content: userContent },
+      userMessage,
     ];
     enforceContextBudget(messages, this.deps.config.agent);
 
     log.info(`[${sessionKey}] Context built in ${Date.now() - t0}ms`);
 
     // 4. Save user message to session BEFORE iteration
-    await this.deps.sessions.append(sessionKey, [
-      { role: 'user', content: userContent },
-    ]);
+    await this.deps.sessions.append(sessionKey, [userMessage]);
 
     // 5. LLM iteration loop — saves tool calls to session during iteration
     const toolDefs = this.deps.tools.list();
@@ -385,7 +398,10 @@ export class AgentLoop {
     reqCtx.recentMessages = messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .slice(-5)
-      .map(m => `${m.role}: ${'content' in m ? String(m.content).slice(0, 200) : ''}`);
+      .map(m => {
+        const text = 'content' in m ? (typeof m.content === 'string' ? m.content : userContentText(m.content)) : '';
+        return `${m.role}: ${safeSlice(text, 0, 200)}`;
+      });
 
     const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose);
 
@@ -442,7 +458,7 @@ export class AgentLoop {
     const unflushed = fullSession.messages.length - state.lastFlushed;
     if (this.deps.memory && !state.flushing && unflushed >= flushInterval) {
       // Hash unflushed content to skip flush if content hasn't changed (false-duplicate prevention)
-      const unflushedContent = fullSession.messages.slice(state.lastFlushed).map(m => String(m.content ?? '')).join('|');
+      const unflushedContent = fullSession.messages.slice(state.lastFlushed).map(m => typeof m.content === 'string' ? m.content : userContentText(m.content ?? '')).join('|');
       const contentHash = createHash('sha256').update(unflushedContent).digest('hex').slice(0, 16);
       if (contentHash !== state.lastFlushHash) {
         state.lastFlushHash = contentHash;
@@ -611,11 +627,11 @@ export class AgentLoop {
       try {
         const history = await this.deps.sessions.getHistory(sessionKey);
         const textMsgs = history
-          .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+          .filter(m => m.role === 'user' || m.role === 'assistant')
           .slice(-5);
         if (textMsgs.length > 0) {
           recentMessages += `\n--- Recent messages from ${target.userId} ---\n`;
-          recentMessages += textMsgs.map(m => `${m.role}: ${safeSlice(String(m.content), 0, 300)}`).join('\n');
+          recentMessages += textMsgs.map(m => `${m.role}: ${safeSlice(userContentText(m.content as string | UserContentBlock[]), 0, 300)}`).join('\n');
           recentMessages += `\n--- End ---\n`;
         }
       } catch {
@@ -667,13 +683,13 @@ export class AgentLoop {
     try {
       const recentMessages = await this.deps.sessions.getHistory(sourceSessionKey);
       const textMessages = recentMessages
-        .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+        .filter(m => m.role === 'user' || m.role === 'assistant')
         .slice(-10);
 
       if (textMessages.length === 0) return null;
 
       const formatted = textMessages
-        .map(m => `${m.role}: ${safeSlice(String(m.content), 0, 300)}`)
+        .map(m => `${m.role}: ${safeSlice(userContentText(m.content as string | UserContentBlock[]), 0, 300)}`)
         .join('\n');
 
       // Use inline format for legacy injection (prompt template now uses multi-target variables)
@@ -1038,7 +1054,7 @@ export class AgentLoop {
       const contextStr = contextParts.length > 0 ? contextParts.join('\n\n') + '\n\n' : '';
 
       const messagesText = messagesToFlush.map(m =>
-        `${m.role}: ${'content' in m ? m.content : ''}`,
+        `${m.role}: ${'content' in m ? (typeof m.content === 'string' ? m.content : userContentText(m.content)) : ''}`,
       ).join('\n');
 
       log.info(`[${sessionKey}] Memory flush: ${messagesToFlush.length} messages (${from}→${to}), LLM call start`);
@@ -1190,7 +1206,16 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       const content = 'content' in msg ? msg.content : '';
-      const msgTokens = typeof content === 'string' ? Math.ceil(content.length / 2.5) : 100;
+      let msgTokens: number;
+      if (typeof content === 'string') {
+        msgTokens = Math.ceil(content.length / 2.5);
+      } else if (Array.isArray(content)) {
+        const textLen = content.reduce((sum: number, b: { type: string; text?: string }) => sum + (b.type === 'text' && b.text ? b.text.length : 0), 0);
+        const imageCount = content.filter((b: { type: string }) => b.type === 'image').length;
+        msgTokens = Math.ceil(textLen / 2.5) + imageCount * 1000;
+      } else {
+        msgTokens = 100;
+      }
       if (tokens + msgTokens > keepRecentTokens) {
         cutIndex = i + 1;
         // Snap forward to user message boundary

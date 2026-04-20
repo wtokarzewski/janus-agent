@@ -329,7 +329,16 @@ export class AnthropicProvider implements LLMProvider {
 
 function convertMessage(msg: LLMMessage): Anthropic.MessageParam {
   if (msg.role === 'user') {
-    return { role: 'user', content: msg.content };
+    if (typeof msg.content === 'string') {
+      return { role: 'user', content: msg.content };
+    }
+    // Multimodal user content (text + images)
+    const content: Anthropic.ContentBlockParam[] = msg.content.map(block =>
+      block.type === 'image'
+        ? { type: 'image' as const, source: { type: 'base64' as const, media_type: block.source.media_type as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp', data: block.source.data } }
+        : { type: 'text' as const, text: block.text },
+    );
+    return { role: 'user', content };
   }
 
   if (msg.role === 'assistant') {
