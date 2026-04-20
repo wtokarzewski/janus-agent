@@ -360,19 +360,31 @@ export class AgentLoop {
       }
     }
 
+    // Build user message — multimodal if images attached, plain string otherwise
+    const userMessage: LLMMessage = msg.images?.length
+      ? {
+          role: 'user',
+          content: [
+            { type: 'text', text: userContent },
+            ...msg.images.map(img => ({
+              type: 'image' as const,
+              source: { type: 'base64' as const, media_type: img.mimeType, data: img.data },
+            })),
+          ],
+        }
+      : { role: 'user', content: userContent };
+
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
       ...cleanHistory,
-      { role: 'user', content: userContent },
+      userMessage,
     ];
     enforceContextBudget(messages, this.deps.config.agent);
 
     log.info(`[${sessionKey}] Context built in ${Date.now() - t0}ms`);
 
     // 4. Save user message to session BEFORE iteration
-    await this.deps.sessions.append(sessionKey, [
-      { role: 'user', content: userContent },
-    ]);
+    await this.deps.sessions.append(sessionKey, [userMessage]);
 
     // 5. LLM iteration loop — saves tool calls to session during iteration
     const toolDefs = this.deps.tools.list();
