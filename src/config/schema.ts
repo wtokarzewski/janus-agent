@@ -215,6 +215,11 @@ const VoiceSchema = z.object({
   maxDurationSec: z.number().default(300),
 });
 
+const VisionSchema = z.object({
+  enabled: z.boolean().default(true),
+  maxFileSizeMb: z.number().default(10),
+});
+
 const TTSSchema = z.object({
   enabled: z.boolean().default(false),
   provider: z.enum(['openai']).default('openai'),
@@ -368,6 +373,7 @@ export const JanusConfigSchema = z.object({
   gates: GatesSchema.optional().transform(v => GatesSchema.parse(v ?? {})),
   memory: MemorySchema.optional().transform(v => MemorySchema.parse(v ?? {})),
   voice: VoiceSchema.optional().transform(v => VoiceSchema.parse(v ?? {})),
+  vision: VisionSchema.optional().transform(v => VisionSchema.parse(v ?? {})),
   tts: TTSSchema.optional().transform(v => TTSSchema.parse(v ?? {})),
   mcp: MCPSchema.optional().transform(v => MCPSchema.parse(v ?? {})),
   browserOperator: BrowserOperatorSchema.optional().transform(v => BrowserOperatorSchema.parse(v ?? {})),

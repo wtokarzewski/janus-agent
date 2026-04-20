@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { LLMMessage, UserContentBlock } from '../../src/llm/types.js';
 import type { ImageAttachment } from '../../src/bus/types.js';
+import { JanusConfigSchema } from '../../src/config/schema.js';
 
 describe('vision types', () => {
   it('LLMMessage user role accepts string content', () => {
@@ -24,5 +25,19 @@ describe('vision types', () => {
     };
     expect(attachment.data).toBeTruthy();
     expect(attachment.mimeType).toBe('image/jpeg');
+  });
+});
+
+describe('vision config', () => {
+  it('defaults to enabled with 10MB limit', () => {
+    const config = JanusConfigSchema.parse({});
+    expect(config.vision.enabled).toBe(true);
+    expect(config.vision.maxFileSizeMb).toBe(10);
+  });
+
+  it('respects explicit config', () => {
+    const config = JanusConfigSchema.parse({ vision: { enabled: false, maxFileSizeMb: 5 } });
+    expect(config.vision.enabled).toBe(false);
+    expect(config.vision.maxFileSizeMb).toBe(5);
   });
 });
