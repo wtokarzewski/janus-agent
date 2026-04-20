@@ -1,6 +1,7 @@
 import type { ContextualTool, ToolContext } from '../types.js';
 import * as log from '../../utils/logger.js';
 import { checkSsrf } from '../../utils/ssrf-guard.js';
+import { safeSlice } from '../../utils/sanitize.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BYTES = 51_200; // 50 KB
@@ -199,7 +200,7 @@ export class WebFetchTool implements ContextualTool {
       let text = await response.text();
       const truncated = text.length > this.maxBytes;
       if (truncated) {
-        text = text.slice(0, this.maxBytes) + `\n\n[Truncated: showing first ${this.maxBytes} chars]`;
+        text = safeSlice(text, 0, this.maxBytes) + `\n\n[Truncated: showing first ${this.maxBytes} chars]`;
       }
       return JSON.stringify({
         url,

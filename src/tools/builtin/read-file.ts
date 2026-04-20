@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import type { ContextualTool, ToolContext, RequestContext } from '../types.js';
 import { validatePath, validateUserFileAccess } from '../validate-path.js';
+import { safeSlice } from '../../utils/sanitize.js';
 
 export class ReadFileTool implements ContextualTool {
   name = 'read_file';
@@ -42,7 +43,7 @@ export class ReadFileTool implements ContextualTool {
 
       const content = await readFile(fullPath, 'utf-8');
       if (content.length > this.maxSize) {
-        return content.slice(0, this.maxSize) + '\n... (file truncated)';
+        return safeSlice(content, 0, this.maxSize) + '\n... (file truncated)';
       }
       return content || '(empty file)';
     } catch (err) {

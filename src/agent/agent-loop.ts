@@ -14,7 +14,7 @@ import type { GateService } from '../gates/types.js';
 import { findUserProfile } from '../users/user-resolver.js';
 import { loadPrompt } from '../prompts/loader.js';
 import * as log from '../utils/logger.js';
-import { stripControlTokens, redactSecrets, stripOrphanSurrogates } from '../utils/sanitize.js';
+import { stripControlTokens, redactSecrets, stripOrphanSurrogates, safeSlice } from '../utils/sanitize.js';
 import type { AgentResolver, AgentContext } from './agent-resolver.js';
 import type { CronService } from '../services/cron-service.js';
 import { ensureAgentDir } from '../users/user-resolver.js';
@@ -615,7 +615,7 @@ export class AgentLoop {
           .slice(-5);
         if (textMsgs.length > 0) {
           recentMessages += `\n--- Recent messages from ${target.userId} ---\n`;
-          recentMessages += textMsgs.map(m => `${m.role}: ${String(m.content).slice(0, 300)}`).join('\n');
+          recentMessages += textMsgs.map(m => `${m.role}: ${safeSlice(String(m.content), 0, 300)}`).join('\n');
           recentMessages += `\n--- End ---\n`;
         }
       } catch {
@@ -673,7 +673,7 @@ export class AgentLoop {
       if (textMessages.length === 0) return null;
 
       const formatted = textMessages
-        .map(m => `${m.role}: ${String(m.content).slice(0, 300)}`)
+        .map(m => `${m.role}: ${safeSlice(String(m.content), 0, 300)}`)
         .join('\n');
 
       // Use inline format for legacy injection (prompt template now uses multi-target variables)
@@ -1405,8 +1405,7 @@ function truncateToolResult(result: string): string {
   if (safe.length <= MAX_TOOL_RESULT_CHARS) return stripOrphanSurrogates(safe);
   const half = Math.floor(MAX_TOOL_RESULT_CHARS / 2);
   const trimmed = safe.length - MAX_TOOL_RESULT_CHARS;
-  // .slice() can split UTF-16 surrogate pairs — strip orphans after truncation
-  return stripOrphanSurrogates(`${safe.slice(0, half)}\n\n[... truncated ${trimmed} characters ...]\n\n${safe.slice(-half)}`);
+  return `${safeSlice(safe, 0, half)}\n\n[... truncated ${trimmed} characters ...]\n\n${safeSlice(safe, safe.length - half)}`;
 }
 
 /** Fast non-crypto hash for loop detection signatures. */

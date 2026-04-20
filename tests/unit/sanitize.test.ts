@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripControlTokens, stripOrphanSurrogates, stripJsonSurrogates } from '../../src/utils/sanitize.js';
+import { stripControlTokens, stripOrphanSurrogates, stripJsonSurrogates, safeSlice } from '../../src/utils/sanitize.js';
 
 describe('stripControlTokens', () => {
   it('strips <|...|> tokens', () => {
@@ -121,5 +121,58 @@ describe('stripJsonSurrogates', () => {
   it('also strips raw orphan surrogate chars', () => {
     const json = 'hello\uD800world';
     expect(stripJsonSurrogates(json)).toBe('helloworld');
+  });
+});
+
+describe('safeSlice', () => {
+  it('works like normal slice for ASCII text', () => {
+    expect(safeSlice('hello world', 0, 5)).toBe('hello');
+    expect(safeSlice('hello world', 6)).toBe('world');
+  });
+
+  it('does not split surrogate pair when end lands between pair', () => {
+    const emoji = '🚀'; // \uD83D\uDE80 — 2 code units
+    const text = `ab${emoji}cd`; // a b 🚀 c d — length 6 (4 chars + 2 for emoji)
+    // Cutting at position 3 would split the emoji (high surrogate at 2, low at 3)
+    const result = safeSlice(text, 0, 3);
+    expect(result).toBe('ab'); // excludes the orphan high surrogate
+    expect(() => JSON.stringify(result)).not.toThrow();
+  });
+
+  it('includes full surrogate pair when end is after both code units', () => {
+    const text = 'ab🚀cd';
+    const result = safeSlice(text, 0, 4);
+    expect(result).toBe('ab🚀');
+  });
+
+  it('does not split surrogate pair when start lands on low surrogate', () => {
+    const text = 'a🚀b'; // a \uD83D \uDE80 b — positions 0,1,2,3
+    // Starting at position 2 (low surrogate) should skip it
+    const result = safeSlice(text, 2);
+    expect(result).toBe('b');
+    expect(() => JSON.stringify(result)).not.toThrow();
+  });
+
+  it('handles multiple emoji without splitting any', () => {
+    const text = '🎉🚀🎯'; // 6 code units
+    expect(safeSlice(text, 0, 2)).toBe('🎉');
+    expect(safeSlice(text, 0, 3)).toBe('🎉'); // would split 🚀, pulls back
+    expect(safeSlice(text, 0, 4)).toBe('🎉🚀');
+  });
+
+  it('result is always safe for JSON.stringify', () => {
+    const text = 'data🚀more🎉end';
+    for (let i = 0; i <= text.length; i++) {
+      expect(() => JSON.stringify(safeSlice(text, 0, i))).not.toThrow();
+      expect(() => JSON.stringify(safeSlice(text, i))).not.toThrow();
+    }
+  });
+
+  it('handles empty string', () => {
+    expect(safeSlice('', 0, 5)).toBe('');
+  });
+
+  it('handles end beyond string length', () => {
+    expect(safeSlice('abc', 0, 100)).toBe('abc');
   });
 });
