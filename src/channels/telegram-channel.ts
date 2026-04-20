@@ -561,6 +561,114 @@ export class TelegramChannel {
       }
     });
 
+    // Photo messages — download, encode base64, and pass to agent with vision
+    bot.on('message:photo', async (ctx) => {
+      if (!config.vision.enabled) {
+        log.debug('Telegram: photo received but vision not enabled');
+        return;
+      }
+
+      const baseChatId = String(ctx.chat.id);
+      const isForum = ctx.chat.type === 'supergroup' && (ctx.chat as unknown as { is_forum?: boolean }).is_forum === true;
+      const topicId = isForum && ctx.message.message_thread_id ? ctx.message.message_thread_id : undefined;
+      const chatId = topicId ? `${baseChatId}/${topicId}` : baseChatId;
+      const author = ctx.from?.username || String(ctx.from?.id || 'unknown');
+
+      // Allowlist check
+      const effectiveAllowlist = tg.allowlist.length > 0 ? tg.allowlist : deriveChannelAllowlist('telegram', config);
+      const isAllowed = effectiveAllowlist.includes(baseChatId) || effectiveAllowlist.includes(author) || runtimeAllowlist.has(baseChatId);
+      if (effectiveAllowlist.length > 0 && !isAllowed) {
+        log.debug(`Telegram: ignoring photo from ${author} (chat ${baseChatId}, not in allowlist)`);
+        return;
+      }
+      if (effectiveAllowlist.length === 0 && tg.denyByDefault) {
+        log.debug(`Telegram: denying photo from ${author} (chat ${baseChatId}, deny-by-default, no allowlist configured)`);
+        return;
+      }
+
+      // Group mention policy — photos can't @mention, but check caption for @mention
+      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      if (isGroup) ensureChatDir(chatId, config.workspace.dir);
+      if (isGroup && tg.groupPolicy === 'mention') {
+        const botUsername = ctx.me.username;
+        const caption = ctx.message.caption ?? '';
+        if (botUsername && !caption.includes(`@${botUsername}`)) {
+          log.debug(`Telegram: ignoring photo in group (mention policy, no @${botUsername} in caption)`);
+          return;
+        }
+      }
+
+      // Get the largest photo (Telegram sends multiple resolutions)
+      const largest = ctx.message.photo[ctx.message.photo.length - 1];
+      if (largest.file_size && largest.file_size > config.vision.maxFileSizeMb * 1_048_576) {
+        log.warn(`Telegram: photo too large (${largest.file_size} bytes > ${config.vision.maxFileSizeMb}MB limit)`);
+        return;
+      }
+
+      log.info(`Telegram: photo from ${author} (chat ${chatId}, ${largest.width}x${largest.height})`);
+
+      // Download file from Telegram
+      let fileBuffer: Uint8Array;
+      try {
+        const file = await bot.api.getFile(largest.file_id);
+        fileBuffer = await downloadTelegramFile(bot, file);
+      } catch (err) {
+        log.error(`Telegram: failed to download photo file: ${err instanceof Error ? err.message : err}`);
+        return;
+      }
+
+      // Convert to base64
+      const base64 = Buffer.from(fileBuffer).toString('base64');
+
+      // Resolve user (same logic as text messages)
+      const channelUserId = ctx.from ? String(ctx.from.id) : undefined;
+      const channelUsername = ctx.from?.username ?? undefined;
+      const resolved = resolveUser('telegram', channelUserId, channelUsername, config)
+        ?? autoIdentifyUser('telegram', channelUserId, channelUsername, ctx.from?.first_name, config.workspace.dir);
+
+      let scope: InboundMessage['scope'];
+      if (ctx.chat.type === 'private' && resolved) {
+        scope = { kind: 'user', id: resolved.userId };
+      } else if (config.family && config.family.groupChatIds.includes(baseChatId)) {
+        scope = { kind: 'family', id: config.family.id };
+      }
+
+      const caption = ctx.message.caption ?? '';
+      const replyContext = extractReplyContext(ctx.message.reply_to_message);
+      const inbound: InboundMessage = {
+        id: randomUUID(),
+        channel: 'telegram',
+        chatId,
+        content: caption || '[Photo]',
+        author,
+        timestamp: new Date(),
+        images: [{ data: base64, mimeType: 'image/jpeg' }],
+        user: resolved ? {
+          userId: resolved.userId,
+          name: resolved.name,
+          channelUserId: resolved.identity.channelUserId,
+          channelUsername: resolved.identity.channelUsername,
+        } : undefined,
+        scope,
+        topicId,
+        replyContext,
+        routingMeta: topicId ? { topicId } : undefined,
+      };
+
+      if (bus.isProcessing(chatId)) {
+        bus.pushSteering(inbound);
+        log.info(`Telegram: photo steering message buffered for ${chatId}`);
+        return;
+      }
+
+      try {
+        await bus.publishInbound(inbound, signal);
+        log.info(`Telegram: photo published to inbound queue (chat=${chatId})`);
+      } catch {
+        // Photo processing failed silently — not critical
+      }
+    });
+
     // Start long polling with retry
     await this.startWithRetry(bot, signal);
 
