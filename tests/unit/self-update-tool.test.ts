@@ -45,10 +45,12 @@ describe('SelfUpdateTool', () => {
     }
   });
 
-  it('returns error for non-git directory', async () => {
+  it('falls through to tarball check for non-git directory', async () => {
     const tool = makeTool({ workspaceDir: '/tmp' });
     const result = await tool.execute({ action: 'check' });
-    expect(result).toContain('Not a git repository');
+    // Non-git dirs use tarball mode — result is either version info or network error
+    expect(result).not.toContain('Not a git repository');
+    expect(typeof result).toBe('string');
   });
 
   it('has correct tool metadata', () => {

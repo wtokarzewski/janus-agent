@@ -117,10 +117,12 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
     process.exit(1);
   }
 
-  // Git check
-  if (!existsSync(`${cwd}/.git`)) {
-    console.error(chalk.red('Not a git repository. Cannot auto-update without git.'));
-    process.exit(1);
+  // Detect install mode: git (dev) vs tarball (production)
+  const isGitInstall = existsSync(`${cwd}/.git`);
+
+  if (!isGitInstall) {
+    await runTarballUpdate(cwd);
+    return;
   }
 
   // 1. Check for updates
@@ -219,6 +221,71 @@ async function ensureTimezone(): Promise<void> {
   } catch {
     // Non-critical — skip silently
   }
+}
+
+async function runTarballUpdate(cwd: string): Promise<void> {
+  const { getLatestRelease, isNewerVersion, CURRENT_VERSION, downloadFile } = await import('../utils/version.js');
+
+  console.log(chalk.blue(`Current version: ${CURRENT_VERSION}`));
+  console.log(chalk.blue('Checking for updates...'));
+
+  const release = await getLatestRelease();
+  if (!release) {
+    console.log(chalk.yellow('Could not check for updates (no releases found or network error).'));
+    return;
+  }
+
+  if (!isNewerVersion(CURRENT_VERSION, release.version)) {
+    console.log(chalk.green(`Already up to date (v${CURRENT_VERSION}).`));
+    return;
+  }
+
+  console.log(chalk.yellow(`Update available: v${CURRENT_VERSION} → v${release.version}`));
+
+  // Download tarball to temp
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const tarballPath = join(tmpdir(), `janus-v${release.version}.tar.gz`);
+  console.log(chalk.blue(`Downloading v${release.version}...`));
+  await downloadFile(release.tarballUrl, tarballPath);
+
+  // Backup current install
+  const backupDir = `${cwd}.bak`;
+  const { cp: cpAsync, rm } = await import('node:fs/promises');
+  if (existsSync(backupDir)) {
+    await rm(backupDir, { recursive: true, force: true });
+  }
+  console.log(chalk.blue('Creating backup...'));
+  await cpAsync(cwd, backupDir, { recursive: true, filter: (src) => !src.includes('node_modules') && !src.includes('.janus') });
+
+  // Extract tarball over current install
+  console.log(chalk.blue('Extracting update...'));
+  await execAsync('tar', ['xzf', tarballPath, '--strip-components=1', '-C', cwd], { timeout: 30_000 });
+
+  // Install dependencies
+  console.log(chalk.blue('Installing dependencies...'));
+  try {
+    await npm(['install', '--omit=dev', '--no-audit', '--no-fund'], cwd);
+  } catch (err) {
+    console.error(chalk.red('npm install failed. Restoring backup...'));
+    await rm(cwd, { recursive: true, force: true }).catch(() => {});
+    await cpAsync(backupDir, cwd, { recursive: true }).catch(() => {});
+    console.error(chalk.red('Restored from backup.'));
+    process.exit(1);
+  }
+
+  // Verify new version
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(cwd, 'package.json'), 'utf-8'));
+    console.log(chalk.green(`Updated to v${pkg.version}.`));
+  } catch {
+    console.log(chalk.green('Update applied.'));
+  }
+
+  // Cleanup
+  await rm(tarballPath, { force: true }).catch(() => {});
+  console.log(chalk.gray('Backup kept at: ' + backupDir));
+  console.log(chalk.green('Update complete. Restart Janus to use the new version.'));
 }
 
 /** Compare janus.json top-level keys against janus.example.json and report new sections. */
