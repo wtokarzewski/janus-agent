@@ -398,7 +398,10 @@ export class AgentLoop {
     reqCtx.recentMessages = messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .slice(-5)
-      .map(m => `${m.role}: ${'content' in m ? String(m.content).slice(0, 200) : ''}`);
+      .map(m => {
+        const text = 'content' in m ? (typeof m.content === 'string' ? m.content : userContentText(m.content)) : '';
+        return `${m.role}: ${safeSlice(text, 0, 200)}`;
+      });
 
     const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose);
 
@@ -455,7 +458,7 @@ export class AgentLoop {
     const unflushed = fullSession.messages.length - state.lastFlushed;
     if (this.deps.memory && !state.flushing && unflushed >= flushInterval) {
       // Hash unflushed content to skip flush if content hasn't changed (false-duplicate prevention)
-      const unflushedContent = fullSession.messages.slice(state.lastFlushed).map(m => String(m.content ?? '')).join('|');
+      const unflushedContent = fullSession.messages.slice(state.lastFlushed).map(m => typeof m.content === 'string' ? m.content : userContentText(m.content ?? '')).join('|');
       const contentHash = createHash('sha256').update(unflushedContent).digest('hex').slice(0, 16);
       if (contentHash !== state.lastFlushHash) {
         state.lastFlushHash = contentHash;
@@ -1051,7 +1054,7 @@ export class AgentLoop {
       const contextStr = contextParts.length > 0 ? contextParts.join('\n\n') + '\n\n' : '';
 
       const messagesText = messagesToFlush.map(m =>
-        `${m.role}: ${'content' in m ? m.content : ''}`,
+        `${m.role}: ${'content' in m ? (typeof m.content === 'string' ? m.content : userContentText(m.content)) : ''}`,
       ).join('\n');
 
       log.info(`[${sessionKey}] Memory flush: ${messagesToFlush.length} messages (${from}→${to}), LLM call start`);
@@ -1203,7 +1206,16 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       const content = 'content' in msg ? msg.content : '';
-      const msgTokens = typeof content === 'string' ? Math.ceil(content.length / 2.5) : 100;
+      let msgTokens: number;
+      if (typeof content === 'string') {
+        msgTokens = Math.ceil(content.length / 2.5);
+      } else if (Array.isArray(content)) {
+        const textLen = content.reduce((sum: number, b: { type: string; text?: string }) => sum + (b.type === 'text' && b.text ? b.text.length : 0), 0);
+        const imageCount = content.filter((b: { type: string }) => b.type === 'image').length;
+        msgTokens = Math.ceil(textLen / 2.5) + imageCount * 1000;
+      } else {
+        msgTokens = 100;
+      }
       if (tokens + msgTokens > keepRecentTokens) {
         cutIndex = i + 1;
         // Snap forward to user message boundary

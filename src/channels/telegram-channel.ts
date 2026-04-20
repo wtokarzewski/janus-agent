@@ -617,6 +617,13 @@ export class TelegramChannel {
         return;
       }
 
+      // Post-download size check (file_size from API is optional)
+      const maxBytes = config.vision.maxFileSizeMb * 1_048_576;
+      if (fileBuffer.byteLength > maxBytes) {
+        log.warn(`Telegram: photo too large after download (${(fileBuffer.byteLength / 1_048_576).toFixed(1)}MB > ${config.vision.maxFileSizeMb}MB limit)`);
+        return;
+      }
+
       // Convert to base64
       const base64 = Buffer.from(fileBuffer).toString('base64');
 
@@ -642,7 +649,7 @@ export class TelegramChannel {
         content: caption || '[Photo]',
         author,
         timestamp: new Date(),
-        images: [{ data: base64, mimeType: 'image/jpeg' }],
+        images: [{ data: base64, mimeType: 'image/jpeg' }], // Telegram re-encodes photos as JPEG
         user: resolved ? {
           userId: resolved.userId,
           name: resolved.name,
