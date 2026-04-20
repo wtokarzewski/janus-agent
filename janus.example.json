@@ -114,6 +114,11 @@
     "maxDurationSec": 300
   },
 
+  "vision": {
+    "enabled": true,
+    "maxFileSizeMb": 10
+  },
+
   "tts": {
     "enabled": false,
     "provider": "openai",

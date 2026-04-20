@@ -135,7 +135,11 @@ function convertInput(messages: LLMMessage[]): { input: ResponseInput; instructi
     if (msg.role === 'system') {
       systemParts.push(msg.content);
     } else if (msg.role === 'user') {
-      input.push({ role: 'user', content: msg.content });
+      // Flatten multimodal content to string for Codex
+      const text = typeof msg.content === 'string'
+        ? msg.content
+        : msg.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map(b => b.text).join('\n');
+      input.push({ role: 'user', content: text });
     } else if (msg.role === 'assistant') {
       if (msg.content) {
         input.push({ role: 'assistant', content: msg.content });

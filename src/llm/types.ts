@@ -9,9 +9,14 @@ export type ToolContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
 
+/** Content block for multimodal user messages (images from Telegram, etc.) */
+export type UserContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+
 export type LLMMessage =
   | { role: 'system'; content: string }
-  | { role: 'user'; content: string }
+  | { role: 'user'; content: string | UserContentBlock[] }
   | { role: 'assistant'; content: string; tool_calls?: ToolCall[] }
   | { role: 'tool'; tool_call_id: string; content: string | ToolContentBlock[] };
 
@@ -21,6 +26,12 @@ export function toolResultWithImage(text: string, base64: string, mediaType = 'i
     { type: 'text', text },
     { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
   ];
+}
+
+/** Extract text from user message content (handles both string and multimodal blocks). */
+export function userContentText(content: string | UserContentBlock[]): string {
+  if (typeof content === 'string') return content;
+  return content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map(b => b.text).join(' ');
 }
 
 export interface ToolDefinition {

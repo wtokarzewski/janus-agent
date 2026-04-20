@@ -145,7 +145,16 @@ export class SessionManager {
       for (let i = session.messages.length - 1; i >= 0; i--) {
         const msg = session.messages[i];
         const content = 'content' in msg ? msg.content : '';
-        const msgTokens = typeof content === 'string' ? Math.ceil(content.length / 2.5) : 100;
+        let msgTokens: number;
+        if (typeof content === 'string') {
+          msgTokens = Math.ceil(content.length / 2.5);
+        } else if (Array.isArray(content)) {
+          const textLen = content.reduce((sum: number, b: { type: string; text?: string }) => sum + (b.type === 'text' && b.text ? b.text.length : 0), 0);
+          const imageCount = content.filter((b: { type: string }) => b.type === 'image').length;
+          msgTokens = Math.ceil(textLen / 2.5) + imageCount * 1000;
+        } else {
+          msgTokens = 100;
+        }
         if (tokens + msgTokens > keepRecentTokens) {
           cutIndex = i + 1;
           // Snap forward to nearest user message boundary
