@@ -1,8 +1,8 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 466 passing tests.
+Canonical list of implemented, working features. Verified against source code and 563 passing tests.
 
-**Last updated:** 2026-04-02
+**Last updated:** 2026-04-20
 
 ---
 
@@ -95,7 +95,7 @@ Three auth modes (mutually exclusive):
 | `web_search` | Web search (Brave API or DuckDuckGo fallback, in-memory cache 15min TTL, prompt injection guard: output wrapped in `<untrusted_content>` XML tags). |
 | `browser` | **Real Chrome** via Playwright persistent context. AI-native snapshots with element refs. Auto-launches Chrome with dedicated profile. 30min idle timeout. Safety policy blocks checkout/payment. |
 | `heartbeat` | Manage periodic heartbeat tasks. |
-| `self_update` | Check/apply updates (git pull, npm install, test, self-respawn, auto-revert). |
+| `self_update` | Check/apply updates. Git mode: git pull + npm install + test + self-respawn + auto-revert. Tarball mode: GitHub Releases API + download + backup/rollback. |
 | `invite` | Generate Telegram invite links for new user onboarding. |
 
 ### Tool Infrastructure
@@ -334,7 +334,9 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 466 tests across 42 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 563 tests across 50 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Install scripts** — One-liner installers for non-git users. Unix (`curl | bash`): downloads latest GitHub Release tarball, extracts to `~/.janus-agent/`, creates `janus` launcher in `~/.local/bin`. Windows (PowerShell `irm | iex`): extracts to `%LOCALAPPDATA%\janus-agent\`, creates `janus.cmd` launcher, adds to user PATH. Both: prerequisite checks (Node.js 20+, npm), backup of existing install.
+- **Tarball update mode** — `janus update` and `self_update` tool auto-detect install mode: git (`.git/` exists) uses `git pull` flow, tarball (no `.git/`) downloads latest GitHub Release with backup/rollback on failure. Version comparison via `isNewerVersion()` semver utility.
 
 ## Commands
 
