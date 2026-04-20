@@ -78,6 +78,33 @@ export function stripOrphanSurrogates(text: string): string {
 }
 
 /**
+ * Surrogate-safe string truncation. Unlike String.slice(), this never splits
+ * a UTF-16 surrogate pair — if the cut point lands inside a pair, it adjusts
+ * the boundary to keep the pair intact (or exclude it entirely).
+ *
+ * Use this instead of `.slice()` whenever truncating user/LLM content that
+ * may contain emoji or other characters above U+FFFF.
+ */
+export function safeSlice(str: string, start: number, end?: number): string {
+  let s = Math.max(0, start);
+  let e = end == null ? str.length : Math.min(end, str.length);
+
+  // If start lands on a low surrogate (2nd half of pair), skip it
+  if (s > 0 && s < str.length) {
+    const code = str.charCodeAt(s);
+    if (code >= 0xDC00 && code <= 0xDFFF) s++;
+  }
+
+  // If end lands between high and low surrogate, pull back to exclude orphan high
+  if (e > 0 && e < str.length) {
+    const prev = str.charCodeAt(e - 1);
+    if (prev >= 0xD800 && prev <= 0xDBFF) e--;
+  }
+
+  return str.slice(s, e);
+}
+
+/**
  * Strip orphan surrogates from JSON text — both raw chars AND \uXXXX escape sequences.
  * Use on JSONL lines before JSON.parse to heal corrupt session data where surrogates
  * were stored as JSON escapes (e.g. \uD800) by a previous JSON.stringify.

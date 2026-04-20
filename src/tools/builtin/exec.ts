@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { resolve, relative } from 'node:path';
 import type { ContextualTool, ToolContext } from '../types.js';
 import { getShellConfig, killProcessTree } from '../../utils/shell.js';
-import { stripInvisibleChars } from '../../utils/sanitize.js';
+import { stripInvisibleChars, safeSlice } from '../../utils/sanitize.js';
 
 const IS_WIN = process.platform === 'win32';
 
@@ -119,7 +119,7 @@ export class ExecTool implements ContextualTool {
 
         // Truncate
         if (output.length > this.maxOutput) {
-          output = output.slice(0, this.maxOutput) + '\n... (output truncated)';
+          output = safeSlice(output, 0, this.maxOutput) + '\n... (output truncated)';
         }
 
         resolveP(output || '(no output)');
