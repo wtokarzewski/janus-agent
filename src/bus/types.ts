@@ -1,5 +1,12 @@
 export type Lane = 'user' | 'cron' | 'heartbeat';
 
+export interface ImageAttachment {
+  /** Base64-encoded image data. */
+  data: string;
+  /** MIME type: image/jpeg, image/png, image/gif, image/webp. */
+  mimeType: string;
+}
+
 export interface InboundMessage {
   id: string;
   channel: string;
@@ -22,6 +29,8 @@ export interface InboundMessage {
   lane?: Lane;
   /** Telegram forum topic ID (message_thread_id). Only set for forum-enabled supergroups. */
   topicId?: number;
+  /** Images attached to this message (photos from Telegram, etc.). */
+  images?: ImageAttachment[];
   /** Text of the message being replied to (e.g. Telegram reply-to). */
   replyContext?: string;
   /** Whether this message originated from voice transcription (for auto-TTS replies). */
