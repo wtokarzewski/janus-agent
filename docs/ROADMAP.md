@@ -1,8 +1,8 @@
 # Roadmap
 
-## Current State (Phase 12 complete)
+## Current State (Phase 13 complete)
 
-- **Codebase:** ~13,500 LOC TypeScript, 466 tests across 42 files, CI
+- **Codebase:** ~17,400 LOC TypeScript, 563 tests across 50 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
@@ -180,6 +180,16 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Auto-cleanup of old disabled cron jobs (configurable via cron.cleanup)
 - Update command detects new config sections (compares janus.example.json vs janus.json)
 - 466 tests across 42 files
+
+### Phase 13: Distribution Overhaul (#174, #175, #177, #178, #179)
+- Backup/restore/doctor commands (PR #174)
+- Releases and versioning v1.0.0: CHANGELOG.md, GitHub release workflow with tarball asset (PR #175)
+- Surrogate-safe string truncation (PR #177)
+- Inbound image vision: Telegram photo passthrough to Claude/GPT vision (PR #178)
+- Install scripts: Unix `curl | bash`, Windows PowerShell `irm | iex` (PR #179)
+- Tarball update mode: `janus update` and `self_update` auto-detect git vs tarball, GitHub Releases API, backup/rollback (PR #179)
+- Version utilities: `isNewerVersion()`, `getLatestRelease()`, `downloadFile()` (PR #179)
+- 563 tests across 50 files
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
