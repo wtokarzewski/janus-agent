@@ -28,6 +28,12 @@ export function toolResultWithImage(text: string, base64: string, mediaType = 'i
   ];
 }
 
+/** Extract text from user message content (handles both string and multimodal blocks). */
+export function userContentText(content: string | UserContentBlock[]): string {
+  if (typeof content === 'string') return content;
+  return content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map(b => b.text).join(' ');
+}
+
 export interface ToolDefinition {
   type: 'function';
   function: {

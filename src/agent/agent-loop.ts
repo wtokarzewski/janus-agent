@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
-import type { LLMMessage, ToolContentBlock } from '../llm/types.js';
+import type { LLMMessage, ToolContentBlock, UserContentBlock } from '../llm/types.js';
+import { userContentText } from '../llm/types.js';
 import type { ProviderRegistry } from '../llm/provider-registry.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import type { RequestContext } from '../tools/types.js';
@@ -623,11 +624,11 @@ export class AgentLoop {
       try {
         const history = await this.deps.sessions.getHistory(sessionKey);
         const textMsgs = history
-          .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+          .filter(m => m.role === 'user' || m.role === 'assistant')
           .slice(-5);
         if (textMsgs.length > 0) {
           recentMessages += `\n--- Recent messages from ${target.userId} ---\n`;
-          recentMessages += textMsgs.map(m => `${m.role}: ${safeSlice(String(m.content), 0, 300)}`).join('\n');
+          recentMessages += textMsgs.map(m => `${m.role}: ${safeSlice(userContentText(m.content as string | UserContentBlock[]), 0, 300)}`).join('\n');
           recentMessages += `\n--- End ---\n`;
         }
       } catch {
@@ -679,13 +680,13 @@ export class AgentLoop {
     try {
       const recentMessages = await this.deps.sessions.getHistory(sourceSessionKey);
       const textMessages = recentMessages
-        .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+        .filter(m => m.role === 'user' || m.role === 'assistant')
         .slice(-10);
 
       if (textMessages.length === 0) return null;
 
       const formatted = textMessages
-        .map(m => `${m.role}: ${safeSlice(String(m.content), 0, 300)}`)
+        .map(m => `${m.role}: ${safeSlice(userContentText(m.content as string | UserContentBlock[]), 0, 300)}`)
         .join('\n');
 
       // Use inline format for legacy injection (prompt template now uses multi-target variables)
