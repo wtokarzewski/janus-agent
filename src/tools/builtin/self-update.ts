@@ -71,16 +71,15 @@ export class SelfUpdateTool implements Tool {
       return 'Error: Running inside Docker. Update the image externally:\n  docker compose pull && docker compose up -d\n(or rebuild if using a custom Dockerfile)';
     }
 
-    // Git repo check
-    if (!this.isGitRepo()) {
-      return 'Error: Not a git repository. Cannot auto-update without git.';
-    }
+    const isGit = this.isGitRepo();
 
-    if (action === 'check') return this.check();
-    return this.update(!!args.skip_tests);
+    if (action === 'check') {
+      return isGit ? this.checkGit() : this.checkTarball();
+    }
+    return isGit ? this.updateGit(!!args.skip_tests) : this.updateTarball();
   }
 
-  private async check(): Promise<string> {
+  private async checkGit(): Promise<string> {
     try {
       await this.git(['fetch', '--quiet']);
       const { stdout: countStr } = await this.git(['rev-list', 'HEAD..origin/main', '--count']);
@@ -100,7 +99,7 @@ export class SelfUpdateTool implements Tool {
     }
   }
 
-  private async update(skipTests: boolean): Promise<string> {
+  private async updateGit(skipTests: boolean): Promise<string> {
     try {
       // 1. Fetch + pull
       const { stdout: pullOutput } = await this.git(['pull', '--ff-only']);
@@ -157,6 +156,92 @@ export class SelfUpdateTool implements Tool {
       }, 500);
 
       return `Updated successfully.\n${summary}\nRestarting...`;
+    } catch (err) {
+      return `Error during update: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  private async checkTarball(): Promise<string> {
+    try {
+      const { getLatestRelease, isNewerVersion, CURRENT_VERSION } = await import('../../utils/version.js');
+      const release = await getLatestRelease();
+      if (!release) {
+        return 'Could not check for updates (no releases found or network error).';
+      }
+      if (!isNewerVersion(CURRENT_VERSION, release.version)) {
+        return `Already up to date (v${CURRENT_VERSION}).`;
+      }
+      return `Update available: v${CURRENT_VERSION} → v${release.version} (released ${release.publishedAt})`;
+    } catch (err) {
+      return `Error checking for updates: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  private async updateTarball(): Promise<string> {
+    try {
+      const { getLatestRelease, isNewerVersion, CURRENT_VERSION, downloadFile } = await import('../../utils/version.js');
+      const release = await getLatestRelease();
+      if (!release) {
+        return 'Could not check for updates (no releases found or network error).';
+      }
+      if (!isNewerVersion(CURRENT_VERSION, release.version)) {
+        return `Already up to date (v${CURRENT_VERSION}).`;
+      }
+
+      log.info(`self_update: downloading v${release.version}...`);
+
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const tarballPath = join(tmpdir(), `janus-v${release.version}.tar.gz`);
+      await downloadFile(release.tarballUrl, tarballPath);
+
+      // Backup current install
+      const cwd = this.workspaceDir;
+      const backupDir = `${cwd}.bak`;
+      const { cp, rm } = await import('node:fs/promises');
+      if (existsSync(backupDir)) {
+        await rm(backupDir, { recursive: true, force: true });
+      }
+      await cp(cwd, backupDir, { recursive: true, filter: (src) => !src.includes('node_modules') && !src.includes('.janus') });
+
+      // Extract over current
+      log.info('self_update: extracting...');
+      await execAsync('tar', ['xzf', tarballPath, '--strip-components=1', '-C', cwd], { timeout: 30_000, shell: IS_WIN });
+
+      // Install deps
+      log.info('self_update: running npm install...');
+      await this.npm(['install', '--omit=dev', '--no-audit', '--no-fund']);
+
+      // Write update marker
+      const updateMarker = resolve(this.workspaceDir, '.janus', '.update-complete');
+      try {
+        writeFileSync(updateMarker, `Updated from v${CURRENT_VERSION} to v${release.version}`, 'utf-8');
+      } catch { /* non-critical */ }
+
+      // Cleanup tarball
+      await rm(tarballPath, { force: true }).catch(() => {});
+
+      // Flush + restart
+      log.info('self_update: flushing sessions before restart...');
+      if (this.onBeforeRestart) {
+        await this.onBeforeRestart().catch(err => {
+          log.warn(`self_update: pre-restart flush failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+
+      log.info('self_update: respawning...');
+      setTimeout(() => {
+        const child = spawn(process.execPath, process.argv.slice(1), {
+          cwd: process.cwd(),
+          detached: !IS_WIN,
+          stdio: 'inherit',
+          env: process.env,
+        });
+        child.unref();
+        process.exit(0);
+      }, 500);
+
+      return `Updated from v${CURRENT_VERSION} to v${release.version}. Restarting...`;
     } catch (err) {
       return `Error during update: ${err instanceof Error ? err.message : String(err)}`;
     }
