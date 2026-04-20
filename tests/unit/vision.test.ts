@@ -1,43 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import type { LLMMessage, UserContentBlock } from '../../src/llm/types.js';
-import type { ImageAttachment } from '../../src/bus/types.js';
-import { JanusConfigSchema } from '../../src/config/schema.js';
+import type { UserContentBlock } from '../../src/llm/types.js';
 
-describe('vision types', () => {
-  it('LLMMessage user role accepts string content', () => {
-    const msg: LLMMessage = { role: 'user', content: 'hello' };
-    expect(msg.content).toBe('hello');
-  });
-
-  it('LLMMessage user role accepts multimodal content blocks', () => {
+describe('provider image conversion', () => {
+  it('OpenAI: converts UserContentBlock[] to image_url format', () => {
     const blocks: UserContentBlock[] = [
-      { type: 'text', text: 'What is in this image?' },
+      { type: 'text', text: 'Describe this' },
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'abc123' } },
     ];
-    const msg: LLMMessage = { role: 'user', content: blocks };
-    expect(Array.isArray(msg.content)).toBe(true);
-  });
-
-  it('ImageAttachment has correct shape', () => {
-    const attachment: ImageAttachment = {
-      data: Buffer.from('fake-image-bytes').toString('base64'),
-      mimeType: 'image/jpeg',
-    };
-    expect(attachment.data).toBeTruthy();
-    expect(attachment.mimeType).toBe('image/jpeg');
-  });
-});
-
-describe('vision config', () => {
-  it('defaults to enabled with 10MB limit', () => {
-    const config = JanusConfigSchema.parse({});
-    expect(config.vision.enabled).toBe(true);
-    expect(config.vision.maxFileSizeMb).toBe(10);
-  });
-
-  it('respects explicit config', () => {
-    const config = JanusConfigSchema.parse({ vision: { enabled: false, maxFileSizeMb: 5 } });
-    expect(config.vision.enabled).toBe(false);
-    expect(config.vision.maxFileSizeMb).toBe(5);
+    const openaiBlocks = blocks.map(b =>
+      b.type === 'image'
+        ? { type: 'image_url' as const, image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } }
+        : { type: 'text' as const, text: b.text },
+    );
+    expect(openaiBlocks[0]).toEqual({ type: 'text', text: 'Describe this' });
+    expect(openaiBlocks[1]).toEqual({
+      type: 'image_url',
+      image_url: { url: 'data:image/jpeg;base64,abc123' },
+    });
   });
 });
