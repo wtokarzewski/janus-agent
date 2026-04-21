@@ -31,7 +31,7 @@ export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void>
   if (process.argv.includes('--debug') || process.argv.includes('-d')) {
     log.setLogLevel('debug');
   }
-  if (opts?.tokenDebug) {
+  if (opts?.tokenDebug || process.argv.includes('--token-debug')) {
     log.enableTokenDebug();
   }
 
