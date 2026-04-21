@@ -19,7 +19,7 @@ import { InviteTool } from '../tools/builtin/invite.js';
 import { deriveChannelAllowlist } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
 
-export async function runGateway(): Promise<void> {
+export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void> {
   const config = await loadConfig();
 
   const { hasAnyProvider } = await import('../config/config.js');
@@ -30,6 +30,9 @@ export async function runGateway(): Promise<void> {
 
   if (process.argv.includes('--debug') || process.argv.includes('-d')) {
     log.setLogLevel('debug');
+  }
+  if (opts?.tokenDebug) {
+    log.enableTokenDebug();
   }
 
   // Create all dependencies

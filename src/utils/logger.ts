@@ -70,3 +70,53 @@ export function warn(msg: string, ...args: unknown[]): void {
 export function error(msg: string, ...args: unknown[]): void {
   if (shouldLog('error')) console.error(chalk.red(`[${timestamp()}] [ERROR] ${maskSecrets(msg)}`), ...args);
 }
+
+// ---------- Token debug logging ----------
+
+let _tokenDebug = false;
+
+/** Enable token debug output (--token-debug flag). */
+export function enableTokenDebug(): void {
+  _tokenDebug = true;
+}
+
+/** Check whether token debug is enabled. */
+export function tokenDebugEnabled(): boolean {
+  return _tokenDebug;
+}
+
+/**
+ * Log per-LLM-call token breakdown.
+ *
+ * Format:
+ * [TOKEN] chat | anthropic claude-sonnet-4-6 | in:48200 out:1250 | cache_read:41000 cache_write:7200 | hit:85%
+ *
+ * The usage parameter type is inlined to avoid circular dependency with llm/types.
+ */
+export function logTokenUsage(
+  purpose: string,
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+  },
+  provider?: string,
+  model?: string,
+): void {
+  if (!_tokenDebug) return;
+
+  const cacheRead = usage.cacheReadTokens ?? 0;
+  const cacheWrite = usage.cacheWriteTokens ?? 0;
+  const denominator = usage.promptTokens + cacheRead + cacheWrite;
+  const hitRate = denominator > 0 ? Math.round((cacheRead / denominator) * 100) : 0;
+
+  const providerModel = provider && model
+    ? `${provider} ${model}`
+    : provider ?? model ?? 'unknown';
+
+  const cacheMiss = cacheWrite > 5000 && cacheRead === 0 ? ' \u26a0 CACHE MISS' : '';
+
+  const line = `[TOKEN] ${purpose.padEnd(10)}| ${providerModel.padEnd(30)}| in:${String(usage.promptTokens).padEnd(6)}out:${String(usage.completionTokens).padEnd(6)}| cache_read:${String(cacheRead).padEnd(6)}cache_write:${String(cacheWrite).padEnd(6)}| hit:${hitRate}%${cacheMiss}`;
+  console.log(line);
+}

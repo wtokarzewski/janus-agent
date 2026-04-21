@@ -47,7 +47,10 @@ export class ProviderRegistry implements LLMProvider {
       try {
         const req = { ...request, model: request.model || entry.model };
         log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} request`);
-        return await entry.provider.chat(req);
+        const result = await entry.provider.chat(req);
+        result.provider = entry.name;
+        result.model = entry.model;
+        return result;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         logProviderError(entry, 'chat', lastError, request);
@@ -78,11 +81,16 @@ export class ProviderRegistry implements LLMProvider {
         log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} stream request`);
 
         if (entry.provider.chatStream) {
-          return await entry.provider.chatStream(req, onChunk);
+          const result = await entry.provider.chatStream(req, onChunk);
+          result.provider = entry.name;
+          result.model = entry.model;
+          return result;
         }
 
         // Fallback: non-streaming chat, then deliver content as single chunk
         const response = await entry.provider.chat(req);
+        response.provider = entry.name;
+        response.model = entry.model;
         if (response.content) {
           onChunk(response.content);
         }

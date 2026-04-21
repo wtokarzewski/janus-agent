@@ -33,8 +33,10 @@ program
 program
   .option('-m, --message <text>', 'Send a single message and exit')
   .option('-d, --debug', 'Enable debug logging')
-  .action(async (opts: { message?: string; debug?: boolean }) => {
+  .option('--token-debug', 'Log per-LLM-call token breakdown')
+  .action(async (opts: { message?: string; debug?: boolean; tokenDebug?: boolean }) => {
     if (opts.debug) log.setLogLevel('debug');
+    if (opts.tokenDebug) log.enableTokenDebug();
 
     let config = await loadConfig();
 
@@ -126,8 +128,9 @@ program
 program
   .command('gateway')
   .description('Run in headless mode (Telegram and other channels)')
-  .action(async () => {
-    await runGateway();
+  .option('--token-debug', 'Log per-LLM-call token breakdown')
+  .action(async (opts: { tokenDebug?: boolean }) => {
+    await runGateway(opts);
   });
 
 program

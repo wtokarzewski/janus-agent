@@ -126,7 +126,20 @@ export class AnthropicProvider implements LLMProvider {
         cache_control: { type: 'ephemeral' as const },
       });
     }
-    if (systemMsg) {
+    if (request.systemParts) {
+      // Static part — CACHED (stable across requests)
+      systemBlocks.push({
+        type: 'text' as const,
+        text: request.systemParts.staticPart,
+        cache_control: { type: 'ephemeral' as const },
+      });
+      // Dynamic part — NOT cached (changes per request)
+      systemBlocks.push({
+        type: 'text' as const,
+        text: request.systemParts.dynamicPart,
+      });
+    } else if (systemMsg) {
+      // Fallback for non-split callers (flush, summarization use system message directly)
       systemBlocks.push({
         type: 'text' as const,
         text: systemMsg.content,
@@ -250,7 +263,20 @@ export class AnthropicProvider implements LLMProvider {
         cache_control: { type: 'ephemeral' as const },
       });
     }
-    if (systemMsg) {
+    if (request.systemParts) {
+      // Static part — CACHED (stable across requests)
+      streamSystemBlocks.push({
+        type: 'text' as const,
+        text: request.systemParts.staticPart,
+        cache_control: { type: 'ephemeral' as const },
+      });
+      // Dynamic part — NOT cached (changes per request)
+      streamSystemBlocks.push({
+        type: 'text' as const,
+        text: request.systemParts.dynamicPart,
+      });
+    } else if (systemMsg) {
+      // Fallback for non-split callers (flush, summarization use system message directly)
       streamSystemBlocks.push({
         type: 'text' as const,
         text: systemMsg.content,
