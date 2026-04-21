@@ -345,19 +345,20 @@ describe('AgentLoop integration', () => {
     expect(result).toBe('Blocked.');
   });
 
-  it('should flush memory after memoryFlushInterval messages', async () => {
-    // Flush interval 5: triggers when unflushed messages >= 5
-    // 3 processDirect calls = 6 messages (3 user + 3 assistant) >= 5
+  it('should flush memory when tokens exceed 40% of budget', async () => {
+    // Low tokenBudget so pre-filled session + 1 message exceeds 40% threshold
     const config = createTestConfig({
-      agent: { summarizationThreshold: 100, memoryFlushInterval: 5, memoryIdleFlushMs: 600_000 },
+      agent: { summarizationThreshold: 100, tokenBudget: 500 },
       streaming: { enabled: false },
     });
     const bus = new MessageBus();
 
-    // 3 chat responses + 1 flush response
-    const responses: import('../helpers/mock-llm.js').MockResponse[] = [];
-    for (let i = 0; i < 4; i++) responses.push({ content: `Response ${i + 1}` });
-    const mock = new MockProvider(responses);
+    // 1 chat response + possible summarization + 1 flush response
+    const mock = new MockProvider([
+      { content: 'Response 1' },
+      { content: 'Summary of conversation' },
+      { content: '- Decision: use SQLite' },
+    ]);
 
     const registry = new ProviderRegistry();
     registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
@@ -372,23 +373,29 @@ describe('AgentLoop integration', () => {
 
     const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner, memory });
 
-    // Send 3 messages (6 msgs total: user+assistant each, unflushed=6 >= 5 after 3rd)
-    await agent.processDirect('message 1', { chatId: 'flush-test' });
-    await agent.processDirect('message 2', { chatId: 'flush-test' });
-    await agent.processDirect('message 3', { chatId: 'flush-test' });
+    // Pre-fill session to push tokens above 40% of 500
+    const sessionKey = 'cli:flush-test';
+    await sessions.append(sessionKey, [
+      { role: 'user', content: 'x'.repeat(500) },
+      { role: 'assistant', content: 'y'.repeat(500) },
+    ]);
 
-    // Wait for fire-and-forget flush
-    await new Promise(r => setTimeout(r, 100));
+    await agent.processDirect('trigger flush', { channel: 'cli', chatId: 'flush-test' });
 
-    // 4 calls: 3 responses + 1 flush (pointer-based, with memory manager prompt)
-    expect(mock.calls.length).toBe(4);
-    const flushCall = mock.calls[3];
-    expect(flushCall.messages[0].content).toContain('memory manager');
+    // Wait for fire-and-forget flush + summarization
+    await new Promise(r => setTimeout(r, 200));
+
+    // At least one of the async calls should be a memory flush (memory manager prompt)
+    const flushCall = mock.calls.find(c => {
+      const content = c.messages[0]?.content;
+      return typeof content === 'string' && content.includes('memory manager');
+    });
+    expect(flushCall).toBeTruthy();
   });
 
   it('should flush all sessions on flushAllSessions()', async () => {
     const config = createTestConfig({
-      agent: { summarizationThreshold: 100, memoryFlushInterval: 100, memoryIdleFlushMs: 600_000 },
+      agent: { summarizationThreshold: 100 },
       streaming: { enabled: false },
     });
     const bus = new MessageBus();
@@ -516,9 +523,8 @@ describe('AgentLoop integration', () => {
 
   it('should retry flush before summarization and proceed on failure', async () => {
     // Low summarizationThreshold so 3 messages (6 entries) triggers it
-    // High memoryFlushInterval/idleFlushMs so only pre-summarization flush fires
     const config = createTestConfig({
-      agent: { summarizationThreshold: 4, memoryFlushInterval: 999, memoryIdleFlushMs: 600_000 },
+      agent: { summarizationThreshold: 4 },
       streaming: { enabled: false },
     });
     const bus = new MessageBus();

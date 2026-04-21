@@ -52,6 +52,8 @@ export interface ChatRequest {
   maxTokens?: number;
   thinking?: { type: 'enabled'; budgetTokens: number };
   reasoningEffort?: 'low' | 'medium' | 'high';
+  /** Split system prompt for Anthropic prompt caching: static part (cached) + dynamic part (uncached). */
+  systemParts?: { staticPart: string; dynamicPart: string };
 }
 
 export interface ChatResponse {
@@ -60,6 +62,10 @@ export interface ChatResponse {
   usage: TokenUsage;
   finishReason: 'stop' | 'tool_calls' | 'length';
   thinkingContent?: string;
+  /** Provider name that produced this response (set by ProviderRegistry). */
+  provider?: string;
+  /** Model ID that produced this response (set by ProviderRegistry). */
+  model?: string;
 }
 
 export interface TokenUsage {

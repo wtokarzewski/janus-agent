@@ -14,7 +14,7 @@ export interface InboundMessage {
   content: string;
   author: string;
   timestamp: Date;
-  contextMode?: 'full' | 'minimal';
+  contextMode?: 'full' | 'minimal' | 'background';
   cronDepth?: number;
   user?: {
     userId: string;
