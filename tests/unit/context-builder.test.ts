@@ -30,12 +30,13 @@ describe('ContextBuilder mode', () => {
   it('full mode includes agents, project, and heartbeat sections', async () => {
     const { builder } = createBuilder(tempDir);
 
-    const prompt = await builder.build({
+    const { staticPart, dynamicPart } = await builder.build({
       channel: 'cli',
       chatId: 'test',
       tools: [{ name: 'exec', description: 'Run command' }],
       mode: 'full',
     });
+    const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
     expect(prompt).toContain('<agents>');
     expect(prompt).toContain('Agent Rules');
@@ -49,12 +50,13 @@ describe('ContextBuilder mode', () => {
   it('minimal mode skips agents, project, heartbeat, and memory sections', async () => {
     const { builder } = createBuilder(tempDir);
 
-    const prompt = await builder.build({
+    const { staticPart, dynamicPart } = await builder.build({
       channel: 'cli',
       chatId: 'test',
       tools: [{ name: 'exec', description: 'Run command' }],
       mode: 'minimal',
     });
+    const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
     expect(prompt).not.toContain('<agents>');
     expect(prompt).not.toContain('<project>');
@@ -76,8 +78,10 @@ describe('ContextBuilder mode', () => {
 
     const full = await builder.build({ ...opts, mode: 'full' });
     const minimal = await builder.build({ ...opts, mode: 'minimal' });
+    const fullLen = full.staticPart.length + full.dynamicPart.length;
+    const minimalLen = minimal.staticPart.length + minimal.dynamicPart.length;
 
-    expect(minimal.length).toBeLessThan(full.length);
+    expect(minimalLen).toBeLessThan(fullLen);
   });
 });
 
@@ -91,12 +95,13 @@ describe('ContextBuilder multi-user', () => {
   it('should include user section when user is provided', async () => {
     const { builder } = createBuilder(tempDir);
 
-    const prompt = await builder.build({
+    const { staticPart, dynamicPart } = await builder.build({
       channel: 'telegram',
       chatId: '123',
       tools: [{ name: 'exec', description: 'Run command' }],
       user: { userId: 'wt', name: 'Wojciech' },
     });
+    const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
     expect(prompt).toContain('<user>');
     expect(prompt).toContain('Wojciech');
@@ -106,11 +111,12 @@ describe('ContextBuilder multi-user', () => {
   it('should not include user section when user is not provided', async () => {
     const { builder } = createBuilder(tempDir);
 
-    const prompt = await builder.build({
+    const { staticPart, dynamicPart } = await builder.build({
       channel: 'cli',
       chatId: 'test',
       tools: [{ name: 'exec', description: 'Run command' }],
     });
+    const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
     expect(prompt).not.toContain('<user>');
   });
@@ -118,13 +124,14 @@ describe('ContextBuilder multi-user', () => {
   it('should include scope in session info', async () => {
     const { builder } = createBuilder(tempDir);
 
-    const prompt = await builder.build({
+    const { staticPart, dynamicPart } = await builder.build({
       channel: 'telegram',
       chatId: '123',
       tools: [],
       user: { userId: 'wt', name: 'Wojciech' },
       scope: { kind: 'user', id: 'wt' },
     });
+    const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
     expect(prompt).toContain('Sender: Wojciech (wt)');
     expect(prompt).toContain('Scope: user:wt');
@@ -135,7 +142,7 @@ describe('ContextBuilder multi-user', () => {
       users: [{ id: 'zuzia', name: 'Zuzia', identities: [], tools: { allow: ['read_file'] } }],
     });
 
-    const prompt = await builder.build({
+    const { staticPart, dynamicPart } = await builder.build({
       channel: 'telegram',
       chatId: '123',
       tools: [
@@ -145,6 +152,7 @@ describe('ContextBuilder multi-user', () => {
       ],
       user: { userId: 'zuzia', name: 'Zuzia' },
     });
+    const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
     expect(prompt).toContain('read_file');
     expect(prompt).not.toContain('- exec:');
@@ -156,7 +164,7 @@ describe('ContextBuilder multi-user', () => {
       users: [{ id: 'wt', name: 'W', identities: [], tools: { deny: ['exec'] } }],
     });
 
-    const prompt = await builder.build({
+    const { staticPart, dynamicPart } = await builder.build({
       channel: 'telegram',
       chatId: '123',
       tools: [
@@ -165,6 +173,7 @@ describe('ContextBuilder multi-user', () => {
       ],
       user: { userId: 'wt', name: 'W' },
     });
+    const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
     expect(prompt).not.toContain('- exec:');
     expect(prompt).toContain('read_file');
@@ -173,12 +182,13 @@ describe('ContextBuilder multi-user', () => {
   it('should include family scope in session info for group chats', async () => {
     const { builder } = createBuilder(tempDir);
 
-    const prompt = await builder.build({
+    const { staticPart, dynamicPart } = await builder.build({
       channel: 'telegram',
       chatId: '-100123',
       tools: [],
       scope: { kind: 'family', id: 'family_wt' },
     });
+    const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
     expect(prompt).toContain('Scope: family:family_wt');
   });
@@ -198,17 +208,17 @@ describe('ContextBuilder per-user overrides', () => {
     writeFileSync(join(userDir, 'AGENTS.md'), '# Wojtek\nAlways reply in Polish.');
 
     const { builder } = createBuilder(tempDir);
-    const prompt = await builder.build({
+    const { staticPart } = await builder.build({
       channel: 'telegram',
       chatId: '123',
       tools: [],
       user: { userId: 'wt', name: 'Wojtek' },
     });
 
-    expect(prompt).toContain('<agents>');
-    expect(prompt).toContain('Be helpful');
-    expect(prompt).toContain('Always reply in Polish');
-    expect(prompt).toContain('user-specific rules for wt');
+    expect(staticPart).toContain('<agents>');
+    expect(staticPart).toContain('Be helpful');
+    expect(staticPart).toContain('Always reply in Polish');
+    expect(staticPart).toContain('user-specific rules for wt');
   });
 
   it('should load per-user AGENTS.md without global', async () => {
@@ -217,15 +227,15 @@ describe('ContextBuilder per-user overrides', () => {
     writeFileSync(join(userDir, 'AGENTS.md'), '# Wojtek\nBe concise.');
 
     const { builder } = createBuilder(tempDir);
-    const prompt = await builder.build({
+    const { staticPart } = await builder.build({
       channel: 'telegram',
       chatId: '123',
       tools: [],
       user: { userId: 'wt', name: 'Wojtek' },
     });
 
-    expect(prompt).toContain('<agents>');
-    expect(prompt).toContain('Be concise');
+    expect(staticPart).toContain('<agents>');
+    expect(staticPart).toContain('Be concise');
   });
 
   it('should not load per-user AGENTS.md when no user provided', async () => {
@@ -235,14 +245,14 @@ describe('ContextBuilder per-user overrides', () => {
     writeFileSync(join(userDir, 'AGENTS.md'), '# Wojtek\nSecret rules.');
 
     const { builder } = createBuilder(tempDir);
-    const prompt = await builder.build({
+    const { staticPart } = await builder.build({
       channel: 'cli',
       chatId: 'test',
       tools: [],
     });
 
-    expect(prompt).toContain('Be helpful');
-    expect(prompt).not.toContain('Secret rules');
+    expect(staticPart).toContain('Be helpful');
+    expect(staticPart).not.toContain('Secret rules');
   });
 
   it('should merge global and per-user HEARTBEAT.md', async () => {
@@ -252,17 +262,17 @@ describe('ContextBuilder per-user overrides', () => {
     writeFileSync(join(userDir, 'HEARTBEAT.md'), '## Briefing\n- schedule: at 08:00\n- task: Morning news');
 
     const { builder } = createBuilder(tempDir);
-    const prompt = await builder.build({
+    const { staticPart } = await builder.build({
       channel: 'telegram',
       chatId: '123',
       tools: [],
       user: { userId: 'wt', name: 'Wojtek' },
     });
 
-    expect(prompt).toContain('<heartbeat>');
-    expect(prompt).toContain('Run backup');
-    expect(prompt).toContain('Morning news');
-    expect(prompt).toContain('heartbeat tasks for wt');
+    expect(staticPart).toContain('<heartbeat>');
+    expect(staticPart).toContain('Run backup');
+    expect(staticPart).toContain('Morning news');
+    expect(staticPart).toContain('heartbeat tasks for wt');
   });
 
   it('should load per-user HEARTBEAT.md without global', async () => {
@@ -271,14 +281,193 @@ describe('ContextBuilder per-user overrides', () => {
     writeFileSync(join(userDir, 'HEARTBEAT.md'), '## Check\n- schedule: every 30m\n- task: Health check');
 
     const { builder } = createBuilder(tempDir);
-    const prompt = await builder.build({
+    const { staticPart } = await builder.build({
       channel: 'telegram',
       chatId: '123',
       tools: [],
       user: { userId: 'wt', name: 'Wojtek' },
     });
 
-    expect(prompt).toContain('<heartbeat>');
-    expect(prompt).toContain('Health check');
+    expect(staticPart).toContain('<heartbeat>');
+    expect(staticPart).toContain('Health check');
+  });
+});
+
+describe('ContextBuilder background mode', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    mkdirSync(join(tempDir, '.janus'), { recursive: true });
+    writeFileSync(join(tempDir, '.janus', 'EGO.md'), '# Ego\nI am Janus.');
+    writeFileSync(join(tempDir, 'AGENTS.md'), '# Agent Rules\nBe helpful.');
+    writeFileSync(join(tempDir, 'HEARTBEAT.md'), '# Tasks\n- every 5m: ping');
+    writeFileSync(join(tempDir, 'JANUS.md'), '# Project\nTest project.');
+  });
+
+  it('background mode keeps identity, EGO, AGENTS, skills', async () => {
+    const { builder } = createBuilder(tempDir);
+    const { staticPart, dynamicPart } = await builder.build({
+      channel: 'system', chatId: 'cron:1',
+      tools: [{ name: 'exec', description: 'Run command' }],
+      mode: 'background',
+    });
+    const prompt = staticPart + '\n' + dynamicPart;
+    expect(prompt).toContain('<identity>');
+    expect(prompt).toContain('<ego>');
+    expect(prompt).toContain('<agents>');
+  });
+
+  it('background mode skips HEARTBEAT, JANUS, memory, learner', async () => {
+    const { builder } = createBuilder(tempDir);
+    const { staticPart, dynamicPart } = await builder.build({
+      channel: 'system', chatId: 'cron:1',
+      tools: [{ name: 'exec', description: 'Run command' }],
+      mode: 'background',
+      userMessage: 'remind about meeting',
+    });
+    const prompt = staticPart + '\n' + dynamicPart;
+    expect(prompt).not.toContain('<heartbeat>');
+    expect(prompt).not.toContain('<project>');
+    expect(prompt).not.toContain('<memory>');
+    expect(prompt).not.toContain('<learner>');
+  });
+
+  it('background mode produces shorter prompt than full mode', async () => {
+    const { builder } = createBuilder(tempDir);
+    const opts = {
+      channel: 'system', chatId: 'cron:1',
+      tools: [{ name: 'exec', description: 'Run command' }],
+    };
+    const full = await builder.build({ ...opts, mode: 'full' });
+    const bg = await builder.build({ ...opts, mode: 'background' });
+    const fullLen = full.staticPart.length + full.dynamicPart.length;
+    const bgLen = bg.staticPart.length + bg.dynamicPart.length;
+    expect(bgLen).toBeLessThan(fullLen);
+  });
+});
+
+describe('ContextBuilder static/dynamic split', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+    writeFileSync(join(tempDir, 'AGENTS.md'), '# Agent Rules\nBe helpful.');
+    writeFileSync(join(tempDir, 'JANUS.md'), '# Project\nTest project.');
+    writeFileSync(join(tempDir, 'HEARTBEAT.md'), '# Heartbeat\n- every 5m: check status');
+    const egoDir = join(tempDir, '.janus');
+    mkdirSync(egoDir, { recursive: true });
+    writeFileSync(join(egoDir, 'EGO.md'), '# EGO\nI am Janus.');
+  });
+
+  it('staticPart contains identity, EGO, AGENTS, HEARTBEAT, JANUS', async () => {
+    const { builder } = createBuilder(tempDir);
+
+    const { staticPart } = await builder.build({
+      channel: 'cli',
+      chatId: 'test',
+      tools: [{ name: 'exec', description: 'Run command' }],
+      mode: 'full',
+    });
+
+    expect(staticPart).toContain('<identity>');
+    expect(staticPart).toContain('<ego>');
+    expect(staticPart).toContain('<agents>');
+    expect(staticPart).toContain('<heartbeat>');
+    expect(staticPart).toContain('<project>');
+  });
+
+  it('staticPart does NOT contain timestamp', async () => {
+    const { builder } = createBuilder(tempDir);
+
+    const { staticPart } = await builder.build({
+      channel: 'cli',
+      chatId: 'test',
+      tools: [{ name: 'exec', description: 'Run command' }],
+      mode: 'full',
+    });
+
+    // Identity should not have "Current time:" — timestamp moved to dynamic session block
+    expect(staticPart).not.toMatch(/Current time:/);
+    expect(staticPart).not.toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/);
+  });
+
+  it('dynamicPart contains session info with date AND time', async () => {
+    const { builder } = createBuilder(tempDir);
+
+    const { dynamicPart } = await builder.build({
+      channel: 'cli',
+      chatId: 'test',
+      tools: [{ name: 'exec', description: 'Run command' }],
+      mode: 'full',
+    });
+
+    expect(dynamicPart).toContain('<session>');
+    expect(dynamicPart).toMatch(/Date: \d{4}-\d{2}-\d{2}/);
+    expect(dynamicPart).toMatch(/Time: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/);
+  });
+
+  it('dynamicPart contains previous_summary when provided', async () => {
+    const { builder } = createBuilder(tempDir);
+
+    const { dynamicPart } = await builder.build({
+      channel: 'cli',
+      chatId: 'test',
+      tools: [],
+      summary: 'We discussed the architecture changes.',
+    });
+
+    expect(dynamicPart).toContain('<previous_summary>');
+    expect(dynamicPart).toContain('We discussed the architecture changes.');
+  });
+
+  it('dynamicPart does NOT contain EGO, AGENTS, HEARTBEAT, JANUS', async () => {
+    const { builder } = createBuilder(tempDir);
+
+    const { dynamicPart } = await builder.build({
+      channel: 'cli',
+      chatId: 'test',
+      tools: [{ name: 'exec', description: 'Run command' }],
+      mode: 'full',
+    });
+
+    expect(dynamicPart).not.toContain('<ego>');
+    expect(dynamicPart).not.toContain('<agents>');
+    expect(dynamicPart).not.toContain('<heartbeat>');
+    expect(dynamicPart).not.toContain('<project>');
+  });
+
+  it('dynamicPart contains user section when user provided', async () => {
+    const { builder } = createBuilder(tempDir);
+
+    const { staticPart, dynamicPart } = await builder.build({
+      channel: 'telegram',
+      chatId: '123',
+      tools: [],
+      user: { userId: 'wt', name: 'Wojciech' },
+    });
+
+    // User section is dynamic (profile can change)
+    expect(dynamicPart).toContain('<user>');
+    expect(dynamicPart).toContain('Wojciech');
+    // Static part should NOT have user section
+    expect(staticPart).not.toContain('<user>');
+  });
+
+  it('staticPart is stable across consecutive calls with same config', async () => {
+    const { builder } = createBuilder(tempDir);
+
+    const opts = {
+      channel: 'cli',
+      chatId: 'test',
+      tools: [{ name: 'exec', description: 'Run command' }],
+      mode: 'full' as const,
+    };
+
+    const first = await builder.build(opts);
+    const second = await builder.build(opts);
+
+    // Static parts should be identical (no timestamp or other dynamic content)
+    expect(first.staticPart).toBe(second.staticPart);
   });
 });

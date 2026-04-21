@@ -34,8 +34,6 @@
     "onToolError": "continue",
     "maxSkillsInPrompt": 150,
     "maxSkillsPromptChars": 30000,
-    "memoryFlushInterval": 5,
-    "memoryIdleFlushMs": 120000,
     "lanes": {
       "user": 6,
       "cron": 3,

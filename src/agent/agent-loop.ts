@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
 import type { LLMMessage, ToolContentBlock, UserContentBlock } from '../llm/types.js';
@@ -15,6 +14,7 @@ import type { GateService } from '../gates/types.js';
 import { findUserProfile } from '../users/user-resolver.js';
 import { loadPrompt } from '../prompts/loader.js';
 import * as log from '../utils/logger.js';
+import { logTokenUsage } from '../utils/logger.js';
 import { stripControlTokens, redactSecrets, stripOrphanSurrogates, safeSlice } from '../utils/sanitize.js';
 import type { AgentResolver, AgentContext } from './agent-resolver.js';
 import type { CronService } from '../services/cron-service.js';
@@ -72,7 +72,7 @@ interface IterateResult {
  */
 export class AgentLoop {
   private deps: AgentDeps;
-  private flushState = new Map<string, { lastFlushed: number; lastFlushHash?: string; userId?: string; userName?: string; scope?: InboundMessage['scope']; idleTimer?: ReturnType<typeof setTimeout>; flushing?: boolean }>();
+  private flushState = new Map<string, { lastFlushed: number; userId?: string; userName?: string; scope?: InboundMessage['scope']; flushing?: boolean }>();
   private _iterationControllers = new Map<string, AbortController>();
   /** Guard against concurrent summarization (C2) */
   private summarizing = new Set<string>();
@@ -103,10 +103,6 @@ export class AgentLoop {
       ctrl.abort();
     }
     this._iterationControllers.clear();
-    // Clear idle flush timers
-    for (const state of this.flushState.values()) {
-      if (state.idleTimer) clearTimeout(state.idleTimer);
-    }
     return { cancelled: true };
   }
 
@@ -117,7 +113,7 @@ export class AgentLoop {
   async processDirect(content: string, opts?: {
     channel?: string;
     chatId?: string;
-    contextMode?: 'full' | 'minimal';
+    contextMode?: 'full' | 'minimal' | 'background';
     user?: InboundMessage['user'];
     scope?: InboundMessage['scope'];
     signal?: AbortSignal;
@@ -329,10 +325,10 @@ export class AgentLoop {
       sentTargets: externalReqCtx?.sentTargets ?? [],
     };
 
-    // 3. Get session + build system prompt
+    // 3. Get session + build system prompt (split into static/dynamic for prompt caching)
     const t0 = Date.now();
     const session = await this.deps.sessions.getOrCreate(sessionKey);
-    const systemPrompt = await this.deps.context.build({
+    const { staticPart, dynamicPart } = await this.deps.context.build({
       channel: msg.channel,
       chatId: msg.chatId,
       tools: this.deps.tools.summaries(isOwner),
@@ -343,6 +339,7 @@ export class AgentLoop {
       scope: msg.scope,
       agentCtx,
     });
+    const systemPrompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
     // 3. Build messages: [system, ...history, user]
     //    Trim history if estimated tokens exceed token budget
@@ -403,7 +400,8 @@ export class AgentLoop {
         return `${m.role}: ${safeSlice(text, 0, 200)}`;
       });
 
-    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose);
+    const systemParts = { staticPart, dynamicPart };
+    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose, msg.lane, systemParts);
 
     // 6. Save final assistant message
     await this.deps.sessions.append(sessionKey, [
@@ -441,36 +439,10 @@ export class AgentLoop {
     state.userName = msg.user?.name;
     state.scope = msg.scope;
 
-    // Reset idle flush timer
-    if (state.idleTimer) clearTimeout(state.idleTimer);
-    if (this.deps.memory) {
-      const idleMs = this.deps.config.agent.memoryIdleFlushMs;
-      state.idleTimer = setTimeout(() => {
-        state.idleTimer = undefined;
-        this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
-          log.warn(`Idle memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
-        });
-      }, idleMs);
-    }
-
-    // Count-based flush trigger (pointer-based) with content hash dedup (CR-AS)
-    const flushInterval = this.deps.config.agent.memoryFlushInterval;
+    // Token-aware flush trigger (40% of budget)
     const unflushed = fullSession.messages.length - state.lastFlushed;
-    if (this.deps.memory && !state.flushing && unflushed >= flushInterval) {
-      // Hash unflushed content to skip flush if content hasn't changed (false-duplicate prevention)
-      const unflushedContent = fullSession.messages.slice(state.lastFlushed).map(m => typeof m.content === 'string' ? m.content : userContentText(m.content ?? '')).join('|');
-      const contentHash = createHash('sha256').update(unflushedContent).digest('hex').slice(0, 16);
-      if (contentHash !== state.lastFlushHash) {
-        state.lastFlushHash = contentHash;
-        this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
-          log.warn(`Periodic memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
-        });
-      }
-    }
-
-    // Token-aware flush trigger (60% of budget)
     const sessionTokenEstimate = estimateMessagesTokens(fullSession.messages);
-    const tokenFlushThreshold = this.deps.config.agent.tokenBudget * 0.5;
+    const tokenFlushThreshold = this.deps.config.agent.tokenBudget * 0.4;
     if (this.deps.memory && unflushed > 0 && !state.flushing && sessionTokenEstimate > tokenFlushThreshold) {
       this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
         log.warn(`Token-aware memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -720,6 +692,8 @@ export class AgentLoop {
     reqCtx?: RequestContext,
     agentCtx?: AgentContext,
     llmPurpose: string = 'chat',
+    lane?: string,
+    systemParts?: { staticPart: string; dynamicPart: string },
   ): Promise<IterateResult> {
     let lastContent = '';
     let totalToolCalls = 0;
@@ -782,6 +756,8 @@ export class AgentLoop {
         maxTokens: agentCtx?.params?.maxTokens ?? r.maxTokens,
         ...(thinkingEnabled ? { thinking: { type: 'enabled' as const, budgetTokens: thinkingBudget } } : {}),
         ...(r.reasoningEffort ? { reasoningEffort: r.reasoningEffort } : {}),
+        // Split system prompt for Anthropic prompt caching (static cached, dynamic uncached)
+        ...(systemParts ? { systemParts } : {}),
       };
 
       try {
@@ -798,6 +774,7 @@ export class AgentLoop {
           response = await this.deps.llm.chat(chatRequest, llmPurpose);
         }
         log.info(`[${sessionKey}] LLM call done in ${Date.now() - llmStart}ms (tokens=${response.usage.totalTokens})`);
+        logTokenUsage(lane ?? 'chat', response.usage, response.provider, response.model);
       } catch (err) {
         const errorText = err instanceof Error ? err.message : String(err);
         const isContextError = /token|context|length|too long/i.test(errorText);
@@ -1085,6 +1062,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
       }, 'summarize'), 90_000, 'Memory flush LLM call timed out');
 
       log.info(`[${sessionKey}] Memory flush: LLM call done in ${Date.now() - flushStart}ms`);
+      logTokenUsage('flush', flushResponse.usage, flushResponse.provider, flushResponse.model);
 
       const response = flushResponse.content;
       const summaryMatch = response.match(/<summary>([\s\S]*?)<\/summary>/);
@@ -1129,11 +1107,6 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
   /** Flush memory for all sessions with unflushed messages. Call on shutdown. */
   async flushAllSessions(): Promise<void> {
     if (!this.deps.memory) return;
-
-    // Clear idle timers — we're flushing everything now
-    for (const state of this.flushState.values()) {
-      if (state.idleTimer) { clearTimeout(state.idleTimer); state.idleTimer = undefined; }
-    }
 
     // Find sessions with unflushed messages
     const toFlush: Array<[string, typeof this.flushState extends Map<string, infer V> ? V : never]> = [];
@@ -1279,29 +1252,9 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
       maxTokens: 2048,
     }, 'summarize'), 90_000, 'Summarization LLM call timed out');
     log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
+    logTokenUsage('summarize', summaryResponse.usage, summaryResponse.provider, summaryResponse.model);
 
     let summary = summaryResponse.content;
-
-    // Quality check: if conversation has scheduling content, verify Critical Context
-    const hasScheduling = /\b(cron|calendar|schedule|remind|alarm|heartbeat|\d{1,2}:\d{2})\b/i.test(conversationText);
-    const hasCriticalContext = summary.includes('## Critical Context') && !summary.match(/## Critical Context\s*\n+None/i);
-    if (hasScheduling && !hasCriticalContext) {
-      log.warn(`[${sessionKey}] Summarization quality check: Critical Context empty on scheduling conversation, regenerating`);
-      try {
-        const retryResponse = await withTimeout(this.deps.llm.chat({
-          model: '',
-          messages: [
-            { role: 'system', content: systemContent + '\n\nIMPORTANT: The previous summary had an empty Critical Context section. This conversation contains scheduling/timing content. You MUST extract and preserve exact times, dates, and constraints in the Critical Context section.' },
-            { role: 'user', content: conversationText },
-          ],
-          temperature: 0.3,
-          maxTokens: 2048,
-        }, 'summarize'), 90_000, 'Summarization retry timed out');
-        summary = retryResponse.content;
-      } catch (err) {
-        log.warn(`[${sessionKey}] Summarization quality retry failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
 
     await this.deps.sessions.summarize(sessionKey, summary, keepRecentTokens);
 

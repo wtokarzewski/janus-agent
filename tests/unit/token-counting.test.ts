@@ -143,7 +143,6 @@ describe('Token counting and emergency compression', () => {
       agent: {
         summarizationThreshold: 100,
         tokenBudget: 500, // low budget to trigger token-aware flush + summarization
-        memoryIdleFlushMs: 600_000, // disable idle flush for test
       },
       streaming: { enabled: false },
     });

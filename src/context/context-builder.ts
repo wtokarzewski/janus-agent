@@ -10,6 +10,12 @@ import { loadProfileMd, findUserProfile, sanitizeChatId } from '../users/user-re
 import type { AgentContext } from '../agent/agent-resolver.js';
 import { localDate, localDateWithDay, localTimestamp, getTimezone } from '../utils/date.js';
 
+/** Split system prompt into cacheable static part and per-request dynamic part. */
+export interface ContextResult {
+  staticPart: string;
+  dynamicPart: string;
+}
+
 interface ContextDeps {
   skills: SkillLoader;
   memory: MemoryStore;
@@ -19,15 +25,24 @@ interface ContextDeps {
 
 /**
  * Build system prompt from all context sources.
- * Assembly order:
- * 1. Identity (time, workspace, tools)
- * 2. Ego: .janus/EGO.md (agent character, per-workspace)
- * 3. Agents: ./AGENTS.md (agent behavior rules, per-workspace)
- * 4. Heartbeat: ./HEARTBEAT.md (autonomous tasks, per-workspace)
- * 5. Project: ./JANUS.md (per-repo instructions)
- * 6. Skills (always-loaded = full, on-demand = summary)
- * 7. Memory (MEMORY.md + daily note)
- * 8. Session info
+ * Returns { staticPart, dynamicPart } for Anthropic prompt caching.
+ *
+ * Static part (cached — stable across requests):
+ * 1. Identity (agent name, workspace, tools — NO timestamp)
+ * 2. Known users
+ * 3. Chat files dir
+ * 4. Ego: .janus/EGO.md
+ * 5. Agents: ./AGENTS.md
+ * 6. Heartbeat: ./HEARTBEAT.md
+ * 7. Project: ./JANUS.md
+ * 8. Skills
+ *
+ * Dynamic part (NOT cached — changes per request):
+ * 1. User section (profile)
+ * 2. Memory search results
+ * 3. Learner recommendations
+ * 4. Session info (date + time + channel + sender)
+ * 5. Previous summary
  */
 export class ContextBuilder {
   private deps: ContextDeps;
@@ -42,31 +57,29 @@ export class ContextBuilder {
     tools: Array<{ name: string; description: string }>;
     summary?: string;
     userMessage?: string;
-    mode?: 'full' | 'minimal';
+    mode?: 'full' | 'minimal' | 'background';
     user?: InboundMessage['user'];
     scope?: InboundMessage['scope'];
     agentCtx?: AgentContext;
-  }): Promise<string> {
-    const parts: string[] = [];
+  }): Promise<ContextResult> {
+    const staticParts: string[] = [];
+    const dynamicParts: string[] = [];
     const minimal = opts.mode === 'minimal';
+    const background = opts.mode === 'background';
 
     // Resolve user profile for filtering
     const userProfile = opts.user?.userId
       ? findUserProfile(opts.user.userId, this.deps.config)
       : undefined;
 
-    // 1. Identity — filter tools by user allow/deny
+    // --- STATIC PART (cacheable — stable across requests) ---
+
+    // 1. Identity — filter tools by user allow/deny (NO timestamp — fully static)
     let tools = opts.tools;
     if (userProfile?.tools) {
       tools = this.filterTools(tools, userProfile.tools.allow, userProfile.tools.deny);
     }
-    parts.push(this.buildIdentity(tools, opts.agentCtx));
-
-    // 1b. User section
-    if (opts.user) {
-      const userSection = await this.buildUserSection(opts.user, userProfile?.profilePath);
-      if (userSection) parts.push(userSection);
-    }
+    staticParts.push(this.buildIdentity(tools, opts.agentCtx));
 
     // 1c. Known users (id + name + channel identities)
     if (this.deps.config.users.length > 0) {
@@ -77,75 +90,90 @@ export class ContextBuilder {
           .join(', ') ?? '';
         return `- ${u.id} (${u.name})${channels ? ` channels: ${channels}` : ''}`;
       });
-      parts.push(`<known_users>\n${userLines.join('\n')}\n</known_users>`);
+      staticParts.push(`<known_users>\n${userLines.join('\n')}\n</known_users>`);
     }
 
     // 1d. Shared chat files directory (group chats — Telegram group IDs start with '-')
     if (opts.chatId && opts.chatId.startsWith('-')) {
       const safeChatId = sanitizeChatId(opts.chatId);
       const chatFilesDir = resolve(this.deps.config.workspace.dir, '.janus', 'chats', safeChatId, 'files');
-      parts.push(`<chat_files>\n${chatFilesDir}/\n</chat_files>`);
+      staticParts.push(`<chat_files>\n${chatFilesDir}/\n</chat_files>`);
     }
 
     if (!minimal) {
       // 2. Ego (EGO.md — agent path override: null=skip, undefined=global)
       if (opts.agentCtx?.egoPath !== null) {
         const ego = await this.loadEgo(opts.agentCtx?.egoPath);
-        if (ego) parts.push(ego);
+        if (ego) staticParts.push(ego);
       }
 
       // 3. Agents (AGENTS.md — agent path override + per-user override)
       if (opts.agentCtx?.agentsFilePath !== null) {
         const agents = await this.loadAgents(opts.user?.userId, opts.agentCtx?.agentsFilePath);
-        if (agents) parts.push(agents);
+        if (agents) staticParts.push(agents);
       }
 
-      // 4. Heartbeat (HEARTBEAT.md — agent path override + per-user)
-      if (opts.agentCtx?.heartbeatFilePath !== null) {
+      // 4. Heartbeat (HEARTBEAT.md — agent path override + per-user) — skip in background mode
+      if (!background && opts.agentCtx?.heartbeatFilePath !== null) {
         const heartbeat = await this.loadHeartbeat(opts.user?.userId, opts.agentCtx?.heartbeatFilePath);
-        if (heartbeat) parts.push(heartbeat);
+        if (heartbeat) staticParts.push(heartbeat);
       }
 
-      // 5. Project file (JANUS.md from workspace)
-      const project = await this.loadProjectFile();
-      if (project) parts.push(project);
+      // 5. Project file (JANUS.md from workspace) — skip in background mode
+      if (!background) {
+        const project = await this.loadProjectFile();
+        if (project) staticParts.push(project);
+      }
     }
 
     // 6. Skills — filter by user allow/deny
     const skillsSection = await this.buildSkillsSection(userProfile?.skills);
-    if (skillsSection) parts.push(skillsSection);
+    if (skillsSection) staticParts.push(skillsSection);
 
-    if (!minimal) {
+    // --- DYNAMIC PART (per-request — NOT cached) ---
+
+    // 1b. User section (profile content can change)
+    if (opts.user) {
+      const userSection = await this.buildUserSection(opts.user, userProfile?.profilePath);
+      if (userSection) dynamicParts.push(userSection);
+    }
+
+    if (!minimal && !background) {
       // 7. Memory (hybrid: FTS5 search if available, else full dump)
       const memoryAgentId = opts.agentCtx && !opts.agentCtx.memoryShared ? opts.agentCtx.id : undefined;
       const memorySection = await this.buildMemorySection(opts.userMessage, opts.user?.userId, opts.scope, memoryAgentId);
-      if (memorySection) parts.push(memorySection);
+      if (memorySection) dynamicParts.push(memorySection);
 
       // 7b. Learner recommendations (if enough data)
       if (opts.userMessage && this.deps.learner) {
         const learnerSection = await this.buildLearnerSection(opts.userMessage);
-        if (learnerSection) parts.push(learnerSection);
+        if (learnerSection) dynamicParts.push(learnerSection);
       }
     }
 
-    // 8. Session info (dynamic — not cached by Anthropic prompt caching)
-    // Time is in <identity> (top of prompt) for LLM visibility; date + channel here
+    // 8. Session info (dynamic — changes every request)
     const nowDate = localDateWithDay();
-    const sessionParts = [`Date: ${nowDate}`, `Channel: ${opts.channel}`, `Chat: ${opts.chatId}`];
+    const nowTime = localTimestamp();
+    const tz = getTimezone();
+    const timeLine = tz ? `Time: ${nowTime} (${tz})` : `Time: ${nowTime}`;
+    const sessionParts = [`Date: ${nowDate}`, timeLine, `Channel: ${opts.channel}`, `Chat: ${opts.chatId}`];
     if (opts.user) {
       const senderLabel = opts.user.name ? `${opts.user.name} (${opts.user.userId})` : opts.user.userId;
       sessionParts.push(`Sender: ${senderLabel}`);
     }
     if (opts.agentCtx) sessionParts.push(`Agent: ${opts.agentCtx.id}`);
     if (opts.scope) sessionParts.push(`Scope: ${opts.scope.kind}:${opts.scope.id}`);
-    parts.push(`<session>\n${sessionParts.join('\n')}\n</session>`);
+    dynamicParts.push(`<session>\n${sessionParts.join('\n')}\n</session>`);
 
     // 9. Previous summary
     if (opts.summary) {
-      parts.push(`<previous_summary>\n${opts.summary}\n</previous_summary>`);
+      dynamicParts.push(`<previous_summary>\n${opts.summary}\n</previous_summary>`);
     }
 
-    return parts.join('\n\n---\n\n');
+    return {
+      staticPart: staticParts.join('\n\n---\n\n'),
+      dynamicPart: dynamicParts.join('\n\n---\n\n'),
+    };
   }
 
   private async buildUserSection(
@@ -185,13 +213,9 @@ export class ContextBuilder {
     const toolList = tools.map(t => `- ${t.name}: ${t.description}`).join('\n');
     const agentName = agentCtx?.name ?? 'Janus';
     const agentDesc = agentCtx?.definition.description ? ` — ${agentCtx.definition.description}` : '';
-    const nowTime = localTimestamp();
-    const tz = getTimezone();
-    const clockLine = tz ? `Current time: ${nowTime} (${tz})` : `Current time: ${nowTime}`;
 
     return `<identity>
 You are ${agentName}${agentDesc}, a universal AI agent.
-${clockLine}
 
 Workspace: ${workspace}
 

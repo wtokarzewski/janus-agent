@@ -126,8 +126,6 @@ const AgentSchema = z.object({
   onToolError: z.enum(['continue', 'ask']).default('continue'),
   maxSkillsInPrompt: z.number().default(150),
   maxSkillsPromptChars: z.number().default(30_000),
-  memoryFlushInterval: z.number().default(5),
-  memoryIdleFlushMs: z.number().default(120_000),
   lanes: LanesSchema.optional().transform(v => LanesSchema.parse(v ?? {})),
   subagents: SubagentsSchema.optional().transform(v => SubagentsSchema.parse(v ?? {})),
   context: ContextSchema.optional().transform(v => ContextSchema.parse(v ?? {})),

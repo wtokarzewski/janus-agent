@@ -103,21 +103,22 @@ describe('Context builder skill stubs', () => {
     const memory = new MemoryStore(config);
     const builder = new ContextBuilder({ skills, memory, config });
 
-    const prompt = await builder.build({
+    const { staticPart } = await builder.build({
       channel: 'test',
       chatId: 'test',
       tools: [],
     });
 
+    // Skills are in the static part (cacheable)
     // Both skills should have location attributes
-    expect(prompt).toContain('location="');
+    expect(staticPart).toContain('location="');
     // on-demand should be a self-closing tag (no full content)
-    expect(prompt).toContain('name="on-demand"');
-    expect(prompt).toMatch(/name="on-demand".*\/>/s);
+    expect(staticPart).toContain('name="on-demand"');
+    expect(staticPart).toMatch(/name="on-demand".*\/>/s);
     // always-on should have full instructions
-    expect(prompt).toContain('Instructions for always-on skill.');
+    expect(staticPart).toContain('Instructions for always-on skill.');
     // Should contain skills section
-    expect(prompt).toContain('<skills>');
+    expect(staticPart).toContain('<skills>');
   });
 
   it('should truncate skill list when exceeding char limit', async () => {
@@ -135,12 +136,12 @@ describe('Context builder skill stubs', () => {
     const memory = new MemoryStore(config);
     const builder = new ContextBuilder({ skills, memory, config });
 
-    const prompt = await builder.build({
+    const { staticPart } = await builder.build({
       channel: 'test',
       chatId: 'test',
       tools: [],
     });
 
-    expect(prompt).toContain('truncated due to size limit');
+    expect(staticPart).toContain('truncated due to size limit');
   });
 });

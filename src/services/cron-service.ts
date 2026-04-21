@@ -470,6 +470,7 @@ export class CronService {
         author: 'system',
         timestamp: startedAt,
         cronDepth: 1,
+        contextMode: 'background',
         lane: job.name.startsWith('heartbeat:') ? 'heartbeat' : 'cron',
         user: job.userId ? { userId: job.userId } : undefined,
         agentId: job.agentId ?? undefined,
