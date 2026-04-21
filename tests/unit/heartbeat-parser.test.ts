@@ -50,4 +50,29 @@ describe('parseHeartbeatMd', () => {
     const tasks = parseHeartbeatMd(`## Test\n- schedule: every 5m\n- task: Something`);
     expect(tasks[0].lastRun).toBe(0);
   });
+
+  it('should parse chat field for channel routing', () => {
+    const tasks = parseHeartbeatMd(`## Food check-in\n- schedule: at 13:00\n- task: Ask about meals\n- chat: -5267677750`);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].name).toBe('Food check-in');
+    expect(tasks[0].chatId).toBe('-5267677750');
+  });
+
+  it('should leave chatId undefined when chat field is absent', () => {
+    const tasks = parseHeartbeatMd(`## Morning ping\n- schedule: at 07:00\n- task: Good morning`);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].chatId).toBeUndefined();
+  });
+
+  it('should parse chat field with every schedule', () => {
+    const tasks = parseHeartbeatMd(`## Reminder\n- schedule: every 2h\n- task: Check water\n- chat: -1234567`);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].chatId).toBe('-1234567');
+  });
+
+  it('should parse chat field with cron expression', () => {
+    const tasks = parseHeartbeatMd(`## Weekly\n- schedule: 0 9 * * 1\n- task: Weekly review\n- chat: -9876543`);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].chatId).toBe('-9876543');
+  });
 });

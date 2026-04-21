@@ -16,6 +16,7 @@ export interface HeartbeatTask {
   scheduleTz?: string;
   userId?: string;
   agentId?: string;
+  chatId?: string;
 }
 
 const UNIT_MS: Record<string, number> = {
@@ -80,6 +81,7 @@ export class HeartbeatService {
           enabled: true,
           userId: task.userId,
           agentId: task.agentId,
+          chatId: task.chatId,
         });
       }
       const perUser = this.tasks.filter(t => t.userId).length;
@@ -173,7 +175,7 @@ export class HeartbeatService {
         const inbound: Parameters<typeof this.bus.publishInbound>[0] = {
           id: `heartbeat-${Date.now()}`,
           channel: 'system',
-          chatId: task.userId ? `heartbeat:${task.userId}` : 'heartbeat',
+          chatId: task.chatId ?? (task.userId ? `heartbeat:${task.userId}` : 'heartbeat'),
           content: `[Heartbeat task: ${task.name}] (${localTimestamp()})\n\n${task.description}`,
           author: 'system',
           timestamp: new Date(),
@@ -204,17 +206,22 @@ export function parseHeartbeatMd(content: string): HeartbeatTask[] {
 
     let scheduleRaw = '';
     let description = '';
+    let chatId: string | undefined;
 
     for (const line of lines.slice(1)) {
       const trimmed = line.trim();
       const scheduleMatch = trimmed.match(/^-?\s*schedule:\s*(.+)$/i);
       const taskMatch = trimmed.match(/^-?\s*task:\s*(.+)$/i);
+      const chatMatch = trimmed.match(/^-?\s*chat:\s*(.+)$/i);
 
       if (scheduleMatch) {
         scheduleRaw = scheduleMatch[1].trim();
       }
       if (taskMatch) {
         description = taskMatch[1].trim();
+      }
+      if (chatMatch) {
+        chatId = chatMatch[1].trim();
       }
     }
 
@@ -236,6 +243,7 @@ export function parseHeartbeatMd(content: string): HeartbeatTask[] {
         scheduleKind: 'cron',
         scheduleValue: `${minute} ${hour} * * *`,
         scheduleTz: systemTz,
+        ...(chatId ? { chatId } : {}),
       });
       continue;
     }
@@ -253,6 +261,7 @@ export function parseHeartbeatMd(content: string): HeartbeatTask[] {
         lastRun: 0,
         scheduleKind: 'every',
         scheduleValue: String(intervalMs),
+        ...(chatId ? { chatId } : {}),
       });
     } else if (CRON_EXPR_RE.test(scheduleRaw)) {
       tasks.push({
@@ -263,6 +272,7 @@ export function parseHeartbeatMd(content: string): HeartbeatTask[] {
         scheduleKind: 'cron',
         scheduleValue: scheduleRaw,
         scheduleTz: systemTz,
+        ...(chatId ? { chatId } : {}),
       });
     } else {
       log.debug(`Heartbeat: unrecognized schedule format for "${name}": ${scheduleRaw}`);
