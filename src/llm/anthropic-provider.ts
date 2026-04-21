@@ -83,8 +83,8 @@ export class AnthropicProvider implements LLMProvider {
       apiKey: null as unknown as string,
       authToken: token,
       defaultHeaders: {
-        'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
-        'user-agent': 'claude-cli/2.1.81',
+        'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14',
+        'user-agent': 'claude-cli/2.1.104',
         'x-app': 'cli',
       },
       maxRetries: 3,
@@ -170,6 +170,9 @@ export class AnthropicProvider implements LLMProvider {
         params.tool_choice = { type: request.toolChoice };
       }
     }
+
+    // Cache conversation history prefix by marking last user message
+    applyCacheToLastUserMessage(params.messages);
 
     let response: Anthropic.Message;
     try {
@@ -299,6 +302,9 @@ export class AnthropicProvider implements LLMProvider {
       applyCacheMarkers(params.tools);
     }
 
+    // Cache conversation history prefix by marking last user message
+    applyCacheToLastUserMessage(params.messages);
+
     const stream = this.client.messages.stream(params);
 
     stream.on('text', (delta) => {
@@ -406,4 +412,28 @@ function convertMessage(msg: LLMMessage): Anthropic.MessageParam {
   }
 
   return { role: 'user', content: 'content' in msg ? msg.content : '' };
+}
+
+/**
+ * Add cache_control to the last user message to cache conversation history prefix.
+ * This tells Anthropic where the cacheable prefix ends — without it, system blocks
+ * may not be cached effectively. Pattern used by Pi-Mono and OpenClaw.
+ */
+function applyCacheToLastUserMessage(messages: Anthropic.MessageParam[]): void {
+  if (messages.length === 0) return;
+  const lastMsg = messages[messages.length - 1];
+  if (lastMsg.role !== 'user') return;
+
+  if (Array.isArray(lastMsg.content)) {
+    const lastBlock = lastMsg.content[lastMsg.content.length - 1];
+    if (lastBlock && ('type' in lastBlock) && (lastBlock.type === 'text' || lastBlock.type === 'image' || lastBlock.type === 'tool_result')) {
+      (lastBlock as unknown as Record<string, unknown>).cache_control = { type: 'ephemeral' };
+    }
+  } else if (typeof lastMsg.content === 'string') {
+    (lastMsg as unknown as Record<string, unknown>).content = [{
+      type: 'text' as const,
+      text: lastMsg.content,
+      cache_control: { type: 'ephemeral' as const },
+    }];
+  }
 }
