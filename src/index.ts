@@ -36,7 +36,7 @@ program
   .option('--token-debug', 'Log per-LLM-call token breakdown')
   .action(async (opts: { message?: string; debug?: boolean; tokenDebug?: boolean }) => {
     if (opts.debug) log.setLogLevel('debug');
-    if (opts.tokenDebug) log.enableTokenDebug();
+    if (opts.tokenDebug || process.argv.includes('--token-debug')) log.enableTokenDebug();
 
     let config = await loadConfig();
 
