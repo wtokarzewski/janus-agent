@@ -417,7 +417,7 @@ function convertMessage(msg: LLMMessage): Anthropic.MessageParam {
 /**
  * Add cache_control to the last user message to cache conversation history prefix.
  * This tells Anthropic where the cacheable prefix ends — without it, system blocks
- * may not be cached effectively. Pattern used by Pi-Mono and OpenClaw.
+ * may not be cached effectively.
  */
 function applyCacheToLastUserMessage(messages: Anthropic.MessageParam[]): void {
   if (messages.length === 0) return;

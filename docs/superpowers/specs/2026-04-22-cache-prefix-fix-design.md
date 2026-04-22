@@ -70,8 +70,6 @@ if (request.systemParts) {
 
 Non-Anthropic providers (OpenAI, Codex, ClaudeAgent) are unaffected — they use the concatenated `systemPrompt` from messages[0] and ignore `systemParts`. The dynamicPart now arrives via user message content, which these providers process normally.
 
-**Validated by:** Pi-Mono, OpenClaw, and Nanobot all place dynamic context (including summaries) in user messages rather than system blocks.
-
 ### Fix 2 — Penultimate message cache marker
 
 Anthropic allows **max 4 cache breakpoints** per request. After Fix 1 consolidates OAuth+static into 1 block, the allocation becomes:
@@ -85,7 +83,7 @@ Anthropic allows **max 4 cache breakpoints** per request. After Fix 1 consolidat
 
 **Why penultimate works between messages:** In request N, the "last user message" cache covers the full prefix. In request N+1, that same message is now the penultimate — and the prefix up to it is identical (system and tools unchanged after Fix 1). Cache hit on ~50K tokens.
 
-**Pattern from:** Nanobot (`messages[-2]`), HermesAgent (last 3 messages rolling window).
+Penultimate message marking and rolling-window strategies (last 2-3 messages) are well-established patterns for Anthropic prompt caching.
 
 **New function** in `anthropic-provider.ts`:
 ```typescript
@@ -149,7 +147,7 @@ This also fixes the "Stripped 1 orphan tool message(s) from session start" warni
 ## What We Explicitly Don't Change
 
 - **context-builder.ts** — ContextResult interface stays as-is. staticPart/dynamicPart split is correct, only the destination changes.
-- **Non-Anthropic providers** — They don't support cache_control. Dynamic context arriving via user message is fine (Pi-Mono pattern).
+- **Non-Anthropic providers** — They don't support cache_control. Dynamic context in user messages works correctly.
 - **Summarization/flush LLM calls** — They use different system prompts (summarization instructions). Cache sharing with chat is not possible by design. They stay as-is.
 - **Memory flush frequency** — Already consolidated to token-aware trigger in PR #181.
 
