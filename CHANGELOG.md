@@ -32,7 +32,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - Heartbeat `- chat:` field not passed to cron jobs (notifications went to wrong channel)
 - `--token-debug` flag not working via `npm start` wrapper (process.argv fallback)
-- Competitor reference in spec doc removed
+- External project reference in spec doc removed
 
 ## [0.13.0] - 2026-04-19
 
