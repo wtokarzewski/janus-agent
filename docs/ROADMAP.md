@@ -1,12 +1,13 @@
 # Roadmap
 
-## Current State (Phase 13 complete)
+## Current State (Phase 14 complete)
 
-- **Codebase:** ~17,400 LOC TypeScript, 563 tests across 50 files, CI
+- **Version:** 0.14.0
+- **Codebase:** ~17,500 LOC TypeScript, 597 tests across 53 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
-- **Skills:** 9 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace, github, skill-creator, browser-operator)
+- **Skills:** 10 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace, github, skill-creator, browser-operator, diet-tracker)
 - **Channels:** 2 (CLI, Telegram) + MCP server + MCP client
 - **DB:** SQLite (WAL, 13 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron, cron session IDs, cron chat_id, cron_runs finished_at, cron agent_id, gate_audit_log, not_before, cron targets)
 
@@ -190,6 +191,19 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Tarball update mode: `janus update` and `self_update` auto-detect git vs tarball, GitHub Releases API, backup/rollback (PR #179)
 - Version utilities: `isNewerVersion()`, `getLatestRelease()`, `downloadFile()` (PR #179)
 - 563 tests across 50 files
+
+### Phase 14: Token Optimization (#181-185)
+- Static/dynamic system prompt split for Anthropic cache (static part cached, dynamic uncached)
+- Cache control on last user message (cache prefix sealing)
+- Memory flush consolidated from 5 triggers to 3 (removed idle timer and count-based)
+- Summarization quality retry removed (wasteful second LLM call)
+- Background context mode for cron/heartbeat (skips memory/learner/HEARTBEAT/JANUS)
+- `--token-debug` CLI flag for per-request token breakdown on stdout
+- Heartbeat `- chat:` field support for group chat routing
+- Anthropic SDK 0.77.0 → 0.90.0, fine-grained-tool-streaming beta, user-agent 2.1.104
+- Diet tracker skill
+- Version scheme: 1.0.0 → 0.14.0 (pre-stable)
+- 597 tests across 53 files
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
