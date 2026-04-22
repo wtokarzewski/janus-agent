@@ -97,31 +97,22 @@ export class AnthropicProvider implements LLMProvider {
       params.temperature = request.temperature ?? 0.7;
     }
 
-    // System blocks — merge OAuth + staticPart into single cached block (1 of 4 breakpoints)
+    // System blocks — OAuth must be separate block (API requirement), no cache marker
+    // to stay within 4-breakpoint limit. OAuth is cached as prefix of staticPart's marker.
     const systemBlocks: Anthropic.TextBlockParam[] = [];
-    if (request.systemParts) {
-      const prefix = this.useOAuth
-        ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n"
-        : '';
-      systemBlocks.push({
-        type: 'text' as const,
-        text: prefix + request.systemParts.staticPart,
-        cache_control: { type: 'ephemeral' as const },
-      });
-      // dynamicPart is injected into user message by agent-loop (not in system blocks)
-    } else if (this.useOAuth) {
+    if (this.useOAuth) {
       systemBlocks.push({
         type: 'text' as const,
         text: "You are Claude Code, Anthropic's official CLI for Claude.",
+      });
+    }
+    if (request.systemParts) {
+      systemBlocks.push({
+        type: 'text' as const,
+        text: request.systemParts.staticPart,
         cache_control: { type: 'ephemeral' as const },
       });
-      if (systemMsg) {
-        systemBlocks.push({
-          type: 'text' as const,
-          text: systemMsg.content,
-          cache_control: { type: 'ephemeral' as const },
-        });
-      }
+      // dynamicPart is injected into user message by agent-loop (not in system blocks)
     } else if (systemMsg) {
       // Fallback for non-split callers (flush, summarization use system message directly)
       systemBlocks.push({
@@ -242,32 +233,21 @@ export class AnthropicProvider implements LLMProvider {
       params.temperature = request.temperature ?? 0.7;
     }
 
-    // System blocks — merge OAuth + staticPart into single cached block (1 of 4 breakpoints)
+    // System blocks — OAuth must be separate block (API requirement), no cache marker
     const streamSystemBlocks: Anthropic.TextBlockParam[] = [];
-    if (request.systemParts) {
-      const prefix = this.useOAuth
-        ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n"
-        : '';
-      streamSystemBlocks.push({
-        type: 'text' as const,
-        text: prefix + request.systemParts.staticPart,
-        cache_control: { type: 'ephemeral' as const },
-      });
-    } else if (this.useOAuth) {
+    if (this.useOAuth) {
       streamSystemBlocks.push({
         type: 'text' as const,
         text: "You are Claude Code, Anthropic's official CLI for Claude.",
+      });
+    }
+    if (request.systemParts) {
+      streamSystemBlocks.push({
+        type: 'text' as const,
+        text: request.systemParts.staticPart,
         cache_control: { type: 'ephemeral' as const },
       });
-      if (systemMsg) {
-        streamSystemBlocks.push({
-          type: 'text' as const,
-          text: systemMsg.content,
-          cache_control: { type: 'ephemeral' as const },
-        });
-      }
     } else if (systemMsg) {
-      // Fallback for non-split callers (flush, summarization use system message directly)
       streamSystemBlocks.push({
         type: 'text' as const,
         text: systemMsg.content,
