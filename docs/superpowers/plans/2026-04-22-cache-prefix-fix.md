@@ -494,9 +494,9 @@ Expected: All tests pass.
 Run: `npm run typecheck`
 Expected: Clean.
 
-- [ ] **Step 3: Verify no competitor references**
+- [ ] **Step 3: Verify no external project references**
 
-Run: `grep -ri 'pi-mono\|openclaw\|nanobot\|picoclaw\|hermes' src/ docs/ tests/ --include='*.ts' --include='*.md' | grep -v node_modules`
+Run: `grep -ri 'competitor' src/ docs/ tests/ --include='*.ts' --include='*.md' | grep -v node_modules`
 Expected: No matches.
 
 - [ ] **Step 4: Create PR branch and push**

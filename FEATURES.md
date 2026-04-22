@@ -1,6 +1,6 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 563 passing tests.
+Canonical list of implemented, working features. Verified against source code and 597 passing tests.
 
 **Last updated:** 2026-04-20
 
@@ -67,7 +67,7 @@ Three auth modes (mutually exclusive):
 - **Credential encryption** — AES-256-GCM encryption for `auth.json` at rest. Transparent encrypt/decrypt on read/write.
 - **Anthropic OAuth identity** — Injects required "You are Claude Code" system prompt + beta headers (`claude-code-20250219`, `oauth-2025-04-20`) for subscription OAuth tokens.
 - **Extended thinking** — `llm.thinking.enabled` + `budgetTokens`. Thinking levels: off/minimal/low/medium/high.
-- **Prompt caching** — `cache_control: ephemeral` on system prompt + last tool def. Timestamp in dynamic session tail for cache stability.
+- **Prompt caching** — Static/dynamic system prompt split: stable content (identity, EGO, AGENTS, HEARTBEAT, JANUS, skills) cached via `cache_control: ephemeral`, dynamic content (session info, memory, learner, summary) sent uncached. Cache breakpoints on last user message and tool definitions. `fine-grained-tool-streaming` beta enabled.
 - **Multi-provider failover** — Priority-ordered providers, automatic failover on error. Purpose-based routing via slots (default, background). RESOURCE_EXHAUSTED/overload detection, rate-limit hardening (rate_limit, too many requests), HTTP 422 classification (billing vs format errors).
 - **Providers + Slots config** — `providers` object (auth, priority per provider) + `slots` (default/background with per-provider model mapping). Credentials separated to `auth.json`. Legacy flat config auto-normalized at load time.
 - **Background slot** — Cheap models for cron/heartbeat/summarization (e.g., claude-haiku, gpt-5.4-mini). Falls back to default slot when not configured.
@@ -128,7 +128,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 - **Daily notes** — `memory/YYYY-MM-DD.md`. Auto-populated by memory flush. Part of triple output (HISTORY.md + daily notes + MEMORY.md).
 - **Pointer-based flush tracking** — `lastFlushed` index per session, persisted in JSONL metadata. Ensures every message is flushed exactly once, no gaps or duplicates.
 - **Context-aware extraction** — Flush prompt includes session summary + current MEMORY.md for informed extraction. LLM produces triple output: HISTORY.md entries, daily note entries, and holistic MEMORY.md update.
-- **5 flush triggers** — Count-based (every `memoryFlushInterval` messages), token-aware (60% budget), pre-summarization (all discarded messages), idle (2 min, configurable `memoryIdleFlushMs`), shutdown.
+- **3 flush triggers** — Token-aware (40% budget), pre-summarization (all discarded messages), shutdown.
 - **FTS5 search** — SQLite full-text search with BM25 ranking.
 - **Vector search** — Local embeddings via `@xenova/transformers` (all-MiniLM-L6-v2, 384-dim, ONNX). Zero API cost. Opt-in via `memory.vectorSearch` config.
 - **Hybrid search (RRF)** — Reciprocal Rank Fusion combining FTS5 + vector results.
@@ -188,6 +188,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
   - Per-user `HEARTBEAT.md` in `.janus/users/{userId}/` — tasks tagged with userId, routed to user's Telegram chat.
   - Per-agent `HEARTBEAT.md` in `.janus/agents/{agentId}/` — loads per-agent tasks, syncs agentId to CronService.
   - Auto-starts when any HEARTBEAT.md exists (global, per-user, or per-agent).
+  - Supports `- chat:` field for group chat routing (chatId passed through to CronService).
   - Syncs to CronService when available, falls back to in-memory timers.
 
 ## Multi-User
@@ -220,7 +221,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 - **Keyword similarity** — Finds similar past tasks by keyword overlap.
 - **Recommendations** — Returns avgDuration, avgIterations, avgToolCalls, successRate from similar executions. Wired into system prompt via context builder.
 
-## Skills (9)
+## Skills (10)
 
 - **SKILL.md format** — YAML frontmatter (name, description, version, always, requires) + markdown body.
 - **3-source loading** — workspace/skills → ~/.janus/skills → builtin/skills.
@@ -241,6 +242,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 | `github` | GitHub operations via `gh` CLI: repos, issues, PRs, CI, releases, gists, search. |
 | `skill-creator` | Meta-skill for creating new SKILL.md files from repeated task patterns. |
 | `browser-operator` | Real browser automation guide — workflow patterns, snapshot interpretation, rules, error recovery. |
+| `diet-tracker` | Diet tracking — meals, calories/macros, weigh-ins, daily summaries, weekly reports. |
 
 ## Sessions
 
@@ -254,25 +256,28 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 
 Assembles system prompt from multiple sources:
 
-| # | Section | Source | In minimal mode |
-|---|---------|--------|-----------------|
-| 1 | Identity | Built-in (date, workspace, available tools) | Yes |
-| 2 | User profile | Per-user PROFILE.md | Yes |
-| 3 | Ego | `~/.janus/EGO.md` | No |
-| 4 | Agents | `./AGENTS.md` + per-user override | No |
-| 5 | Heartbeat | `./HEARTBEAT.md` + per-user override | No |
-| 6 | Project | `./JANUS.md` | No |
-| 7 | Skills | SKILL.md files (lazy stubs or full body) | Yes |
-| 8 | Memory | FTS5 + vector hybrid search with scope filtering | No |
-| 9 | Learner | Recommendations from similar past executions | No |
+| # | Section | Source | Part | full | background | minimal |
+|---|---------|--------|------|------|------------|---------|
+| 1 | Identity | Built-in (workspace, tools) | Static | Yes | Yes | Yes |
+| 2 | User profile | Per-user PROFILE.md | Dynamic | Yes | Yes | Yes |
+| 3 | Ego | `~/.janus/EGO.md` | Static | Yes | Yes | No |
+| 4 | Agents | `./AGENTS.md` + per-user override | Static | Yes | Yes | No |
+| 5 | Heartbeat | `./HEARTBEAT.md` + per-user override | Static | Yes | No | No |
+| 6 | Project | `./JANUS.md` | Static | Yes | No | No |
+| 7 | Skills | SKILL.md files (lazy stubs or full body) | Static | Yes | Yes | Yes |
+| 8 | Memory | FTS5 + vector hybrid search with scope filtering | Dynamic | Yes | No | No |
+| 9 | Learner | Recommendations from similar past executions | Dynamic | Yes | No | No |
+| 10 | Session | Date, time, channel, sender, agent, scope | Dynamic | Yes | Yes | Yes |
+| 11 | Summary | Previous session summary | Dynamic | Yes | Yes | Yes |
 
-Subagents use minimal mode (identity + user + skills only) to save tokens.
+Static part cached via Anthropic prompt caching (`cache_control: ephemeral`). Dynamic part sent uncached.
+Subagents use minimal mode. Cron/heartbeat use background mode.
 
 - **Sender name in session context** — Shows `Sender: Name (userId)` instead of `User: userId` in family chats. Agent knows WHO is writing, enabling proper identity-aware responses ("remind me" knows who to remind).
 - **Agent identity in context** — Agent name in identity section, `Agent:` line in session context. Per-agent memory section via agentId when not shared.
 - **known_users with channel info** — User identities in context include channel info (channel:channelUserId per user identity) for precise cross-channel targeting.
 - **All behavioral instructions externalized to AGENTS.md** — context-builder code has zero hardcoded rules. All tool usage rules, skill instructions, and behavioral guidance live in editable .md files.
-- **Date-only timestamp** — ISO date (no time) in session info maximizes Anthropic prompt cache hits within a day.
+- **Timestamp in dynamic part** — Date and time in session info (dynamic, uncached) while identity section (static, cached) has no timestamp. Maximizes Anthropic prompt cache hits across requests.
 
 ## Bootstrap Files
 
@@ -334,7 +339,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 563 tests across 50 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 597 tests across 53 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 - **Install scripts** — One-liner installers for non-git users. Unix (`curl | bash`): downloads latest GitHub Release tarball, extracts to `~/.janus-agent/`, creates `janus` launcher in `~/.local/bin`. Windows (PowerShell `irm | iex`): extracts to `%LOCALAPPDATA%\janus-agent\`, creates `janus.cmd` launcher, adds to user PATH. Both: prerequisite checks (Node.js 20+, npm), backup of existing install.
 - **Tarball update mode** — `janus update` and `self_update` tool auto-detect install mode: git (`.git/` exists) uses `git pull` flow, tarball (no `.git/`) downloads latest GitHub Release with backup/rollback on failure. Version comparison via `isNewerVersion()` semver utility.
 
