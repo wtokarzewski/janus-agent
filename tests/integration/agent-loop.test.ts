@@ -118,7 +118,8 @@ describe('AgentLoop integration', () => {
 
     const history = await deps.sessions.getHistory('main:test:test-session');
     expect(history.length).toBeGreaterThanOrEqual(2); // user + assistant
-    expect(history.some(m => m.role === 'user' && m.content === 'save this')).toBe(true);
+    // User message now includes <context> wrapper with dynamic context prepended
+    expect(history.some(m => m.role === 'user' && typeof m.content === 'string' && m.content.includes('save this'))).toBe(true);
     expect(history.some(m => m.role === 'assistant' && m.content === 'Stored!')).toBe(true);
   });
 
@@ -228,11 +229,11 @@ describe('AgentLoop integration', () => {
     });
 
     expect(result).toBe('Hello Alice!');
-    // System prompt should contain user info
-    const systemMsg = mock.calls[0].messages[0];
-    expect(systemMsg.content).toContain('Alice');
-    expect(systemMsg.content).toContain('Sender: Alice (user1)');
-    expect(systemMsg.content).toContain('Scope: user:user1');
+    // User info is now in the user message (dynamic context), not the system prompt
+    const lastMsg = mock.calls[0].messages[mock.calls[0].messages.length - 1];
+    expect(lastMsg.content).toContain('Alice');
+    expect(lastMsg.content).toContain('Sender: Alice (user1)');
+    expect(lastMsg.content).toContain('Scope: user:user1');
   });
 
   it('should enforce tool deny list from user profile', async () => {

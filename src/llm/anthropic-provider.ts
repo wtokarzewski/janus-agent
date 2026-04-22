@@ -5,33 +5,13 @@ import { getAnthropicToken } from '../auth/anthropic-oauth.js';
 import * as log from '../utils/logger.js';
 
 /**
- * Apply prompt cache markers to tool definitions.
- * Places markers at two boundaries for optimal cache retention:
- * 1. Last built-in tool (stable across MCP changes)
- * 2. Last tool overall (captures MCP tools)
- * If no MCP tools present, only marks the last tool (same as before).
+ * Apply prompt cache marker to last tool definition.
+ * Single marker conserves Anthropic's 4-breakpoint budget
+ * (system + tool + penultimate msg + last msg).
  */
 export function applyCacheMarkers(tools: Array<{ name: string; cache_control?: unknown }>): void {
   if (tools.length === 0) return;
-
-  const lastIdx = tools.length - 1;
-
-  // Find last built-in tool (non-mcp_ prefix)
-  let lastBuiltinIdx = -1;
-  for (let i = lastIdx; i >= 0; i--) {
-    if (!tools[i].name.startsWith('mcp_')) {
-      lastBuiltinIdx = i;
-      break;
-    }
-  }
-
-  // Mark built-in boundary (if it exists and differs from last tool)
-  if (lastBuiltinIdx >= 0 && lastBuiltinIdx !== lastIdx) {
-    tools[lastBuiltinIdx].cache_control = { type: 'ephemeral' };
-  }
-
-  // Always mark last tool
-  tools[lastIdx].cache_control = { type: 'ephemeral' };
+  tools[tools.length - 1].cache_control = { type: 'ephemeral' };
 }
 
 /**
@@ -117,27 +97,31 @@ export class AnthropicProvider implements LLMProvider {
       params.temperature = request.temperature ?? 0.7;
     }
 
-    // OAuth tokens require Claude Code identity in system prompt
+    // System blocks — merge OAuth + staticPart into single cached block (1 of 4 breakpoints)
     const systemBlocks: Anthropic.TextBlockParam[] = [];
-    if (this.useOAuth) {
+    if (request.systemParts) {
+      const prefix = this.useOAuth
+        ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n"
+        : '';
+      systemBlocks.push({
+        type: 'text' as const,
+        text: prefix + request.systemParts.staticPart,
+        cache_control: { type: 'ephemeral' as const },
+      });
+      // dynamicPart is injected into user message by agent-loop (not in system blocks)
+    } else if (this.useOAuth) {
       systemBlocks.push({
         type: 'text' as const,
         text: "You are Claude Code, Anthropic's official CLI for Claude.",
         cache_control: { type: 'ephemeral' as const },
       });
-    }
-    if (request.systemParts) {
-      // Static part — CACHED (stable across requests)
-      systemBlocks.push({
-        type: 'text' as const,
-        text: request.systemParts.staticPart,
-        cache_control: { type: 'ephemeral' as const },
-      });
-      // Dynamic part — NOT cached (changes per request)
-      systemBlocks.push({
-        type: 'text' as const,
-        text: request.systemParts.dynamicPart,
-      });
+      if (systemMsg) {
+        systemBlocks.push({
+          type: 'text' as const,
+          text: systemMsg.content,
+          cache_control: { type: 'ephemeral' as const },
+        });
+      }
     } else if (systemMsg) {
       // Fallback for non-split callers (flush, summarization use system message directly)
       systemBlocks.push({
@@ -173,6 +157,7 @@ export class AnthropicProvider implements LLMProvider {
 
     // Cache conversation history prefix by marking last user message
     applyCacheToLastUserMessage(params.messages);
+    applyCacheToPenultimateMessage(params.messages);
 
     let response: Anthropic.Message;
     try {
@@ -257,27 +242,30 @@ export class AnthropicProvider implements LLMProvider {
       params.temperature = request.temperature ?? 0.7;
     }
 
-    // OAuth tokens require Claude Code identity in system prompt
+    // System blocks — merge OAuth + staticPart into single cached block (1 of 4 breakpoints)
     const streamSystemBlocks: Anthropic.TextBlockParam[] = [];
-    if (this.useOAuth) {
+    if (request.systemParts) {
+      const prefix = this.useOAuth
+        ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n"
+        : '';
+      streamSystemBlocks.push({
+        type: 'text' as const,
+        text: prefix + request.systemParts.staticPart,
+        cache_control: { type: 'ephemeral' as const },
+      });
+    } else if (this.useOAuth) {
       streamSystemBlocks.push({
         type: 'text' as const,
         text: "You are Claude Code, Anthropic's official CLI for Claude.",
         cache_control: { type: 'ephemeral' as const },
       });
-    }
-    if (request.systemParts) {
-      // Static part — CACHED (stable across requests)
-      streamSystemBlocks.push({
-        type: 'text' as const,
-        text: request.systemParts.staticPart,
-        cache_control: { type: 'ephemeral' as const },
-      });
-      // Dynamic part — NOT cached (changes per request)
-      streamSystemBlocks.push({
-        type: 'text' as const,
-        text: request.systemParts.dynamicPart,
-      });
+      if (systemMsg) {
+        streamSystemBlocks.push({
+          type: 'text' as const,
+          text: systemMsg.content,
+          cache_control: { type: 'ephemeral' as const },
+        });
+      }
     } else if (systemMsg) {
       // Fallback for non-split callers (flush, summarization use system message directly)
       streamSystemBlocks.push({
@@ -304,6 +292,7 @@ export class AnthropicProvider implements LLMProvider {
 
     // Cache conversation history prefix by marking last user message
     applyCacheToLastUserMessage(params.messages);
+    applyCacheToPenultimateMessage(params.messages);
 
     const stream = this.client.messages.stream(params);
 
@@ -412,6 +401,29 @@ function convertMessage(msg: LLMMessage): Anthropic.MessageParam {
   }
 
   return { role: 'user', content: 'content' in msg ? msg.content : '' };
+}
+
+/**
+ * Add cache_control to the penultimate message to cache conversation history prefix.
+ * Between requests, the previous "last user message" becomes the penultimate —
+ * its prefix (system + tools + history) is identical, enabling cache hit on ~50K tokens.
+ */
+export function applyCacheToPenultimateMessage(messages: Anthropic.MessageParam[]): void {
+  if (messages.length < 3) return;
+  const msg = messages[messages.length - 2];
+
+  if (Array.isArray(msg.content)) {
+    const lastBlock = msg.content[msg.content.length - 1];
+    if (lastBlock && ('type' in lastBlock)) {
+      (lastBlock as unknown as Record<string, unknown>).cache_control = { type: 'ephemeral' };
+    }
+  } else if (typeof msg.content === 'string') {
+    (msg as unknown as Record<string, unknown>).content = [{
+      type: 'text' as const,
+      text: msg.content,
+      cache_control: { type: 'ephemeral' as const },
+    }];
+  }
 }
 
 /**

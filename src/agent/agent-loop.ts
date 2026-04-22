@@ -339,7 +339,8 @@ export class AgentLoop {
       scope: msg.scope,
       agentCtx,
     });
-    const systemPrompt = staticPart + '\n\n---\n\n' + dynamicPart;
+    // dynamicPart moves to user message for Anthropic prefix cache stability
+    const systemPrompt = staticPart;
 
     // 3. Build messages: [system, ...history, user]
     //    Trim history if estimated tokens exceed token budget
@@ -356,6 +357,12 @@ export class AgentLoop {
       if (injected) {
         userContent = `${injected}\n\n${userContent}`;
       }
+    }
+
+    // Dynamic context in user message — system blocks stay stable for Anthropic prefix cache.
+    // Order: <context>dynamic</context> → cron injection → reply context → user message
+    if (dynamicPart) {
+      userContent = `<context>\n${dynamicPart}\n</context>\n\n${userContent}`;
     }
 
     // Build user message — multimodal if images attached, plain string otherwise
@@ -459,7 +466,7 @@ export class AgentLoop {
       if (this.summarizing.has(sessionKey)) {
         log.debug(`[${sessionKey}] Skipping summarization — already in progress`);
       } else {
-        this.triggerSummarization(sessionKey, fullSession.messages, msg.channel, msg.chatId, msg.user?.userId, msg.scope, sessionTokenEstimate).catch(err => {
+        this.triggerSummarization(sessionKey, fullSession.messages, msg.user?.userId, msg.scope, sessionTokenEstimate).catch(err => {
           log.warn(`Summarization failed: ${err instanceof Error ? err.message : String(err)}`);
         });
       }
@@ -550,6 +557,24 @@ export class AgentLoop {
       await this.deps.bus.publishOutbound(response, new AbortController().signal).catch(err => {
         log.warn(`Failed to publish system message response: ${err instanceof Error ? err.message : String(err)}`);
       });
+    }
+
+    // Clear cron/heartbeat sessions after each run — they're stateless
+    // (tasks fetch fresh data via tools, user replies go to telegram session)
+    if (msg.lane === 'heartbeat' || msg.lane === 'cron') {
+      const agentId = this.deps.agentResolver?.resolve(msg)?.id ?? 'main';
+      const sessionKey = `${agentId}:${msg.channel}:${msg.chatId}`;
+      try {
+        const session = await this.deps.sessions.getOrCreate(sessionKey);
+        const estimate = estimateMessagesTokens(session.messages);
+        if (estimate > 80_000) {
+          log.warn(`[${sessionKey}] Cron session reached ~${Math.round(estimate / 1000)}K tokens`);
+        }
+        log.info(`[${sessionKey}] Cron session cleared (~${Math.round(estimate / 1000)}K tokens)`);
+        await this.deps.sessions.clear(sessionKey);
+      } catch (err) {
+        log.warn(`Failed to clear cron session: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 
@@ -1138,8 +1163,6 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
   private async triggerSummarization(
     sessionKey: string,
     messages: LLMMessage[],
-    channel: string,
-    chatId: string,
     userId?: string,
     scope?: InboundMessage['scope'],
     preTokenEstimate?: number,
@@ -1147,18 +1170,9 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     // Double-fire guard (C2)
     this.summarizing.add(sessionKey);
     try {
-      // Show typing indicator during compaction (non-intrusive, auto-expires)
-      this.deps.bus.publishOutbound({
-        chatId, channel, content: '', timestamp: new Date(), type: 'typing',
-      }, new AbortController().signal).catch(() => {});
-
       await this.doSummarization(sessionKey, messages, userId, scope, preTokenEstimate);
     } finally {
       this.summarizing.delete(sessionKey);
-      // Stop typing after compaction completes
-      this.deps.bus.publishOutbound({
-        chatId, channel, content: '', timestamp: new Date(), type: 'typing_stop',
-      }, new AbortController().signal).catch(() => {});
     }
   }
 
