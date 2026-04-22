@@ -184,6 +184,19 @@ export class SessionManager {
     });
   }
 
+  /** Clear all messages from a session, preserving the session file. */
+  async clear(key: string): Promise<void> {
+    return this.withLock(key, async () => {
+      const session = await this.getOrCreateInner(key);
+      session.messages = [];
+      session.metadata.summary = undefined;
+      session.metadata.messageCount = 0;
+      session.metadata.lastFlushed = 0;
+      session.metadata.updated = new Date().toISOString();
+      await this.save(key, session);
+    });
+  }
+
   private truncateToolResult(content: string): string {
     // Dynamic cap: contextWindow tokens × 2.5 chars/token × share fraction
     const dynamicCap = Math.floor(this.contextWindow * 2.5 * this.toolResultMaxShare);
