@@ -494,9 +494,9 @@ Expected: All tests pass.
 Run: `npm run typecheck`
 Expected: Clean.
 
-- [ ] **Step 3: Verify no competitor references**
+- [ ] **Step 3: Verify no external project references**
 
-Run: `grep -ri 'pi-mono\|openclaw\|nanobot\|picoclaw\|hermes' src/ docs/ tests/ --include='*.ts' --include='*.md' | grep -v node_modules`
+Run: `grep -ri 'external project' src/ docs/ tests/ --include='*.ts' --include='*.md' | grep -v node_modules`
 Expected: No matches.
 
 - [ ] **Step 4: Create PR branch and push**
@@ -524,7 +524,7 @@ Body:
 
 - [x] All existing tests pass
 - [x] Typecheck clean
-- [x] No competitor references
+- [x] No external project references
 - [ ] Manual: `npm start -- gateway --token-debug` — verify cache_read ~50K (was 7.5K) on consecutive chat messages
 - [ ] Manual: Verify heartbeat sessions show "cleared" log after each run
 ```

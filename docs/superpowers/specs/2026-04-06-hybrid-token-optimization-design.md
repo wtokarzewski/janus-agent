@@ -242,7 +242,7 @@ Single new field. All other behavior changes are internal improvements with no c
 
 ## What We Explicitly Don't Do
 
-- **No SQLite context store** (Seahorse approach) — too large a refactor for incremental gain over current JSONL
+- **No SQLite context store** — too large a refactor for incremental gain over current JSONL
 - **No LLM-based summarization of tool results** — heuristic extraction is free, LLM calls are not
 - **No budget-aware assembly** — current post-hoc compaction with reversed direction achieves 80% of the benefit
 - **No cursor-based history tracking** — current pointer-based `lastFlushed` is sufficient
