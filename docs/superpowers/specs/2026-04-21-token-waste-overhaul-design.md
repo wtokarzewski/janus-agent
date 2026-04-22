@@ -214,7 +214,7 @@ None. All changes are code-level. `--token-debug` is a CLI flag, not a config op
 ## What We Explicitly Don't Do
 
 - **No SQLite token_log table** — debug flag on console is sufficient, no storage bloat
-- **No mtime-based system prompt caching** (PicoClaw pattern) — static/dynamic split achieves 80% of the benefit without the complexity
+- **No mtime-based system prompt caching** — static/dynamic split achieves 80% of the benefit without the complexity
 - **No intelligent model routing** (complexity scoring) — good idea but separate feature, not a waste fix
 - **No changes to compaction/context-budget** — already optimized in prior spec (reverse compaction, dual cache markers)
 - **No changes to memory flush LLM prompt or behavior** — only reducing frequency, not changing quality
