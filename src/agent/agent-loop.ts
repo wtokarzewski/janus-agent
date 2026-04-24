@@ -1257,7 +1257,12 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
       systemContent = loadPrompt('summarization/initial');
     }
 
-    log.info(`[${sessionKey}] Summarization: LLM call start`);
+    // Scale maxTokens to input size: target ~15% of input, clamped to 1024–4096.
+    // At 48K input tokens, 2048 maxTokens was producing 342 tokens (0.7%) — too little.
+    const inputTokens = Math.ceil(conversationText.length / 2.5);
+    const summaryMaxTokens = Math.min(4096, Math.max(1024, Math.ceil(inputTokens * 0.15)));
+
+    log.info(`[${sessionKey}] Summarization: LLM call start (input ~${inputTokens} tokens, maxTokens=${summaryMaxTokens})`);
     const llmStart = Date.now();
     const summaryResponse = await withTimeout(this.deps.llm.chat({
       model: '',
@@ -1266,7 +1271,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
         { role: 'user', content: conversationText },
       ],
       temperature: 0.3,
-      maxTokens: 2048,
+      maxTokens: summaryMaxTokens,
     }, 'summarize'), 90_000, 'Summarization LLM call timed out');
     log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
     logTokenUsage('summarize', summaryResponse.usage, summaryResponse.provider, summaryResponse.model);
@@ -1277,7 +1282,6 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     // retry with lower temperature, then fall back to aggressive fact-extraction prompt.
     // Restores the safety net removed in Phase 14; uses proportional check instead of
     // the old keyword-based heuristic.
-    const inputTokens = Math.ceil(conversationText.length / 2.5);
     let summaryTokens = Math.ceil(summary.length / 2.5);
     const isTooShort = inputTokens > 500 && summaryTokens < inputTokens * 0.1;
 
@@ -1292,7 +1296,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
             { role: 'user', content: conversationText },
           ],
           temperature: 0,
-          maxTokens: 2048,
+          maxTokens: summaryMaxTokens,
         }, 'summarize'), 90_000, 'Summarization retry timed out');
         logTokenUsage('summarize-retry', retryResponse.usage, retryResponse.provider, retryResponse.model);
         const retryTokens = Math.ceil(retryResponse.content.length / 2.5);
@@ -1316,7 +1320,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
               { role: 'user', content: conversationText },
             ],
             temperature: 0,
-            maxTokens: 2048,
+            maxTokens: summaryMaxTokens,
           }, 'summarize'), 90_000, 'Aggressive summarization timed out');
           logTokenUsage('summarize-aggressive', aggressiveResponse.usage, aggressiveResponse.provider, aggressiveResponse.model);
           const aggressiveTokens = Math.ceil(aggressiveResponse.content.length / 2.5);
