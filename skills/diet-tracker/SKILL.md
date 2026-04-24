@@ -156,6 +156,13 @@ Body composition fields are optional — only track what the user actually provi
 3. Compare with weekly milestone from profile.md
 4. Comment on trend (if you have data from previous days)
 
+### Missed weight
+
+- If morning weigh-in gets no response → remind once in the midday food check-in: "btw, weight today?"
+- If user reports weight later in the day ("forgot, I was 80.3 this morning") → log it, note the time wasn't ideal but it's better than nothing
+- If no weight for the whole day → leave `## Weight` section empty, mark as `—` in weekly summary
+- Don't nag more than once — one reminder in the check-in is enough. If they skip, they skip.
+
 ## Day Close
 
 When user says "close day" or evening heartbeat fires → read [formats/day-close.md](formats/day-close.md)
