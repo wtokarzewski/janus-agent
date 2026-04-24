@@ -31,7 +31,7 @@ Setup is a **conversation**, not a form. Ask one question at a time, react to an
 7. **Restrictions** — what they don't eat, allergies, intolerances
 8. **Activity** — what they do, how often, any limitations (injury, rehab)
 9. **Supplements** — what they take daily
-10. **Schedule** — when do they wake up? Check existing heartbeats in their HEARTBEAT.md and avoid conflicts with other reminders. Adapt ping times to their routine.
+10. **Schedule** — when do they wake up? When do they want the weight reminder? Propose a time (wake-up + 15 min) but let the user decide — some people weigh themselves immediately, others after coffee. Check existing heartbeats in their HEARTBEAT.md and avoid conflicts with other reminders. Adapt all ping times to their routine.
 11. **Chat** — which Telegram chat to use (private or group), get chatId
 
 You don't have to ask everything at once. If the user volunteers info, don't repeat the question. If you already know something from PROFILE.md — confirm instead of asking again. Users often give info out of order — that's fine, just track what you have and what's missing.
