@@ -23,7 +23,7 @@ describe('Summarization quality validation', () => {
 describe('Aggressive summarization prompt', () => {
   it('should exist as a prompt file', () => {
     const prompt = readFileSync('src/prompts/summarization/aggressive.md', 'utf-8');
-    expect(prompt).toContain('fact-focused');
+    expect(prompt).toContain('DETAILED');
     expect(prompt.length).toBeGreaterThan(100);
   });
 });
