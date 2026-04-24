@@ -16,6 +16,7 @@ import { loadPrompt } from '../prompts/loader.js';
 import * as log from '../utils/logger.js';
 import { logTokenUsage } from '../utils/logger.js';
 import { stripControlTokens, redactSecrets, stripOrphanSurrogates, safeSlice } from '../utils/sanitize.js';
+import { localDateWithDay, localTimestamp } from '../utils/date.js';
 import type { AgentResolver, AgentContext } from './agent-resolver.js';
 import type { CronService } from '../services/cron-service.js';
 import { ensureAgentDir } from '../users/user-resolver.js';
@@ -1238,10 +1239,12 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
 
     // Input filtering: only user + assistant (no tool results — they add noise)
     const filtered = toSummarize.filter(m => m.role === 'user' || m.role === 'assistant');
-    const conversationText = filtered.map(m => {
+    const rawConversation = filtered.map(m => {
       const content = 'content' in m ? m.content : '';
       return `${m.role}: ${typeof content === 'string' ? content : '[multimodal]'}`;
     }).join('\n');
+    // Anchor the summary with current date so temporal context survives summarization.
+    const conversationText = `[Current date: ${localDateWithDay()}, time: ${localTimestamp()}]\n\n${rawConversation}`;
 
     // Check for previous summary → iterative merge
     const session = await this.deps.sessions.getOrCreate(sessionKey);
@@ -1269,6 +1272,66 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     logTokenUsage('summarize', summaryResponse.usage, summaryResponse.provider, summaryResponse.model);
 
     let summary = summaryResponse.content;
+
+    // Fallback chain: if summary is disproportionately short relative to input,
+    // retry with lower temperature, then fall back to aggressive fact-extraction prompt.
+    // Restores the safety net removed in Phase 14; uses proportional check instead of
+    // the old keyword-based heuristic.
+    const inputTokens = Math.ceil(conversationText.length / 2.5);
+    let summaryTokens = Math.ceil(summary.length / 2.5);
+    const isTooShort = inputTokens > 500 && summaryTokens < inputTokens * 0.1;
+
+    if (isTooShort) {
+      // Step 1: retry same prompt with temperature 0 (more deterministic)
+      log.warn(`[${sessionKey}] Summary too short (${summaryTokens}/${inputTokens} tokens, ${Math.round(summaryTokens / inputTokens * 100)}%), retrying with temp=0`);
+      try {
+        const retryResponse = await withTimeout(this.deps.llm.chat({
+          model: '',
+          messages: [
+            { role: 'system', content: systemContent },
+            { role: 'user', content: conversationText },
+          ],
+          temperature: 0,
+          maxTokens: 2048,
+        }, 'summarize'), 90_000, 'Summarization retry timed out');
+        logTokenUsage('summarize-retry', retryResponse.usage, retryResponse.provider, retryResponse.model);
+        const retryTokens = Math.ceil(retryResponse.content.length / 2.5);
+        if (retryTokens > summaryTokens) {
+          log.info(`[${sessionKey}] Summary retry improved: ${summaryTokens} → ${retryTokens} tokens`);
+          summary = retryResponse.content;
+          summaryTokens = retryTokens;
+        }
+      } catch (err) {
+        log.warn(`[${sessionKey}] Summary retry failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Step 2: if still too short, aggressive fact-extraction prompt
+      if (summaryTokens < inputTokens * 0.1) {
+        log.warn(`[${sessionKey}] Summary still too short (${summaryTokens} tokens), trying aggressive prompt`);
+        try {
+          const aggressiveResponse = await withTimeout(this.deps.llm.chat({
+            model: '',
+            messages: [
+              { role: 'system', content: loadPrompt('summarization/aggressive') },
+              { role: 'user', content: conversationText },
+            ],
+            temperature: 0,
+            maxTokens: 2048,
+          }, 'summarize'), 90_000, 'Aggressive summarization timed out');
+          logTokenUsage('summarize-aggressive', aggressiveResponse.usage, aggressiveResponse.provider, aggressiveResponse.model);
+          const aggressiveTokens = Math.ceil(aggressiveResponse.content.length / 2.5);
+          if (aggressiveTokens > summaryTokens) {
+            log.info(`[${sessionKey}] Aggressive summary improved: ${summaryTokens} → ${aggressiveTokens} tokens`);
+            summary = aggressiveResponse.content;
+            summaryTokens = aggressiveTokens;
+          }
+        } catch (err) {
+          log.warn(`[${sessionKey}] Aggressive summarization failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
+    log.info(`[${sessionKey}] Summarization: ${summaryTokens} tokens (${Math.round(summaryTokens / inputTokens * 100)}% of input)`);
 
     await this.deps.sessions.summarize(sessionKey, summary, keepRecentTokens);
 
