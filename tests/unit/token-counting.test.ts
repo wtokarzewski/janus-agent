@@ -90,9 +90,11 @@ describe('Token counting and emergency compression', () => {
   });
 
   it('should trigger summarization when token estimate exceeds threshold', async () => {
+    // Summary must be >10% of input length to avoid triggering fallback chain retry
+    const mockSummary = '## Goal\nUser testing.\n## Established Facts\n- Fact one established.\n- Fact two established.\n## Progress\n### Done\n- Completed task.\n## Key Decisions\n- Decision made.\n## Critical Context\nImportant context preserved here for continuity.\n## Identifiers\nNone';
     const mock = new MockProvider([
       { content: 'Response' },
-      { content: 'Summary of conversation' }, // summarization call
+      { content: mockSummary }, // summarization call
     ]);
 
     const config = createTestConfig({
@@ -133,9 +135,11 @@ describe('Token counting and emergency compression', () => {
   });
 
   it('should flush memory before summarization when MemoryStore is available', async () => {
+    // Summary must be >10% of input length to avoid triggering fallback chain retry
+    const mockSummary = '## Goal\nUser testing.\n## Established Facts\n- Decision: use SQLite for storage.\n- API limit is 100 req/s.\n## Progress\n### Done\n- Completed task.\n## Key Decisions\n- Decision made.\n## Critical Context\nImportant context preserved here for continuity.\n## Identifiers\nNone';
     const mock = new MockProvider([
       { content: 'Response' },
-      { content: 'Summary of conversation' }, // summarization (reaches LLM first — fewer async steps)
+      { content: mockSummary }, // summarization (reaches LLM first — fewer async steps)
       { content: '- Decision: use SQLite for storage\n- Key fact: API limit is 100 req/s' }, // flush (reaches LLM second — reads MEMORY.md first)
     ]);
 
