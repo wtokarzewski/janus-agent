@@ -6,8 +6,10 @@ import type { SkillLoader } from '../skills/skill-loader.js';
 import type { JanusConfig } from '../config/schema.js';
 import type { InboundMessage } from '../bus/types.js';
 import type { SkillLearner } from '../learner/learner.js';
-import { loadProfileMd, findUserProfile, sanitizeChatId } from '../users/user-resolver.js';
+import { loadProfileMd, findUserProfile, sanitizeChatId, loadSkillChannels } from '../users/user-resolver.js';
 import type { AgentContext } from '../agent/agent-resolver.js';
+import type { Database } from '../db/database.js';
+import { getKnownChats } from '../db/known-chats.js';
 import { localDate, localDateWithDay, localTimestamp, getTimezone } from '../utils/date.js';
 
 /** Split system prompt into cacheable static part and per-request dynamic part. */
@@ -21,6 +23,7 @@ interface ContextDeps {
   memory: MemoryStore;
   config: JanusConfig;
   learner?: SkillLearner;
+  database?: Database;
 }
 
 /**
@@ -138,6 +141,15 @@ export class ContextBuilder {
       if (userSection) dynamicParts.push(userSection);
     }
 
+    // Skill channel routing — known chats + preferences (per-user)
+    if (opts.user?.userId) {
+      const knownChats = this.buildKnownChatsSection(opts.user.userId);
+      if (knownChats) dynamicParts.push(knownChats);
+
+      const skillChannels = await this.buildSkillChannelsSection(opts.user.userId);
+      if (skillChannels) dynamicParts.push(skillChannels);
+    }
+
     if (!minimal && !background) {
       // 7. Memory (hybrid: FTS5 search if available, else full dump)
       const memoryAgentId = opts.agentCtx && !opts.agentCtx.memoryShared ? opts.agentCtx.id : undefined;
@@ -191,6 +203,34 @@ export class ContextBuilder {
       lines.push(profile.trim());
     }
     return `<user>\n${lines.join('\n')}\n</user>`;
+  }
+
+  private buildKnownChatsSection(userId: string): string | null {
+    if (!this.deps.database) return null;
+    const chats = getKnownChats(this.deps.database, userId);
+    if (chats.length === 0) return null;
+
+    const lines = chats.map(c => {
+      const label = c.chatName ? ` (${c.chatType ?? 'chat'}: ${c.chatName})` : '';
+      return `- ${c.channel}:${c.chatId}${label}`;
+    });
+    return `<your_chats>\n${lines.join('\n')}\n</your_chats>`;
+  }
+
+  private async buildSkillChannelsSection(userId: string): Promise<string | null> {
+    const prefs = await loadSkillChannels(userId, this.deps.config.workspace.dir);
+    const entries = Object.entries(prefs);
+    if (entries.length === 0) return null;
+
+    const lines = entries.map(([skill, pref]) => {
+      const label = pref.chatName ? ` (${pref.chatName})` : '';
+      return `- ${skill} → ${pref.channel}:${pref.chatId}${label}`;
+    });
+    lines.push('');
+    lines.push('When a skill has a preferred channel different from the current chat:');
+    lines.push('- Send a brief redirect note on current chat');
+    lines.push('- Use the message tool to deliver the full response to the preferred channel');
+    return `<skill_channels>\n${lines.join('\n')}\n</skill_channels>`;
   }
 
   private filterTools(

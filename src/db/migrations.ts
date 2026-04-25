@@ -139,4 +139,17 @@ export const migrations: string[] = [
   `
 ALTER TABLE cron_jobs ADD COLUMN targets TEXT;
 `,
+
+  // Migration 14: user_known_chats — per-user channel/chat discovery for skill routing
+  `
+CREATE TABLE IF NOT EXISTS user_known_chats (
+  user_id TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  chat_name TEXT,
+  chat_type TEXT,
+  last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, channel, chat_id)
+);
+`,
 ];

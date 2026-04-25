@@ -208,7 +208,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   // 6. Sessions, Skills, Context
   const sessions = new SessionManager(config);
   const skills = new SkillLoader(config);
-  const context = new ContextBuilder({ skills, memory, config, learner });
+  const context = new ContextBuilder({ skills, memory, config, learner, database: db ?? undefined });
 
   // 7. Cron service (requires database)
   const cronService = db ? new CronService(db, bus, config) : null;

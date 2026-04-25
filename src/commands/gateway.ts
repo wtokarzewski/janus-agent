@@ -99,7 +99,7 @@ export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void>
       app.tools.register(new InviteTool(inviteStore));
 
       channelPromises.push(
-        tg.start(app.bus, config, signal, bot, { agent: app.agent, subagentRegistry: app.subagentRegistry, inviteStore }).catch((err) => {
+        tg.start(app.bus, config, signal, bot, { agent: app.agent, subagentRegistry: app.subagentRegistry, inviteStore, database: app.db ?? undefined }).catch((err) => {
           log.error(`Gateway: Telegram channel failed: ${err instanceof Error ? err.message : err}`);
         }),
       );

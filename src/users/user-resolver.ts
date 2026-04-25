@@ -179,3 +179,27 @@ export function ensureAgentDir(agentId: string, workspaceDir: string): void {
       log.warn(`Failed to ensure agent dir for ${agentId}: ${err instanceof Error ? err.message : String(err)}`);
     });
 }
+
+/** Per-skill channel preference entry. */
+export interface SkillChannelPref {
+  channel: string;
+  chatId: string;
+  chatName?: string;
+  setAt?: string;
+}
+
+/** Load per-user skill channel preferences from skill-channels.json. */
+export async function loadSkillChannels(
+  userId: string,
+  workspaceDir: string,
+): Promise<Record<string, SkillChannelPref>> {
+  const filePath = resolve(workspaceDir, '.janus', 'users', userId, 'skill-channels.json');
+  try {
+    const raw = await readFile(filePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+    return parsed as Record<string, SkillChannelPref>;
+  } catch {
+    return {};
+  }
+}

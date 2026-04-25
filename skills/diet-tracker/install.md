@@ -32,7 +32,16 @@ Setup is a **conversation**, not a form. Ask one question at a time, react to an
 8. **Activity** — what they do, how often, any limitations (injury, rehab)
 9. **Supplements** — what they take daily
 10. **Schedule** — when do they wake up? When do they want the weight reminder? Propose a time (wake-up + 15 min) but let the user decide — some people weigh themselves immediately, others after coffee. Check existing heartbeats in their HEARTBEAT.md and avoid conflicts with other reminders. Adapt all ping times to their routine.
-11. **Chat** — which Telegram chat to use (private or group), get chatId
+11. **Chat** — which channel to use for diet updates:
+    - Show available chats from `<your_chats>` (if present)
+    - Default = current chat (the one user is writing from)
+    - Ask: "Where should diet updates go? Default: **this chat**"
+    - Save choice to `.janus/users/{userId}/skill-channels.json` via `write_file`:
+      ```json
+      { "diet-tracker": { "channel": "...", "chatId": "...", "chatName": "...", "setAt": "..." } }
+      ```
+      If file exists, read first and merge — don't overwrite other skills' entries.
+    - Use the chosen chatId for all heartbeat `chat:` fields in the next step
 
 You don't have to ask everything at once. If the user volunteers info, don't repeat the question. If you already know something from PROFILE.md — confirm instead of asking again. Users often give info out of order — that's fine, just track what you have and what's missing.
 
