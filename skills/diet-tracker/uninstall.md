@@ -36,3 +36,11 @@ If user explicitly says "delete data too" / "clean everything":
 
 To reinstall: "install diet"
 ```
+
+## Channel preference cleanup
+
+Remove the `diet-tracker` entry from `.janus/users/{userId}/skill-channels.json`:
+1. Read the file
+2. Delete the `diet-tracker` key
+3. Write back (preserve other skills' entries)
+4. If no entries remain, delete the file

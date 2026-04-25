@@ -38,6 +38,48 @@ Communicate with the user in their preferred language (from PROFILE.md). All rep
 - **Calculate BEFORE reporting.** Always add the new item to totals first, then generate the report. Never send a report with stale numbers.
 - **Stick to the defined formats.** Use progress bars (▓░), not tables or custom layouts. Consistency matters — the user should recognize the format instantly.
 
+## Channel Preference
+
+This skill supports dedicated channel routing via `skill-channels.json`.
+
+### Checking preference
+Before any output, check `<skill_channels>` in the system prompt:
+- If `diet-tracker` has a preferred channel → use it for ALL output
+- If no preference → trigger first-use setup (see below)
+
+### First use (no preference)
+1. Check if this is a fresh install or existing user without preference
+2. Default suggestion = current chat (the one user is writing from)
+3. Show other available chats from `<your_chats>` if present
+4. Ask: "Where should diet updates go? Default: **this chat** ([name])"
+5. Save to `skill-channels.json` via `write_file`:
+   ```json
+   {
+     "diet-tracker": {
+       "channel": "[channel]",
+       "chatId": "[chatId]",
+       "chatName": "[name]",
+       "setAt": "[ISO timestamp]"
+     }
+   }
+   ```
+   Path: `.janus/users/{userId}/skill-channels.json`
+   If file exists, read first and merge (don't overwrite other skills' preferences).
+
+### Routing rules
+- **Preferred channel = current chat:** respond normally
+- **Preferred channel ≠ current chat:** brief redirect on current chat ("→ [channel name]"), then send full response via `message` tool to preferred channel
+- **No preference set + first interaction:** ask user (first-use flow above)
+
+### Changing channel
+User says "change diet channel to X" or "move diet to [chat name]":
+1. Update `skill-channels.json`
+2. Update ALL diet heartbeat entries in user's `HEARTBEAT.md` — change `chat:` field
+3. Confirm: "Diet → [new channel]. Heartbeats updated."
+
+### Heartbeat alignment
+When creating or updating heartbeats (install, channel change), always set `- chat: {preferredChatId}` using the value from `skill-channels.json`. Never leave heartbeat chat field empty for this skill.
+
 ## Day Types
 
 Users can define multiple day types, each with its own calorie/macro targets. Common examples:
