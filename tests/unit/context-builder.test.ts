@@ -2,8 +2,8 @@
  * Tests for ContextBuilder — full vs minimal prompt mode.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { ContextBuilder } from '../../src/context/context-builder.js';
 import { MemoryStore } from '../../src/memory/memory-store.js';
@@ -469,5 +469,123 @@ describe('ContextBuilder static/dynamic split', () => {
 
     // Static parts should be identical (no timestamp or other dynamic content)
     expect(first.staticPart).toBe(second.staticPart);
+  });
+});
+
+describe('ContextBuilder skill channel preferences', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+  });
+
+  it('injects <your_chats> when user has known chats in database', async () => {
+    const { Database } = await import('../../src/db/database.js');
+    const { upsertKnownChat } = await import('../../src/db/known-chats.js');
+    const dbPath = join(tempDir, '.janus', 'test.db');
+    mkdirSync(join(tempDir, '.janus'), { recursive: true });
+    const db = new Database(dbPath);
+
+    upsertKnownChat(db, {
+      userId: 'alice',
+      channel: 'telegram',
+      chatId: '111',
+      chatName: 'Alice DM',
+      chatType: 'private',
+    });
+    upsertKnownChat(db, {
+      userId: 'alice',
+      channel: 'telegram',
+      chatId: '-1001234567890',
+      chatName: 'Dieta',
+      chatType: 'supergroup',
+    });
+
+    const config = createTestConfig({
+      workspace: { dir: tempDir },
+      users: [{ id: 'alice', name: 'Alice', identities: [{ channel: 'telegram', channelUserId: '111' }] }],
+    });
+    const memory = new MemoryStore(config);
+    const skills = new SkillLoader(config);
+    const builder = new ContextBuilder({ skills, memory, config, database: db });
+
+    const { dynamicPart } = await builder.build({
+      channel: 'telegram',
+      chatId: '111',
+      tools: [],
+      user: { userId: 'alice', name: 'Alice' },
+    });
+
+    expect(dynamicPart).toContain('<your_chats>');
+    expect(dynamicPart).toContain('telegram:111');
+    expect(dynamicPart).toContain('Alice DM');
+    expect(dynamicPart).toContain('telegram:-1001234567890');
+    expect(dynamicPart).toContain('Dieta');
+
+    db.close();
+  });
+
+  it('injects <skill_channels> when user has preferences', async () => {
+    const userDir = join(tempDir, '.janus', 'users', 'alice');
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(join(userDir, 'skill-channels.json'), JSON.stringify({
+      'diet-tracker': {
+        channel: 'telegram',
+        chatId: '-1001234567890',
+        chatName: 'Dieta',
+      },
+    }));
+
+    const config = createTestConfig({
+      workspace: { dir: tempDir },
+      users: [{ id: 'alice', name: 'Alice', identities: [{ channel: 'telegram', channelUserId: '111' }] }],
+    });
+    const memory = new MemoryStore(config);
+    const skills = new SkillLoader(config);
+    const builder = new ContextBuilder({ skills, memory, config });
+
+    const { dynamicPart } = await builder.build({
+      channel: 'telegram',
+      chatId: '111',
+      tools: [],
+      user: { userId: 'alice', name: 'Alice' },
+    });
+
+    expect(dynamicPart).toContain('<skill_channels>');
+    expect(dynamicPart).toContain('diet-tracker');
+    expect(dynamicPart).toContain('telegram:-1001234567890');
+    expect(dynamicPart).toContain('Dieta');
+  });
+
+  it('omits <your_chats> when no database provided', async () => {
+    const config = createTestConfig({ workspace: { dir: tempDir } });
+    const memory = new MemoryStore(config);
+    const skills = new SkillLoader(config);
+    const builder = new ContextBuilder({ skills, memory, config });
+
+    const { dynamicPart } = await builder.build({
+      channel: 'telegram',
+      chatId: '111',
+      tools: [],
+      user: { userId: 'alice', name: 'Alice' },
+    });
+
+    expect(dynamicPart).not.toContain('<your_chats>');
+  });
+
+  it('omits <skill_channels> when user has no preferences file', async () => {
+    const config = createTestConfig({ workspace: { dir: tempDir } });
+    const memory = new MemoryStore(config);
+    const skills = new SkillLoader(config);
+    const builder = new ContextBuilder({ skills, memory, config });
+
+    const { dynamicPart } = await builder.build({
+      channel: 'telegram',
+      chatId: '111',
+      tools: [],
+      user: { userId: 'alice', name: 'Alice' },
+    });
+
+    expect(dynamicPart).not.toContain('<skill_channels>');
   });
 });
