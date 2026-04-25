@@ -9,6 +9,8 @@ import { resolveUser, autoIdentifyUser, deriveChannelAllowlist } from '../users/
 import type { InviteStore } from '../invites/invite-store.js';
 import { saveConfig } from '../config/config.js';
 import { ensureUserDir, ensureChatDir } from '../users/user-resolver.js';
+import type { Database } from '../db/database.js';
+import { upsertKnownChat } from '../db/known-chats.js';
 import { transcribeVoice } from './voice-transcribe.js';
 import { synthesizeVoice } from './voice-synthesize.js';
 import * as log from '../utils/logger.js';
@@ -53,7 +55,7 @@ export class TelegramChannel {
     return this.bot;
   }
 
-  async start(bus: MessageBus, config: JanusConfig, signal: AbortSignal, externalBot?: Bot, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry; inviteStore?: InviteStore }): Promise<void> {
+  async start(bus: MessageBus, config: JanusConfig, signal: AbortSignal, externalBot?: Bot, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry; inviteStore?: InviteStore; database?: Database }): Promise<void> {
     const tg = config.telegram;
 
     if (!externalBot && !tg.token) {
@@ -72,6 +74,18 @@ export class TelegramChannel {
 
     // Runtime allowlist — users added via invite links (survives until restart, also saved to config)
     const runtimeAllowlist = new Set<string>();
+
+    /** Track known chats for skill channel routing. */
+    const trackChat = (userId: string | undefined, chatId: string, chatName: string | undefined, chatType: string | undefined) => {
+      if (!userId || !opts?.database) return;
+      upsertKnownChat(opts.database, {
+        userId,
+        channel: 'telegram',
+        chatId,
+        chatName: chatName ?? null,
+        chatType: chatType ?? null,
+      });
+    };
 
     // Register outbound handler — sends responses back to Telegram
     bus.registerHandler('telegram', async (msg: OutboundMessage) => {
@@ -326,6 +340,12 @@ export class TelegramChannel {
       const resolved = resolveUser('telegram', channelUserId, channelUsername, config)
         ?? autoIdentifyUser('telegram', channelUserId, channelUsername, ctx.from?.first_name, config.workspace.dir);
 
+      // Track known chat for skill channel routing
+      const chatDisplayName = ctx.chat.type === 'private'
+        ? ctx.chat.first_name
+        : (ctx.chat as { title?: string }).title;
+      trackChat(resolved?.userId, baseChatId, chatDisplayName, ctx.chat.type);
+
       // Determine scope
       let scope: InboundMessage['scope'];
       if (ctx.chat.type === 'private' && resolved) {
@@ -518,6 +538,12 @@ export class TelegramChannel {
       const resolved = resolveUser('telegram', channelUserId, channelUsername, config)
         ?? autoIdentifyUser('telegram', channelUserId, channelUsername, ctx.from?.first_name, config.workspace.dir);
 
+      // Track known chat for skill channel routing
+      const voiceChatName = ctx.chat.type === 'private'
+        ? ctx.chat.first_name
+        : (ctx.chat as { title?: string }).title;
+      trackChat(resolved?.userId, baseChatId, voiceChatName, ctx.chat.type);
+
       let scope: InboundMessage['scope'];
       if (ctx.chat.type === 'private' && resolved) {
         scope = { kind: 'user', id: resolved.userId };
@@ -632,6 +658,12 @@ export class TelegramChannel {
       const channelUsername = ctx.from?.username ?? undefined;
       const resolved = resolveUser('telegram', channelUserId, channelUsername, config)
         ?? autoIdentifyUser('telegram', channelUserId, channelUsername, ctx.from?.first_name, config.workspace.dir);
+
+      // Track known chat for skill channel routing
+      const photoChatName = ctx.chat.type === 'private'
+        ? ctx.chat.first_name
+        : (ctx.chat as { title?: string }).title;
+      trackChat(resolved?.userId, baseChatId, photoChatName, ctx.chat.type);
 
       let scope: InboundMessage['scope'];
       if (ctx.chat.type === 'private' && resolved) {
