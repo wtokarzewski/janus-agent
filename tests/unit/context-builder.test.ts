@@ -2,8 +2,8 @@
  * Tests for ContextBuilder — full vs minimal prompt mode.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ContextBuilder } from '../../src/context/context-builder.js';
 import { MemoryStore } from '../../src/memory/memory-store.js';
