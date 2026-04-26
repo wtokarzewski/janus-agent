@@ -1,7 +1,7 @@
 ---
 name: diet-tracker
 description: "Diet tracking — logging meals, calories/macros, weigh-ins, daily summaries, weekly reports. Use when user mentions food, weight, calories, macros, diet, or asks about their food diary."
-version: "2.0.0"
+version: "2.1.0"
 always: false
 ---
 
