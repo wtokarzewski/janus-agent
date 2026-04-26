@@ -935,7 +935,7 @@ export class AgentLoop {
         const maxRetries = this.deps.config.agent.toolRetries;
         let rawResult = await this.deps.tools.execute(tc.function.name, args, reqCtx);
 
-        for (let attempt = 1; attempt < maxRetries && rawResult.startsWith('Error:'); attempt++) {
+        for (let attempt = 1; attempt < maxRetries && rawResult.startsWith('Error:') && !isDeterministicError(rawResult); attempt++) {
           log.warn(`Tool "${tc.function.name}" failed (attempt ${attempt}/${maxRetries}), retrying...`);
           await sleep(500 * attempt, signal);
           rawResult = await this.deps.tools.execute(tc.function.name, args, reqCtx);
@@ -1465,6 +1465,20 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
     promise,
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
   ]);
+}
+
+/** Errors that will never resolve by retrying with the same arguments. */
+const DETERMINISTIC_ERROR_PATTERNS = [
+  'not found',     // edit_file old_string not found, file not found
+  'not unique',    // edit_file old_string matches multiple locations
+  'ENOENT',        // file does not exist
+  'EACCES',        // permission denied
+  'EISDIR',        // expected file, got directory
+  'ENOTDIR',       // expected directory in path
+];
+
+export function isDeterministicError(result: string): boolean {
+  return DETERMINISTIC_ERROR_PATTERNS.some(p => result.includes(p));
 }
 
 function summarizeArgs(args: Record<string, unknown>): string {
