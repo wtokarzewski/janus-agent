@@ -909,6 +909,7 @@ export class TelegramChannel {
 
     this.streamStates.delete(chatId);
     this.rateLimitUntil.delete(chatId);
+    this.stopTyping(chatId);
   }
 
   private async startWithRetry(bot: Bot, signal: AbortSignal): Promise<void> {
