@@ -68,9 +68,11 @@ Before any output, check `<skill_channels>` in the system prompt:
    If file exists, read first and merge (don't overwrite other skills' preferences).
 
 ### Routing rules
+- **ALL diet output goes ONLY to the preferred channel.** This includes: DAY STATUS, Day Close, weekly summaries, weigh-in responses, heartbeat messages, meal logs — everything. Never write diet/weight/supplement/exercise content to any other channel, regardless of context.
 - **Preferred channel = current chat:** respond normally
 - **Preferred channel ≠ current chat:** brief redirect on current chat ("→ [channel name]"), then send full response via `message` tool to preferred channel
 - **No preference set + first interaction:** ask user (first-use flow above)
+- **Non-diet channels:** if you are responding on a channel that is NOT the diet channel (e.g. morning briefing, evening reflection, general chat), do NOT include any diet, weight, supplement, exercise, or food diary information — even if you have access to that data.
 
 ### Changing channel
 User says "change diet channel to X" or "move diet to [chat name]":
@@ -80,9 +82,6 @@ User says "change diet channel to X" or "move diet to [chat name]":
 
 ### Heartbeat alignment
 When creating or updating heartbeats (install, channel change), always set `- chat: {preferredChatId}` using the value from `skill-channels.json`. Never leave heartbeat chat field empty for this skill.
-
-### Heartbeat exclusion enforcement
-Generic heartbeats in the workspace-level `HEARTBEAT.md` (project root) like "Morning briefing" or "Evening reflection" must NOT include diet/weight/supplement/exercise content. During install or channel change, read the workspace `HEARTBEAT.md` and use `edit_file` to append to each generic task: `Do NOT include any diet, weight, supplement, exercise, or food diary information — those belong exclusively to the dedicated diet channel.` Skip tasks that already have this exclusion.
 
 ## Day Types
 
