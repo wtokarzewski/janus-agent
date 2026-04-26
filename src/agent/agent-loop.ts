@@ -1271,10 +1271,17 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     const session = await this.deps.sessions.getOrCreate(sessionKey);
     const previousSummary = session.metadata.summary;
 
+    // If previous summary is too short it's likely corrupt from a broken
+    // summarization cycle — discard and do a fresh initial summary.
+    const MIN_USABLE_SUMMARY_TOKENS = 100;
+    const prevTokens = previousSummary ? Math.ceil(previousSummary.length / 2.5) : 0;
     let systemContent: string;
-    if (previousSummary) {
+    if (previousSummary && prevTokens >= MIN_USABLE_SUMMARY_TOKENS) {
       systemContent = loadPrompt('summarization/update', { previousSummary });
     } else {
+      if (previousSummary && prevTokens < MIN_USABLE_SUMMARY_TOKENS) {
+        log.warn(`[${sessionKey}] Previous summary too short (${prevTokens} tokens), using initial prompt instead`);
+      }
       systemContent = loadPrompt('summarization/initial');
     }
 
