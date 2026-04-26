@@ -90,8 +90,8 @@ describe('Token counting and emergency compression', () => {
   });
 
   it('should trigger summarization when token estimate exceeds threshold', async () => {
-    // Summary must be >10% of input length to avoid triggering fallback chain retry
-    const mockSummary = '## Goal\nUser testing.\n## Established Facts\n- Fact one established.\n- Fact two established.\n## Progress\n### Done\n- Completed task.\n## Key Decisions\n- Decision made.\n## Critical Context\nImportant context preserved here for continuity.\n## Identifiers\nNone';
+    // Summary must be >500 chars (~200 tokens) to avoid triggering fallback chain retry
+    const mockSummary = '## Goal\nUser is testing the diet tracking system with Janus. Currently logging meals on the dedicated diet channel.\n\n## Constraints & Preferences\n- Low carb approach with IF window 10:00-22:00\n- Target: 1743 kcal/day, protein 130g, fat 120g, carbs 50g, fiber 25g\n- Gym 3x/week (Mon/Wed/Fri) with cardio\n\n## Established Facts\n- Starting weight: 80.8 kg on 2026-04-20\n- Target weight: 75 kg by 2026-06-27\n- BMR: 1800 kcal, TDEE with exercise: 2290 kcal\n\n## Progress\n### Done\n- Completed week 1 of diet tracking\n\n## Key Decisions\n- Decided on low carb approach based on past experience\n\n## Open TODOs\n- Track body measurements weekly\n\n## Critical Context\nDiet day 7. Cheat meal today (bread sandwich). BF trending down.\n\n## Identifiers\nNone';
     const mock = new MockProvider([
       { content: 'Response' },
       { content: mockSummary }, // summarization call
@@ -135,8 +135,8 @@ describe('Token counting and emergency compression', () => {
   });
 
   it('should flush memory before summarization when MemoryStore is available', async () => {
-    // Summary must be >10% of input length to avoid triggering fallback chain retry
-    const mockSummary = '## Goal\nUser testing.\n## Established Facts\n- Decision: use SQLite for storage.\n- API limit is 100 req/s.\n## Progress\n### Done\n- Completed task.\n## Key Decisions\n- Decision made.\n## Critical Context\nImportant context preserved here for continuity.\n## Identifiers\nNone';
+    // Summary must be >500 chars (~200 tokens) to avoid triggering fallback chain retry
+    const mockSummary = '## Goal\nUser is testing the diet tracking system with Janus. Currently logging meals on the dedicated diet channel.\n\n## Constraints & Preferences\n- Low carb approach with IF window 10:00-22:00\n- Target: 1743 kcal/day, protein 130g, fat 120g, carbs 50g, fiber 25g\n- Gym 3x/week (Mon/Wed/Fri) with cardio\n\n## Established Facts\n- Starting weight: 80.8 kg on 2026-04-20\n- Target weight: 75 kg by 2026-06-27\n- BMR: 1800 kcal, TDEE with exercise: 2290 kcal\n\n## Progress\n### Done\n- Completed week 1 of diet tracking\n\n## Key Decisions\n- Decided on low carb approach based on past experience\n\n## Open TODOs\n- Track body measurements weekly\n\n## Critical Context\nDiet day 7. Cheat meal today (bread sandwich). BF trending down.\n\n## Identifiers\nNone';
     const mock = new MockProvider([
       { content: 'Response' },
       { content: mockSummary }, // summarization (reaches LLM first — fewer async steps)
