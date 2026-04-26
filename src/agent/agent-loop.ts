@@ -1,6 +1,6 @@
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
-import type { LLMMessage, ToolContentBlock, UserContentBlock } from '../llm/types.js';
+import type { LLMMessage, ToolCall, ToolContentBlock, UserContentBlock } from '../llm/types.js';
 import { userContentText } from '../llm/types.js';
 import type { ProviderRegistry } from '../llm/provider-registry.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
@@ -1237,12 +1237,33 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
       log.error(`[${sessionKey}] All flush attempts failed — proceeding with summarization.`);
     }
 
-    // Input filtering: only user + assistant (no tool results — they add noise)
-    const filtered = toSummarize.filter(m => m.role === 'user' || m.role === 'assistant');
-    const rawConversation = filtered.map(m => {
-      const content = 'content' in m ? m.content : '';
-      return `${m.role}: ${typeof content === 'string' ? content : '[multimodal]'}`;
-    }).join('\n');
+    // Build conversation text for summarization.
+    // Include tool interactions (truncated) — they carry essential context
+    // that the summarizer needs (file contents, data written, search results).
+    const TOOL_RESULT_MAX = 300;
+    const rawConversation = toSummarize.map(m => {
+      if (m.role === 'user') {
+        const content = 'content' in m ? m.content : '';
+        return `user: ${typeof content === 'string' ? content : userContentText(content as any)}`;
+      }
+      if (m.role === 'assistant') {
+        const msg = m as { content: string; tool_calls?: ToolCall[] };
+        const parts: string[] = [];
+        if (msg.content) parts.push(msg.content);
+        if (msg.tool_calls?.length) {
+          const calls = msg.tool_calls.map(tc => tc.function.name).join(', ');
+          parts.push(`[calls: ${calls}]`);
+        }
+        return `assistant: ${parts.join(' ')}`;
+      }
+      if (m.role === 'tool') {
+        const content = 'content' in m ? m.content : '';
+        const text = typeof content === 'string' ? content : userContentText(content as any);
+        const truncated = text.length > TOOL_RESULT_MAX ? text.slice(0, TOOL_RESULT_MAX) + '…' : text;
+        return `tool: ${truncated}`;
+      }
+      return '';
+    }).filter(Boolean).join('\n');
     // Anchor the summary with current date so temporal context survives summarization.
     const conversationText = `[Current date: ${localDateWithDay()}, time: ${localTimestamp()}]\n\n${rawConversation}`;
 
