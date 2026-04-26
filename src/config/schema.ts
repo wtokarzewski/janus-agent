@@ -191,6 +191,9 @@ const GatesSchema = z.object({
   enabled: z.boolean().default(true),
   execPatterns: z.array(z.string()).default([
     'rm\\s',
+    'del\\s',
+    'Remove-Item\\s',
+    'rmdir\\s',
     'git\\s+push',
     'git\\s+reset',
     'npm\\s+publish',

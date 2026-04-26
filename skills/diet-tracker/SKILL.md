@@ -34,6 +34,7 @@ Communicate with the user in their preferred language (from PROFILE.md). All rep
 - Weight: track weekly trend, don't react to daily fluctuations (creatine, water, salt)
 - Adapt explanation depth to user's experience level (noted in profile) — don't lecture a keto veteran about ketosis
 - The skill supports ANY diet approach — keto, low carb, standard, carnivore, Mediterranean, whatever the user chooses. Don't push a specific diet.
+- **Never delete food diary files.** To fix dates or correct data, use `edit_file` or `write_file` to update the existing file. Never use `exec` with `rm`, `del`, or any delete command on food diary files.
 - **One event = one report.** Never send both DAY STATUS and Day Close for the same food log. Pick the right format for the moment.
 - **Calculate BEFORE reporting.** Always add the new item to totals first, then generate the report. Never send a report with stale numbers.
 - **Stick to the defined formats.** Use progress bars (▓░), not tables or custom layouts. Consistency matters — the user should recognize the format instantly.
