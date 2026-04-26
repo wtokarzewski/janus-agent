@@ -888,10 +888,10 @@ export class AgentLoop {
         return { content: lastContent, iterations: i + 1, toolCalls: totalToolCalls, totalTokens, outcome: 'success' };
       }
 
-      // End current stream and show typing while tools execute
+      // Flush current stream text (keep state alive) and show typing while tools execute
       if (streamCtx) {
         if (this.deps.config.streaming?.enabled ?? true) {
-          this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
+          this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_flush');
         }
         this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'typing');
       }

@@ -116,6 +116,13 @@ export class TelegramChannel {
         return;
       }
 
+      if (msg.type === 'stream_flush') {
+        const pending = this.chunkQueues.get(msg.chatId);
+        if (pending) await pending.catch(() => {});
+        await this.flushStream(bot, msg.chatId);
+        return;
+      }
+
       if (msg.type === 'stream_end') {
         const pending = this.chunkQueues.get(msg.chatId);
         if (pending) await pending.catch(() => {});

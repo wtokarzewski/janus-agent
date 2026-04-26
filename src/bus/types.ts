@@ -47,7 +47,7 @@ export interface OutboundMessage {
   channel: string;
   content: string;
   timestamp: Date;
-  type?: 'message' | 'chunk' | 'stream_end' | 'typing' | 'typing_stop';
+  type?: 'message' | 'chunk' | 'stream_end' | 'stream_flush' | 'typing' | 'typing_stop';
   /** Absolute path to file for send_file tool. */
   filePath?: string;
   /** How to send the file (affects Telegram API method). */
