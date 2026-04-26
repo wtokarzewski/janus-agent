@@ -1312,10 +1312,12 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
 
     // Fallback chain: if summary is disproportionately short relative to input,
     // retry with lower temperature, then fall back to aggressive fact-extraction prompt.
-    // Restores the safety net removed in Phase 14; uses proportional check instead of
-    // the old keyword-based heuristic.
+    // Safety net: retry if summary is suspiciously short.
+    // Use absolute minimum (200 tokens) — any valid summary should exceed this.
+    // Proportional checks (10%) were too aggressive and triggered on good summaries.
+    const MIN_SUMMARY_TOKENS = 200;
     let summaryTokens = Math.ceil(summary.length / 2.5);
-    const isTooShort = inputTokens > 500 && summaryTokens < inputTokens * 0.1;
+    const isTooShort = inputTokens > 500 && summaryTokens < MIN_SUMMARY_TOKENS;
 
     if (isTooShort) {
       // Step 1: retry same prompt with temperature 0 (more deterministic)
@@ -1342,7 +1344,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
       }
 
       // Step 2: if still too short, aggressive fact-extraction prompt
-      if (summaryTokens < inputTokens * 0.1) {
+      if (summaryTokens < MIN_SUMMARY_TOKENS) {
         log.warn(`[${sessionKey}] Summary still too short (${summaryTokens} tokens), trying aggressive prompt`);
         try {
           const aggressiveResponse = await withTimeout(this.deps.llm.chat({
