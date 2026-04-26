@@ -1306,6 +1306,10 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
 
     let summary = summaryResponse.content;
 
+    // Debug: log first 200 chars of summary + conversation text size to diagnose short output
+    log.info(`[${sessionKey}] Summarization: output preview (${summary.length} chars): ${summary.slice(0, 200).replace(/\n/g, '\\n')}`);
+    log.info(`[${sessionKey}] Summarization: conversation text ${conversationText.length} chars, system prompt ${systemContent.length} chars`);
+
     // Fallback chain: if summary is disproportionately short relative to input,
     // retry with lower temperature, then fall back to aggressive fact-extraction prompt.
     // Restores the safety net removed in Phase 14; uses proportional check instead of
