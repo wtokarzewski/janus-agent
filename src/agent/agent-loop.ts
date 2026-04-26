@@ -1310,65 +1310,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     log.info(`[${sessionKey}] Summarization: output preview (${summary.length} chars): ${summary.slice(0, 200).replace(/\n/g, '\\n')}`);
     log.info(`[${sessionKey}] Summarization: conversation text ${conversationText.length} chars, system prompt ${systemContent.length} chars`);
 
-    // Fallback chain: if summary is disproportionately short relative to input,
-    // retry with lower temperature, then fall back to aggressive fact-extraction prompt.
-    // Safety net: retry if summary is suspiciously short.
-    // Use absolute minimum (200 tokens) — any valid summary should exceed this.
-    // Proportional checks (10%) were too aggressive and triggered on good summaries.
-    const MIN_SUMMARY_TOKENS = 200;
-    let summaryTokens = Math.ceil(summary.length / 2.5);
-    const isTooShort = inputTokens > 500 && summaryTokens < MIN_SUMMARY_TOKENS;
-
-    if (isTooShort) {
-      // Step 1: retry same prompt with temperature 0 (more deterministic)
-      log.warn(`[${sessionKey}] Summary too short (${summaryTokens}/${inputTokens} tokens, ${Math.round(summaryTokens / inputTokens * 100)}%), retrying with temp=0`);
-      try {
-        const retryResponse = await withTimeout(this.deps.llm.chat({
-          model: '',
-          messages: [
-            { role: 'system', content: systemContent },
-            { role: 'user', content: conversationText },
-          ],
-          temperature: 0,
-          maxTokens: summaryMaxTokens,
-        }, 'summarize'), 90_000, 'Summarization retry timed out');
-        logTokenUsage('summarize-retry', retryResponse.usage, retryResponse.provider, retryResponse.model);
-        const retryTokens = Math.ceil(retryResponse.content.length / 2.5);
-        if (retryTokens > summaryTokens) {
-          log.info(`[${sessionKey}] Summary retry improved: ${summaryTokens} → ${retryTokens} tokens`);
-          summary = retryResponse.content;
-          summaryTokens = retryTokens;
-        }
-      } catch (err) {
-        log.warn(`[${sessionKey}] Summary retry failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-
-      // Step 2: if still too short, aggressive fact-extraction prompt
-      if (summaryTokens < MIN_SUMMARY_TOKENS) {
-        log.warn(`[${sessionKey}] Summary still too short (${summaryTokens} tokens), trying aggressive prompt`);
-        try {
-          const aggressiveResponse = await withTimeout(this.deps.llm.chat({
-            model: '',
-            messages: [
-              { role: 'system', content: loadPrompt('summarization/aggressive') },
-              { role: 'user', content: conversationText },
-            ],
-            temperature: 0,
-            maxTokens: summaryMaxTokens,
-          }, 'summarize'), 90_000, 'Aggressive summarization timed out');
-          logTokenUsage('summarize-aggressive', aggressiveResponse.usage, aggressiveResponse.provider, aggressiveResponse.model);
-          const aggressiveTokens = Math.ceil(aggressiveResponse.content.length / 2.5);
-          if (aggressiveTokens > summaryTokens) {
-            log.info(`[${sessionKey}] Aggressive summary improved: ${summaryTokens} → ${aggressiveTokens} tokens`);
-            summary = aggressiveResponse.content;
-            summaryTokens = aggressiveTokens;
-          }
-        } catch (err) {
-          log.warn(`[${sessionKey}] Aggressive summarization failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    }
-
+    const summaryTokens = Math.ceil(summary.length / 2.5);
     log.info(`[${sessionKey}] Summarization: ${summaryTokens} tokens (${Math.round(summaryTokens / inputTokens * 100)}% of input)`);
 
     await this.deps.sessions.summarize(sessionKey, summary, keepRecentTokens);
