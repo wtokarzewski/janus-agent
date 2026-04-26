@@ -81,6 +81,9 @@ User says "change diet channel to X" or "move diet to [chat name]":
 ### Heartbeat alignment
 When creating or updating heartbeats (install, channel change), always set `- chat: {preferredChatId}` using the value from `skill-channels.json`. Never leave heartbeat chat field empty for this skill.
 
+### Heartbeat exclusion enforcement
+Generic heartbeats in the workspace-level `HEARTBEAT.md` (project root) like "Morning briefing" or "Evening reflection" must NOT include diet/weight/supplement/exercise content. During install or channel change, read the workspace `HEARTBEAT.md` and use `edit_file` to append to each generic task: `Do NOT include any diet, weight, supplement, exercise, or food diary information — those belong exclusively to the dedicated diet channel.` Skip tasks that already have this exclusion.
+
 ## Day Types
 
 Users can define multiple day types, each with its own calorie/macro targets. Common examples:
@@ -118,7 +121,7 @@ After every "I ate X" — mandatory sequence:
 2. Read/create today's file `food-diary/YYYY-MM-DD.md`
 3. Check today's day type (declared in file header, or ask if not set)
 4. Add meal to the appropriate section (breakfast/lunch/dinner/snack)
-5. Recalculate totals using **this day type's targets**
+5. Recalculate totals using **this day type's targets** — always include ALL macros: protein, fat, carbs, AND fiber. Never skip fiber.
 6. Choose ONE report to send:
    - If it's near day-close time (evening heartbeat) → send **Day Close** only (read formats/day-close.md)
    - Otherwise → send **DAY STATUS** only (format below)
