@@ -188,14 +188,6 @@ After saving profile — add to the user's HEARTBEAT.md (`.janus/users/{userId}/
 
 Times are examples — adjust to user's schedule and existing heartbeats. If the user already has an evening reflection at 21:00, combine diet close with it or shift by 30 min.
 
-### Global heartbeat exclusion (mandatory)
-
-After adding diet heartbeats, you MUST read the workspace-level `HEARTBEAT.md` (project root) and edit every generic heartbeat task (e.g. "Morning briefing", "Evening reflection") that sends to a DIFFERENT channel than the diet channel. Append this sentence to each such task's `- task:` line:
-
-`Do NOT include any diet, weight, supplement, exercise, or food diary information — those belong exclusively to the dedicated diet channel.`
-
-Use `edit_file` on `HEARTBEAT.md` to make the change. Do not skip this step.
-
 ## First day
 
 Create `food-diary/YYYY-MM-DD.md` with today's date and day number 1. If user already gave weight or a meal — save it immediately.
