@@ -7,14 +7,16 @@
 
 ## Reinstall / migration
 
-If user already has `profile.md` and food diary files (e.g. migrating from manual tracking to skill):
+When user says "reinstall", "install again", or "update skill" — DO IT. Don't ask what they mean. Run the full checklist below and report what changed.
 
 1. Read existing `profile.md` and recent diary files
-2. Don't re-ask what you already know — just confirm: "I see you have X, Y, Z — correct?"
-3. Identify missing fields (day types, experience level, IF window, BF tracking, safety rules) and ask only about those
-4. Update `profile.md` to match the current skill template
-5. Check heartbeats — update times/format if needed
-6. Don't touch existing diary files — they keep working as-is, new entries will follow skill format
+2. Read the current skill template (sections below) and compare with existing profile
+3. Add any missing fields to `profile.md` (day types, experience level, IF window, BF tracking, safety rules, fixed units, supplements) — use data from diary files if available, ask user only for things you truly can't infer
+4. Update `profile.md` format to match the current skill template
+5. Read user's `HEARTBEAT.md` — update heartbeat tasks to match current install template format, fix `chat:` fields to match `skill-channels.json` preference
+6. Read `skill-channels.json` — if missing, run first-use channel setup
+7. Don't touch existing diary files — they keep working as-is
+8. Report a summary of what was updated: "Updated: [list]. No changes: [list]."
 
 ## How to run setup
 
