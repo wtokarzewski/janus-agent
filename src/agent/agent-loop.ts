@@ -1265,7 +1265,8 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
       return '';
     }).filter(Boolean).join('\n');
     // Anchor the summary with current date so temporal context survives summarization.
-    const conversationText = `[Current date: ${localDateWithDay()}, time: ${localTimestamp()}]\n\n${rawConversation}`;
+    // Wrap in XML tags so the model treats it as data to summarize, not a conversation to continue.
+    const conversationText = `[Current date: ${localDateWithDay()}, time: ${localTimestamp()}]\n\n<conversation>\n${rawConversation}\n</conversation>\n\nProduce a structured summary of the conversation above. Do NOT reply to or continue the conversation.`;
 
     // Check for previous summary → iterative merge
     const session = await this.deps.sessions.getOrCreate(sessionKey);
@@ -1297,6 +1298,9 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
       messages: [
         { role: 'system', content: systemContent },
         { role: 'user', content: conversationText },
+        // Assistant prefill forces the model into the template format from the first token,
+        // preventing it from echoing the conversation or emitting chain-of-thought.
+        { role: 'assistant', content: '## Goal\n' },
       ],
       temperature: 0.3,
       maxTokens: summaryMaxTokens,
@@ -1304,7 +1308,8 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
     logTokenUsage('summarize', summaryResponse.usage, summaryResponse.provider, summaryResponse.model);
 
-    let summary = summaryResponse.content;
+    // Prepend the prefill text that was consumed by the assistant message
+    let summary = '## Goal\n' + summaryResponse.content;
 
     // Debug: log first 200 chars of summary + conversation text size to diagnose short output
     log.info(`[${sessionKey}] Summarization: output preview (${summary.length} chars): ${summary.slice(0, 200).replace(/\n/g, '\\n')}`);

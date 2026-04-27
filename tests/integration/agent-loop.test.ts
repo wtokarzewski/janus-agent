@@ -580,7 +580,7 @@ describe('AgentLoop integration', () => {
     // mock.calls only contains successful calls (flush throws before reaching originalChat)
     const summarizeCall = mock.calls.find((c: ChatRequest) => {
       const sys = c.messages[0]?.content;
-      return typeof sys === 'string' && sys.includes('Summarize');
+      return typeof sys === 'string' && sys.includes('summarizer');
     });
     expect(summarizeCall).toBeTruthy();
   }, 15_000);
