@@ -146,3 +146,21 @@ describe('trimLastAssistantWhitespace', () => {
     expect(messages[0].content).toBe('\n## Goal\nbody text');
   });
 });
+
+describe('prefill error matching', () => {
+  // Documents the regex used in the chat() catch handler so future edits don't break it.
+  const PREFILL_ERROR_RE = /assistant message prefill|must end with a user message/i;
+
+  it('matches the canonical prefill rejection', () => {
+    expect(PREFILL_ERROR_RE.test('This model does not support assistant message prefill. The conversation must end with a user message.')).toBe(true);
+  });
+
+  it('matches the conversation-must-end variant alone', () => {
+    expect(PREFILL_ERROR_RE.test('messages: conversation must end with a user message')).toBe(true);
+  });
+
+  it('does not match unrelated 400 messages', () => {
+    expect(PREFILL_ERROR_RE.test('messages: final assistant content cannot end with trailing whitespace')).toBe(false);
+    expect(PREFILL_ERROR_RE.test('Invalid tool_choice value')).toBe(false);
+  });
+});
