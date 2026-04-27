@@ -7,6 +7,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Anthropic 400 "final assistant content cannot end with trailing whitespace" on summarization (provider now trims trailing whitespace from the final assistant text block before sending; prefills like `## Goal\n` are now safe)
+
 ## [0.14.0] - 2026-04-22
 
 ### Added
