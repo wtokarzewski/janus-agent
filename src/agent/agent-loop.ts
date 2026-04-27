@@ -731,6 +731,8 @@ export class AgentLoop {
     const MAX_ITERATIONS = 200; // Hard safety limit — prevent infinite loops
     const recentToolSigs: string[] = []; // Track recent tool call signatures for loop detection
     const LOOP_WINDOW = 6; // Check last N tool calls for repeating patterns
+    let dupOnlyStreak = 0; // Iterations in a row where every tool call was a duplicate (no progress)
+    const DUP_ONLY_LIMIT = 3; // Bail after this many no-progress iterations
 
     for (let i = 0; ; i++) {
       // Iteration hard limit (OD-A)
@@ -979,9 +981,11 @@ export class AgentLoop {
         messages.push(toolMsg);
       }
 
-      // Cross-tool loop detection (OD-A): track tool call signatures
+      // Cross-tool loop detection (OD-A): track every tool call signature, including
+      // duplicates that were skipped above. Skipping dedup'd calls here let the agent
+      // burn 200 iterations re-issuing the same tool_use that always returned "Skipped".
       // Include args hash so web_fetch(url1) ≠ web_fetch(url2) — prevents false positives on parallel batch calls
-      for (const tc of uniqueCalls) {
+      for (const tc of response.toolCalls) {
         const argsHash = tc.function.arguments.length > 0 ? simpleHash(tc.function.arguments) : '';
         recentToolSigs.push(`${tc.function.name}:${argsHash}`);
         if (recentToolSigs.length > LOOP_WINDOW * 2) recentToolSigs.shift();
@@ -995,6 +999,22 @@ export class AgentLoop {
           log.warn(`[${sessionKey}] Cross-tool loop detected: ${firstHalf} repeating`);
           messages.push({ role: 'user', content: '[System: Repeating tool call pattern detected. You are stuck in a loop. Stop calling tools and respond to the user with what you have so far.]' });
         }
+      }
+
+      // No-progress guard: if every tool call this turn was a duplicate of one we
+      // already executed, the model produced no new work. A few of these in a row
+      // means the model is wedged repeating itself — bail with whatever text we have.
+      if (response.toolCalls.length > 0 && uniqueCalls.length === 0) {
+        dupOnlyStreak++;
+        if (dupOnlyStreak >= DUP_ONLY_LIMIT) {
+          log.warn(`[${sessionKey}] No-progress exit: ${dupOnlyStreak} iterations of all-duplicate tool calls`);
+          if (streamCtx && (this.deps.config.streaming?.enabled ?? true)) {
+            this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
+          }
+          return { content: lastContent, iterations: i + 1, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
+        }
+      } else {
+        dupOnlyStreak = 0;
       }
 
       // Atomic save: assistant + tool_calls + dup skip messages + tool results
