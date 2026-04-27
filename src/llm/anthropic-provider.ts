@@ -185,6 +185,18 @@ export class AnthropicProvider implements LLMProvider {
         log.warn(`Anthropic: tool_choice rejected, retrying without it`);
         delete params.tool_choice;
         response = await this.client.messages.create(params);
+      } else if (
+        err instanceof Error
+        && /assistant message prefill|must end with a user message/i.test(err.message)
+        && params.messages.length > 0
+        && params.messages[params.messages.length - 1].role === 'assistant'
+      ) {
+        // Some Anthropic configurations (notably Claude Code OAuth on certain models)
+        // refuse trailing assistant prefills. Drop the prefill and retry — callers
+        // that depend on the prefill text (e.g. summarization) prepend it back themselves.
+        log.warn(`Anthropic: assistant prefill rejected, retrying without it`);
+        params.messages = params.messages.slice(0, -1);
+        response = await this.client.messages.create(params);
       } else {
         throw err;
       }
