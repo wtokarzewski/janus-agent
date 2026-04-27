@@ -15,6 +15,31 @@ export function applyCacheMarkers(tools: Array<{ name: string; cache_control?: u
 }
 
 /**
+ * Anthropic rejects trailing whitespace in the final assistant message
+ * (400: "messages: final assistant content cannot end with trailing whitespace").
+ * Strip it from the last text block of the last message if it's an assistant turn.
+ * This makes prefills like `## Goal\n` safe to use without per-call-site trimming.
+ */
+export function trimLastAssistantWhitespace(messages: Anthropic.MessageParam[]): void {
+  if (messages.length === 0) return;
+  const last = messages[messages.length - 1];
+  if (last.role !== 'assistant') return;
+  if (typeof last.content === 'string') {
+    last.content = last.content.replace(/\s+$/, '');
+    return;
+  }
+  if (!Array.isArray(last.content)) return;
+  for (let i = last.content.length - 1; i >= 0; i--) {
+    const block = last.content[i] as { type: string; text?: string };
+    if (block.type === 'text' && typeof block.text === 'string') {
+      block.text = block.text.replace(/\s+$/, '');
+      return;
+    }
+    if (block.type === 'tool_use') return;
+  }
+}
+
+/**
  * Anthropic Messages API provider using official SDK.
  * Built-in retry, proper TypeScript types, streaming-ready.
  * Supports both API key and OAuth token authentication.
@@ -149,6 +174,7 @@ export class AnthropicProvider implements LLMProvider {
     // Cache conversation history prefix by marking last user message
     applyCacheToLastUserMessage(params.messages);
     applyCacheToPenultimateMessage(params.messages);
+    trimLastAssistantWhitespace(params.messages);
 
     let response: Anthropic.Message;
     try {
@@ -273,6 +299,7 @@ export class AnthropicProvider implements LLMProvider {
     // Cache conversation history prefix by marking last user message
     applyCacheToLastUserMessage(params.messages);
     applyCacheToPenultimateMessage(params.messages);
+    trimLastAssistantWhitespace(params.messages);
 
     const stream = this.client.messages.stream(params);
 

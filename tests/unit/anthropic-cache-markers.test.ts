@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyCacheMarkers, applyCacheToPenultimateMessage } from '../../src/llm/anthropic-provider.js';
+import { applyCacheMarkers, applyCacheToPenultimateMessage, trimLastAssistantWhitespace } from '../../src/llm/anthropic-provider.js';
 
 describe('applyCacheMarkers', () => {
   it('marks only last tool when no MCP tools present', () => {
@@ -84,5 +84,65 @@ describe('applyCacheToPenultimateMessage', () => {
     const messages: any[] = [];
     applyCacheToPenultimateMessage(messages);
     expect(messages.length).toBe(0);
+  });
+});
+
+describe('trimLastAssistantWhitespace', () => {
+  it('trims trailing newline from string content (summarization prefill case)', () => {
+    const messages: any[] = [
+      { role: 'user', content: 'summarize' },
+      { role: 'assistant', content: '## Goal\n' },
+    ];
+    trimLastAssistantWhitespace(messages);
+    expect(messages[1].content).toBe('## Goal');
+  });
+
+  it('trims trailing whitespace from last text block in array content', () => {
+    const messages: any[] = [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: [
+        { type: 'text', text: 'first part' },
+        { type: 'text', text: '## Goal\n  ' },
+      ] },
+    ];
+    trimLastAssistantWhitespace(messages);
+    expect(messages[1].content[0].text).toBe('first part');
+    expect(messages[1].content[1].text).toBe('## Goal');
+  });
+
+  it('leaves last message untouched when role is user', () => {
+    const messages: any[] = [
+      { role: 'assistant', content: 'reply\n' },
+      { role: 'user', content: 'follow-up\n' },
+    ];
+    trimLastAssistantWhitespace(messages);
+    expect(messages[1].content).toBe('follow-up\n');
+  });
+
+  it('does not trim when last block is tool_use (no text whitespace concern)', () => {
+    const messages: any[] = [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: [
+        { type: 'text', text: 'some text\n' },
+        { type: 'tool_use', id: 'x', name: 'foo', input: {} },
+      ] },
+    ];
+    trimLastAssistantWhitespace(messages);
+    // Walks back from last block, hits tool_use, returns — text block is preserved as-is
+    expect(messages[1].content[0].text).toBe('some text\n');
+  });
+
+  it('handles empty messages array', () => {
+    const messages: any[] = [];
+    trimLastAssistantWhitespace(messages);
+    expect(messages.length).toBe(0);
+  });
+
+  it('preserves leading whitespace and internal whitespace', () => {
+    const messages: any[] = [
+      { role: 'assistant', content: '\n## Goal\nbody text   \n\n' },
+    ];
+    trimLastAssistantWhitespace(messages);
+    expect(messages[0].content).toBe('\n## Goal\nbody text');
   });
 });
