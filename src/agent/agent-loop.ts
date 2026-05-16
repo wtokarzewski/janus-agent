@@ -453,7 +453,7 @@ export class AgentLoop {
       });
 
     const systemParts = { staticPart, dynamicPart };
-    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose, msg.lane, systemParts);
+    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose, msg.lane, systemParts, pinnedPaths ?? new Set<string>());
 
     // 6. Save final assistant message
     await this.deps.sessions.append(sessionKey, [
@@ -764,6 +764,7 @@ export class AgentLoop {
     llmPurpose: string = 'chat',
     lane?: string,
     systemParts?: { staticPart: string; dynamicPart: string },
+    pinnedPaths: Set<string> = new Set(),
   ): Promise<IterateResult> {
     let lastContent = '';
     let totalToolCalls = 0;
@@ -976,6 +977,25 @@ export class AgentLoop {
         let args: Record<string, unknown>;
         try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
 
+        // Short-circuit read_file when target is already in <pinned_skill_state>.
+        // Avoids duplicating ~3-10k tokens per call (pinned section + tool_result)
+        // and stops context cascade. See spec §pinned-skill-state Decision 7.
+        if (tc.function.name === 'read_file' && pinnedPaths.size > 0 && typeof args.path === 'string') {
+          let abs: string | null = null;
+          try { abs = realpathSync(args.path); } catch {
+            try { abs = resolve(args.path); } catch { /* unresolvable — fall through to normal exec */ }
+          }
+          if (abs && pinnedPaths.has(abs)) {
+            log.info(`Tool: ${tc.function.name} short-circuited (path already in <pinned_skill_state>)`);
+            totalToolCalls++;
+            return {
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: '[already in <pinned_skill_state> — see system prompt. Do not call read_file for pinned files; the content is loaded fresh every turn.]',
+            };
+          }
+        }
+
         log.info(`Tool: ${tc.function.name}(${summarizeArgs(args)})`);
         totalToolCalls++;
         const maxRetries = this.deps.config.agent.toolRetries;
@@ -1127,12 +1147,19 @@ export class AgentLoop {
       log.info(`[${sessionKey}] Memory flush: ${messagesToFlush.length} messages (${from}→${to}), LLM call start`);
       const flushStart = Date.now();
 
+      // Scale output cap to input size. The old formula (min(2048, max(512, budget*0.1)))
+      // always returned 2048 with default budget=750k, causing the model to dump max-budget
+      // output every flush (~45s per call). Target ~30% of input, clamped 256-1024.
+      const flushInputChars = messagesText.length + contextStr.length;
+      const flushInputTokens = Math.ceil(flushInputChars / 2.5);
+      const flushMaxTokens = Math.min(1024, Math.max(256, Math.floor(flushInputTokens * 0.3)));
+
       const flushResponse = await withTimeout(this.deps.llm.chat({
         model: '',
         messages: [
           { role: 'system', content: `You are a memory manager. Extract and preserve important information from conversation messages.
 
-${contextStr}Respond in this exact format:
+${contextStr}Respond in this exact format. Be CONCISE — only write what's worth remembering long-term.
 
 <summary>1-2 sentence summary of what happened. Include specific names, numbers, decisions.</summary>
 <facts>
@@ -1147,8 +1174,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
           { role: 'user', content: `New messages to process:\n${messagesText}` },
         ],
         temperature: 0.3,
-        // CR-AT: Reserve headroom — cap completion tokens so prompt + output fits context
-        maxTokens: Math.min(2048, Math.max(512, Math.floor(this.deps.config.agent.tokenBudget * 0.1))),
+        maxTokens: flushMaxTokens,
       }, 'summarize'), 90_000, 'Memory flush LLM call timed out');
 
       log.info(`[${sessionKey}] Memory flush: LLM call done in ${Date.now() - flushStart}ms`);
