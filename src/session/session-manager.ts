@@ -5,6 +5,12 @@ import type { LLMMessage } from '../llm/types.js';
 import type { JanusConfig } from '../config/schema.js';
 import * as log from '../utils/logger.js';
 import { stripJsonSurrogates } from '../utils/sanitize.js';
+import { resolveBudget, CHARS_PER_TOKEN_ESTIMATE } from '../context/context-manager.js';
+
+// Unified tool result cap: 50% of effective budget converted to chars.
+// SAME cap applied in-loop (agent-loop.ts) and on-disk here — no more 100x mismatch
+// where sessions reload 100x larger than they were "live".
+const TOOL_RESULT_CAP_RATIO = 0.5;
 
 export interface SessionMetadata {
   key: string;
@@ -27,16 +33,12 @@ export interface Session {
 export class SessionManager {
   private sessionsDir: string;
   private contextWindow: number;
-  private toolResultMaxShare: number;
-  private toolResultHardMax: number;
   private cache = new Map<string, Session>();
   private locks = new Map<string, Promise<void>>();
 
   constructor(config: JanusConfig) {
     this.sessionsDir = resolve(config.workspace.dir, config.workspace.sessionsDir);
     this.contextWindow = config.agent.contextWindow;
-    this.toolResultMaxShare = config.agent.context.toolResultMaxShare;
-    this.toolResultHardMax = config.agent.context.toolResultHardMax;
   }
 
   private withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -131,56 +133,129 @@ export class SessionManager {
   }
 
   /**
-   * Summarize old messages when conversation gets too long.
-   * Token-based retention: walk backwards keeping keepRecentTokens worth of messages,
-   * snapping the cut point forward to the nearest user message boundary.
+   * Compact session by archiving the current JSONL and writing a new one starting
+   * with a compaction entry + the tail messages. Replaces the older "in-place
+   * truncate" approach so on-disk session size is BOUNDED (~keepRecentTokens).
+   *
+   * After rotation:
+   *   - {key}.jsonl       — new file: metadata + compaction entry + tail messages
+   *   - {key}.{ts}.jsonl  — archive: previous file (kept for forensics, never reloaded)
    */
   async summarize(key: string, summaryText: string, keepRecentTokens: number): Promise<void> {
     return this.withLock(key, async () => {
       const session = await this.getOrCreateInner(key);
-
-      // Token-based cut point: walk backwards counting tokens
-      let tokens = 0;
-      let cutIndex = 0; // default: keep everything (cut at start)
-      for (let i = session.messages.length - 1; i >= 0; i--) {
-        const msg = session.messages[i];
-        const content = 'content' in msg ? msg.content : '';
-        let msgTokens: number;
-        if (typeof content === 'string') {
-          msgTokens = Math.ceil(content.length / 2.5);
-        } else if (Array.isArray(content)) {
-          const textLen = content.reduce((sum: number, b: { type: string; text?: string }) => sum + (b.type === 'text' && b.text ? b.text.length : 0), 0);
-          const imageCount = content.filter((b: { type: string }) => b.type === 'image').length;
-          msgTokens = Math.ceil(textLen / 2.5) + imageCount * 1000;
-        } else {
-          msgTokens = 100;
-        }
-        if (tokens + msgTokens > keepRecentTokens) {
-          cutIndex = i + 1;
-          // Snap forward to nearest user message boundary
-          for (let j = cutIndex; j < session.messages.length; j++) {
-            if (session.messages[j].role === 'user') { cutIndex = j; break; }
-          }
-          break;
-        }
-        tokens += msgTokens;
-      }
+      const cutIndex = this.findTailCutIndex(session.messages, keepRecentTokens);
 
       // If cut would remove fewer than 4 messages, skip (not worth summarizing)
       if (cutIndex < 4) return;
 
-      session.messages = session.messages.slice(cutIndex);
-      session.metadata.summary = summaryText;
-      session.metadata.messageCount = session.messages.length;
-      // Mark remaining messages as already flushed — pre-compaction flush captured
-      // old context, and the summary preserves conversation state. This prevents
-      // the idle flush from re-processing all remaining messages (which was causing
-      // 50+ second LLM calls processing 150+ messages on every interaction).
-      session.metadata.lastFlushed = session.messages.length;
+      const path = this.sessionPath(key);
+      const archivePath = `${path}.${Date.now()}.jsonl`;
 
-      // Full rewrite — truncates JSONL to only post-compaction messages
+      // Archive current file (best-effort — if rename fails, we still write the new one)
+      try {
+        await rename(path, archivePath);
+      } catch (err) {
+        log.warn(`[session ${key}] Archive rename failed (proceeding without): ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      const tailMessages = session.messages.slice(cutIndex);
+      const newMetadata: SessionMetadata = {
+        ...session.metadata,
+        summary: summaryText,
+        messageCount: tailMessages.length,
+        lastFlushed: tailMessages.length, // post-compaction tail is considered already flushed
+        updated: new Date().toISOString(),
+      };
+
+      // Write new file: metadata + compaction entry + tail messages
+      try {
+        await mkdir(dirname(path), { recursive: true });
+        const lines: string[] = [
+          JSON.stringify({ _type: 'metadata', ...newMetadata }),
+          JSON.stringify({ _type: 'compaction', summary: summaryText, archivedAt: new Date().toISOString(), archivePath }),
+          ...tailMessages.map(m => JSON.stringify(m)),
+        ];
+        const tempPath = `${path}.${randomUUID().slice(0, 8)}.tmp`;
+        await writeFile(tempPath, lines.join('\n') + '\n', 'utf-8');
+        await rename(tempPath, path);
+      } catch (err) {
+        log.error(`[session ${key}] Rotation write failed: ${err instanceof Error ? err.message : err}`);
+        // We've already archived; cache stays in old state until next successful save
+        return;
+      }
+
+      // Update cache atomically
+      session.messages = tailMessages;
+      session.metadata = newMetadata;
+      this.cache.set(key, session);
+
+      log.info(`[session ${key}] rotated: ${session.messages.length + cutIndex} → ${tailMessages.length} messages; archive: ${archivePath}`);
+    });
+  }
+
+  /**
+   * Walk backwards from the end of messages accumulating tokens. Return the
+   * index of the cut point — messages[0..cutIndex) go into the summary,
+   * messages[cutIndex..) are kept as the tail.
+   *
+   * Snaps the cut forward to the next user message boundary to keep
+   * assistant+tool groups intact in the tail.
+   */
+  private findTailCutIndex(messages: LLMMessage[], keepRecentTokens: number): number {
+    let tokens = 0;
+    let cutIndex = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      const content = 'content' in msg ? msg.content : '';
+      let msgTokens: number;
+      if (typeof content === 'string') {
+        msgTokens = Math.ceil(content.length / CHARS_PER_TOKEN_ESTIMATE);
+      } else if (Array.isArray(content)) {
+        const textLen = content.reduce((sum: number, b: { type: string; text?: string }) => sum + (b.type === 'text' && b.text ? b.text.length : 0), 0);
+        const imageCount = content.filter((b: { type: string }) => b.type === 'image').length;
+        msgTokens = Math.ceil(textLen / CHARS_PER_TOKEN_ESTIMATE) + imageCount * 1000;
+      } else {
+        msgTokens = 100;
+      }
+      if (tokens + msgTokens > keepRecentTokens) {
+        cutIndex = i + 1;
+        // Snap forward to next user message boundary
+        for (let j = cutIndex; j < messages.length; j++) {
+          if (messages[j].role === 'user') { cutIndex = j; break; }
+        }
+        break;
+      }
+      tokens += msgTokens;
+    }
+    return cutIndex;
+  }
+
+  /**
+   * Last-resort fallback when compaction fails (e.g. LLM timeout). Drops the
+   * oldest `ratio` fraction of messages WITHOUT a summary. Loud log entry —
+   * this should be rare. Better than infinite cascade.
+   */
+  async forceDropOldest(key: string, ratio: number): Promise<void> {
+    return this.withLock(key, async () => {
+      const session = await this.getOrCreateInner(key);
+      let dropCount = Math.floor(session.messages.length * ratio);
+      if (dropCount < 4) return;
+
+      // Snap to next user message boundary so we don't orphan tool messages
+      for (let j = dropCount; j < session.messages.length; j++) {
+        if (session.messages[j].role === 'user') { dropCount = j; break; }
+      }
+
+      const droppedCount = dropCount;
+      session.messages = session.messages.slice(dropCount);
+      session.metadata.summary = `[compaction failed; force-dropped oldest ${droppedCount} messages at ${new Date().toISOString()}]`;
+      session.metadata.messageCount = session.messages.length;
+      session.metadata.lastFlushed = session.messages.length;
+      session.metadata.updated = new Date().toISOString();
+
       await this.save(key, session);
-      log.debug(`Summarized session ${key}, kept ${session.messages.length} messages from index ${cutIndex} (JSONL truncated)`);
+      log.warn(`[session ${key}] force-dropped ${droppedCount} oldest messages (compaction fallback)`);
     });
   }
 
@@ -197,10 +272,18 @@ export class SessionManager {
     });
   }
 
-  private truncateToolResult(content: string): string {
-    // Dynamic cap: contextWindow tokens × 2.5 chars/token × share fraction
-    const dynamicCap = Math.floor(this.contextWindow * 2.5 * this.toolResultMaxShare);
-    const cap = Math.min(dynamicCap, this.toolResultHardMax);
+  /**
+   * Unified tool-result cap. Derived from effective budget (contextWindow minus
+   * reserved output). Same cap used in-loop by the agent loop — no disk/memory
+   * mismatch on session reload.
+   */
+  toolResultCap(): number {
+    const budget = resolveBudget({ modelContextWindow: this.contextWindow });
+    return Math.floor(budget.effective * CHARS_PER_TOKEN_ESTIMATE * TOOL_RESULT_CAP_RATIO);
+  }
+
+  truncateToolResult(content: string): string {
+    const cap = this.toolResultCap();
     if (content.length <= cap) return content;
 
     // Head+tail truncation: 70% head + marker + 30% tail
@@ -268,9 +351,11 @@ export class SessionManager {
     const messages: LLMMessage[] = [];
     for (let i = startIdx; i < lines.length; i++) {
       try {
-        // Sanitize orphan surrogates before parsing — both raw chars and JSON-encoded
-        // \uD800-style escapes from corrupt tool results that cause API 400 errors
-        messages.push(JSON.parse(stripJsonSurrogates(lines[i])) as LLMMessage);
+        const parsed = JSON.parse(stripJsonSurrogates(lines[i])) as Record<string, unknown> & LLMMessage;
+        // Skip control entries (compaction markers, future _type extensions) — they
+        // belong to session metadata, not the message stream sent to the LLM.
+        if ('_type' in parsed) continue;
+        messages.push(parsed as LLMMessage);
       } catch {
         log.warn(`Skipping invalid JSONL line ${i} in session ${key}`);
       }

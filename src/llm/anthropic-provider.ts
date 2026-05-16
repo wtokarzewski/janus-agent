@@ -137,7 +137,15 @@ export class AnthropicProvider implements LLMProvider {
         text: request.systemParts.staticPart,
         cache_control: { type: 'ephemeral' as const },
       });
-      // dynamicPart is injected into user message by agent-loop (not in system blocks)
+      // dynamicPart is now a SECOND system block (uncached — changes per call) so
+      // user message history doesn't accumulate N copies of pinned/session info.
+      // See docs/superpowers/specs/2026-05-16-context-management-redesign.md §H.
+      if (request.systemParts.dynamicPart && request.systemParts.dynamicPart.length > 0) {
+        systemBlocks.push({
+          type: 'text' as const,
+          text: request.systemParts.dynamicPart,
+        });
+      }
     } else if (systemMsg) {
       // Fallback for non-split callers (flush, summarization use system message directly)
       systemBlocks.push({
@@ -285,6 +293,12 @@ export class AnthropicProvider implements LLMProvider {
         text: request.systemParts.staticPart,
         cache_control: { type: 'ephemeral' as const },
       });
+      if (request.systemParts.dynamicPart && request.systemParts.dynamicPart.length > 0) {
+        streamSystemBlocks.push({
+          type: 'text' as const,
+          text: request.systemParts.dynamicPart,
+        });
+      }
     } else if (systemMsg) {
       streamSystemBlocks.push({
         type: 'text' as const,

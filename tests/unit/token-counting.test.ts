@@ -100,7 +100,7 @@ describe('Token counting and emergency compression', () => {
     const config = createTestConfig({
       agent: {
         summarizationThreshold: 100, // high message count threshold
-        tokenBudget: 500, // very low token budget to trigger token-based summarization
+        contextWindow: 5_000, // small context window → threshold = 5000 * 0.5 = 2500 tokens
       },
       streaming: { enabled: false },
     });
@@ -118,11 +118,13 @@ describe('Token counting and emergency compression', () => {
 
     const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner });
 
-    // Pre-fill session with enough content to exceed 500 * 0.75 = 375 token estimate
+    // Pre-fill session with enough content to exceed contextWindow * 0.5 token threshold.
+    // contextWindow=5000 → effective=max(4000, 5000-8000)=4000 → threshold=2000 tokens.
+    // 20000 chars / 2.5 = 8000 tokens → triggers.
     const sessionKey = 'cli:token-sum-test';
     await sessions.append(sessionKey, [
-      { role: 'user', content: 'x'.repeat(1000) },
-      { role: 'assistant', content: 'y'.repeat(1000) },
+      { role: 'user', content: 'x'.repeat(10_000) },
+      { role: 'assistant', content: 'y'.repeat(10_000) },
     ]);
 
     await agent.processDirect('check summarization', { channel: 'cli', chatId: 'token-sum-test' });
@@ -134,58 +136,10 @@ describe('Token counting and emergency compression', () => {
     expect(mock.calls.length).toBe(2);
   });
 
-  it('should flush memory before summarization when MemoryStore is available', async () => {
-    // Summary must be >500 chars (~200 tokens) to avoid triggering fallback chain retry
-    const mockSummary = '## Goal\nUser is testing the diet tracking system with Janus. Currently logging meals on the dedicated diet channel.\n\n## Constraints & Preferences\n- Low carb approach with IF window 10:00-22:00\n- Target: 1743 kcal/day, protein 130g, fat 120g, carbs 50g, fiber 25g\n- Gym 3x/week (Mon/Wed/Fri) with cardio\n\n## Established Facts\n- Starting weight: 80.8 kg on 2026-04-20\n- Target weight: 75 kg by 2026-06-27\n- BMR: 1800 kcal, TDEE with exercise: 2290 kcal\n\n## Progress\n### Done\n- Completed week 1 of diet tracking\n\n## Key Decisions\n- Decided on low carb approach based on past experience\n\n## Open TODOs\n- Track body measurements weekly\n\n## Critical Context\nDiet day 7. Cheat meal today (bread sandwich). BF trending down.\n\n## Identifiers\nNone';
-    const mock = new MockProvider([
-      { content: 'Response' },
-      { content: mockSummary }, // summarization (reaches LLM first — fewer async steps)
-      { content: '- Decision: use SQLite for storage\n- Key fact: API limit is 100 req/s' }, // flush (reaches LLM second — reads MEMORY.md first)
-    ]);
-
-    const config = createTestConfig({
-      agent: {
-        summarizationThreshold: 100,
-        tokenBudget: 500, // low budget to trigger token-aware flush + summarization
-      },
-      streaming: { enabled: false },
-    });
-    const bus = new MessageBus();
-    const registry = new ProviderRegistry();
-    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
-
-    const tools = new ToolRegistry();
-    tools.setContext({ workspaceDir: config.workspace.dir });
-    const sessions = new SessionManager(config);
-    const memory = new MemoryStore(config);
-    const skills = new SkillLoader(config);
-    const context = new ContextBuilder({ skills, memory, config });
-    const learner = new SkillLearner(new InMemoryLearnerStorage());
-
-    // Pass memory to AgentDeps
-    const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner, memory });
-
-    // Pre-fill session to trigger summarization
-    const sessionKey = 'cli:flush-test';
-    await sessions.append(sessionKey, [
-      { role: 'user', content: 'x'.repeat(1000) },
-      { role: 'assistant', content: 'y'.repeat(1000) },
-    ]);
-
-    await agent.processDirect('check flush', { channel: 'cli', chatId: 'flush-test' });
-
-    // Wait for fire-and-forget summarization + flush
-    await new Promise(r => setTimeout(r, 200));
-
-    // 3 calls: main response + summarization + token-aware flush (order may vary)
-    expect(mock.calls.length).toBe(3);
-    // One of the async calls should be the memory flush
-    const flushCall = mock.calls.find((c: any) => c.messages[0].content.includes('memory manager'));
-    expect(flushCall).toBeTruthy();
-
-    // Verify daily note was written (fallback: no XML tags → treated as daily notes)
-    const daily = await memory.readDaily();
-    expect(daily).toContain('Session notes');
-    expect(daily).toContain('Decision: use SQLite');
-  });
+  // Removed: 'should flush memory before summarization when MemoryStore is available'.
+  // Pre-compaction flush (inside doSummarization) was removed. Compaction and
+  // memory flush are now independent paths — flush has its own count-based
+  // trigger (>=20 unflushed messages) plus a shutdown trigger; it does NOT
+  // run synchronously inside summarization. See spec at
+  // docs/superpowers/specs/2026-05-16-context-management-redesign.md.
 });

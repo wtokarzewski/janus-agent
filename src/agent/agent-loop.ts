@@ -22,7 +22,14 @@ import { localDateWithDay, localTimestamp } from '../utils/date.js';
 import type { AgentResolver, AgentContext } from './agent-resolver.js';
 import type { CronService } from '../services/cron-service.js';
 import { ensureAgentDir } from '../users/user-resolver.js';
-import { enforceContextBudget } from './context-budget.js';
+import {
+  resolveBudget,
+  routeCall,
+  softTrimOldToolResults,
+  hardClearOldToolResults,
+  estimateMessagesTokens as estimateMessagesTokensV2,
+  DEFAULT_TRANSFORM_SETTINGS,
+} from '../context/context-manager.js';
 
 const THINKING_LEVEL_BUDGETS: Record<string, number> = {
   off: 0, minimal: 2000, low: 5000, medium: 10000, high: 20000,
@@ -373,7 +380,7 @@ export class AgentLoop {
     // 3. Get session + build system prompt (split into static/dynamic for prompt caching)
     const t0 = Date.now();
     const session = await this.deps.sessions.getOrCreate(sessionKey);
-    const { staticPart, dynamicPart, pinnedPaths } = await this.deps.context.build({
+    const { staticPart, dynamicPart, systemPrompt: systemPromptFull, pinnedPaths } = await this.deps.context.build({
       channel: msg.channel,
       chatId: msg.chatId,
       tools: this.deps.tools.summaries(isOwner),
@@ -384,11 +391,12 @@ export class AgentLoop {
       scope: msg.scope,
       agentCtx,
     });
-    // dynamicPart moves to user message for Anthropic prefix cache stability
-    const systemPrompt = staticPart;
+    // Dynamic content now goes into a separate (uncached) system block via systemParts.
+    // The user message is saved as PLAIN content — no <context> wrap — so history
+    // doesn't accumulate N copies of dynamicPart per turn. See spec §H.
+    const systemPrompt = systemPromptFull;
 
     // 3. Build messages: [system, ...history, user]
-    //    Trim history if estimated tokens exceed token budget
     const history = await this.deps.sessions.getHistory(sessionKey);
     const cleanHistory = repairToolMessages(history);
     let userContent = msg.replyContext
@@ -402,12 +410,6 @@ export class AgentLoop {
       if (injected) {
         userContent = `${injected}\n\n${userContent}`;
       }
-    }
-
-    // Dynamic context in user message — system blocks stay stable for Anthropic prefix cache.
-    // Order: <context>dynamic</context> → cron injection → reply context → user message
-    if (dynamicPart) {
-      userContent = `<context>\n${dynamicPart}\n</context>\n\n${userContent}`;
     }
 
     // Build user message — multimodal if images attached, plain string otherwise
@@ -429,7 +431,8 @@ export class AgentLoop {
       ...cleanHistory,
       userMessage,
     ];
-    enforceContextBudget(messages, this.deps.config.agent);
+    // Pre-flight: nothing here. Per-iteration router (in iterate()) handles all
+    // context budget decisions in a single place. See docs/superpowers/specs/2026-05-16-context-management-redesign.md.
 
     log.info(`[${sessionKey}] Context built in ${Date.now() - t0}ms`);
 
@@ -491,23 +494,25 @@ export class AgentLoop {
     state.userName = msg.user?.name;
     state.scope = msg.scope;
 
-    // Token-aware flush trigger (40% of budget)
+    // Memory flush trigger — simplified. Was: 5 triggers (count/token/pre-summary/idle/shutdown)
+    // that raced with each other and silently skipped each other. Now: just one count-based
+    // trigger after iterate. Shutdown flush still in flushAllSessions().
     const unflushed = fullSession.messages.length - state.lastFlushed;
-    const sessionTokenEstimate = estimateMessagesTokens(fullSession.messages);
-    const tokenFlushThreshold = this.deps.config.agent.tokenBudget * 0.4;
-    if (this.deps.memory && unflushed > 0 && !state.flushing && sessionTokenEstimate > tokenFlushThreshold) {
+    const sessionTokenEstimate = estimateMessagesTokensV2(fullSession.messages);
+    if (this.deps.memory && unflushed >= 20 && !state.flushing) {
       this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
-        log.warn(`Token-aware memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
+        log.warn(`Count-aware memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
 
-    // 7. Maybe summarize (async, non-blocking)
-    // CR-AU: Skip compaction for heartbeat/cron — they're short-lived, compaction wastes tokens
+    // 7. Maybe summarize (async, non-blocking).
+    // Trigger threshold uses contextWindow (the real LLM budget) rather than the
+    // legacy tokenBudget (which was 5x contextWindow and never fired in time).
     const isEphemeralLane = msg.lane === 'heartbeat' || msg.lane === 'cron';
-    const tokenThreshold = this.deps.config.agent.tokenBudget * 0.75;
+    const compactBudget = resolveBudget({ modelContextWindow: this.deps.config.agent.contextWindow });
+    const compactTokenThreshold = compactBudget.effective * 0.5;
     if (!isEphemeralLane && (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
-        || sessionTokenEstimate > tokenThreshold)) {
-      // Double-fire guard: skip if already summarizing this session (C2)
+        || sessionTokenEstimate > compactTokenThreshold)) {
       if (this.summarizing.has(sessionKey)) {
         log.debug(`[${sessionKey}] Skipping summarization — already in progress`);
       } else {
@@ -804,13 +809,27 @@ export class AgentLoop {
         }
       }
 
-      // Proactive context budget enforcement
-      enforceContextBudget(messages, this.deps.config.agent);
-      // Emergency: if still over threshold, run without protected tail
-      const emergencyThreshold = this.deps.config.agent.context.emergencyThreshold;
-      if (estimateMessagesTokens(messages) > this.deps.config.agent.tokenBudget * emergencyThreshold) {
-        log.warn(`[${sessionKey}] Emergency compression — over ${Math.round(emergencyThreshold * 100)}% budget`);
-        enforceContextBudget(messages, this.deps.config.agent, true);
+      // Pre-call routing: ONE decision, ONE pass. Replaces the cascade of
+      // Phase 1 → Phase 2 → Phase 3 → Emergency that was in context-budget.ts.
+      // See docs/superpowers/specs/2026-05-16-context-management-redesign.md.
+      const budget = resolveBudget({
+        modelContextWindow: this.deps.config.agent.contextWindow,
+      });
+      const systemPromptText = typeof messages[0].content === 'string' ? messages[0].content : '';
+      const router = routeCall({ messages, systemPrompt: systemPromptText, budget });
+      if (router.route.type !== 'fits') {
+        log.info(`[${sessionKey}] route=${router.route.type} (${router.estimatedTokens}/${router.budget} tokens, overflow=${router.overflowTokens})`);
+      }
+      if (router.route.type === 'truncate_only') {
+        messages = softTrimOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
+      } else if (router.route.type === 'compact_only' || router.route.type === 'compact_then_truncate') {
+        // Synchronous compaction; iterate again after fresh session loads
+        await this.triggerCompactionSync(sessionKey, pinnedPaths ?? new Set<string>());
+        const reloaded = await this.deps.sessions.getOrCreate(sessionKey);
+        messages = [messages[0], ...reloaded.messages, messages[messages.length - 1]];
+        if (router.route.type === 'compact_then_truncate') {
+          messages = softTrimOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
+        }
       }
 
       let response;
@@ -853,21 +872,22 @@ export class AgentLoop {
         const isContextError = /token|context|length|too long/i.test(errorText);
         const isTimeout = /timeout|timed out|ETIMEDOUT|ECONNRESET/i.test(errorText);
 
-        // CR-BW: Timeout with high context usage → likely context too large, compress
+        // Timeout with high context usage → hard-clear old tool results and retry
         if (isTimeout && contextRetries < 2 && messages.length > 6) {
-          const estTokens = estimateMessagesTokens(messages);
-          if (estTokens > this.deps.config.agent.tokenBudget * 0.7) {
+          const estTokens = estimateMessagesTokensV2(messages);
+          const budget = resolveBudget({ modelContextWindow: this.deps.config.agent.contextWindow });
+          if (estTokens > budget.effective * 0.7) {
             contextRetries++;
-            log.warn(`[${sessionKey}] LLM timeout with high context (${estTokens}/${this.deps.config.agent.tokenBudget}), compressing`);
-            enforceContextBudget(messages, this.deps.config.agent, true);
+            log.warn(`[${sessionKey}] LLM timeout with high context (${estTokens}/${budget.effective}), hard-clearing old tool results`);
+            messages = hardClearOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
             continue;
           }
         }
 
         if (isContextError && contextRetries < 2) {
           contextRetries++;
-          log.warn(`Context overflow, emergency compression (attempt ${contextRetries})`);
-          enforceContextBudget(messages, this.deps.config.agent, true);
+          log.warn(`Context overflow (attempt ${contextRetries}), hard-clearing old tool results`);
+          messages = hardClearOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
           continue;
         }
 
@@ -1251,6 +1271,28 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     }
   }
 
+  /**
+   * Block until compaction has run (or run it now synchronously). Used by the
+   * pre-call router when the route is compact_only or compact_then_truncate —
+   * we MUST shrink the session before the LLM call, else it'll fail with
+   * context overflow.
+   */
+  private async triggerCompactionSync(sessionKey: string, pinnedPaths: Set<string>): Promise<void> {
+    // If another summarization is already in progress, wait for it.
+    if (this.summarizing.has(sessionKey)) {
+      let waited = 0;
+      const POLL_MS = 250;
+      const MAX_WAIT_MS = 16 * 60 * 1000; // slightly over compaction timeout
+      while (this.summarizing.has(sessionKey) && waited < MAX_WAIT_MS) {
+        await sleep(POLL_MS);
+        waited += POLL_MS;
+      }
+      return;
+    }
+    const session = await this.deps.sessions.getOrCreate(sessionKey);
+    await this.triggerSummarization(sessionKey, session.messages, undefined, undefined, undefined, pinnedPaths);
+  }
+
   private async triggerSummarization(
     sessionKey: string,
     messages: LLMMessage[],
@@ -1271,8 +1313,8 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
   private async doSummarization(
     sessionKey: string,
     messages: LLMMessage[],
-    userId?: string,
-    scope?: InboundMessage['scope'],
+    _userId?: string,
+    _scope?: InboundMessage['scope'],
     _preTokenEstimate?: number,
     pinnedPaths: Set<string> = new Set(),
   ): Promise<void> {
@@ -1317,21 +1359,12 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     // and re-load fresh every call.
     const filteredForSummary = filterPinnedReadsFromSummarization(toSummarize, pinnedPaths);
 
-    // Pre-compaction memory flush
-    const discardUpTo = cutIndex;
-    let flushed = false;
-    for (let attempt = 1; attempt <= 3 && !flushed; attempt++) {
-      try {
-        await this.flushMemory(sessionKey, userId, scope, discardUpTo);
-        flushed = true;
-      } catch (err) {
-        log.warn(`Pre-summarization flush attempt ${attempt}/3 failed: ${err instanceof Error ? err.message : String(err)}`);
-        if (attempt < 3) await sleep(2000 * attempt);
-      }
-    }
-    if (!flushed) {
-      log.error(`[${sessionKey}] All flush attempts failed — proceeding with summarization.`);
-    }
+    // Pre-compaction flush REMOVED. It used to call flushMemory synchronously
+    // with 3 retries (up to 270s blocking), and it raced with the token-aware
+    // flush trigger via a shared `state.flushing` guard — when both fired
+    // concurrently the second one silently skipped, causing messages to be
+    // compacted without ever being written to MEMORY.md. Flush now runs on its
+    // own schedule (count trigger + shutdown). Compaction does not depend on it.
 
     // Build conversation text for summarization.
     // Include tool interactions (truncated) — they carry essential context
@@ -1389,18 +1422,30 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
 
     log.info(`[${sessionKey}] Summarization: LLM call start (input ~${inputTokens} tokens, maxTokens=${summaryMaxTokens})`);
     const llmStart = Date.now();
-    const summaryResponse = await withTimeout(this.deps.llm.chat({
-      model: '',
-      messages: [
-        { role: 'system', content: systemContent },
-        { role: 'user', content: conversationText },
-        // Assistant prefill forces the model into the template format from the first token,
-        // preventing it from echoing the conversation or emitting chain-of-thought.
-        { role: 'assistant', content: '## Goal\n' },
-      ],
-      temperature: 0.3,
-      maxTokens: summaryMaxTokens,
-    }, 'summarize'), 90_000, 'Summarization LLM call timed out');
+    const COMPACTION_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes — was 90s, too tight for 100k+ inputs
+    let summaryResponse;
+    try {
+      summaryResponse = await withTimeout(this.deps.llm.chat({
+        model: '',
+        messages: [
+          { role: 'system', content: systemContent },
+          { role: 'user', content: conversationText },
+          // Assistant prefill forces the model into the template format from the first token,
+          // preventing it from echoing the conversation or emitting chain-of-thought.
+          { role: 'assistant', content: '## Goal\n' },
+        ],
+        temperature: 0.3,
+        maxTokens: summaryMaxTokens,
+      }, 'summarize'), COMPACTION_TIMEOUT_MS, 'Summarization LLM call timed out');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/timed out/i.test(msg)) {
+        log.error(`[${sessionKey}] Compaction timed out after ${COMPACTION_TIMEOUT_MS}ms. Falling back to force-drop oldest 50%.`);
+        await this.deps.sessions.forceDropOldest(sessionKey, 0.5);
+        return;
+      }
+      throw err;
+    }
     log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
     logTokenUsage('summarize', summaryResponse.usage, summaryResponse.provider, summaryResponse.model);
 
