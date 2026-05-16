@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """
 Remove stock from watchlist.
-Usage: python3 remove_stock.py <ticker>
+Usage: python3 remove_stock.py --user <userId> <ticker>
 """
+import argparse
 import sys
 import os
-from config import WATCHLIST_FILE, validate_ticker
+from config import watchlist_paths, validate_ticker
 
 
-def remove_stock(ticker: str) -> bool:
+def remove_stock(ticker: str, watchlist_file: str) -> bool:
     """Remove stock from watchlist."""
     ticker = validate_ticker(ticker)
 
-    if not os.path.exists(WATCHLIST_FILE):
+    if not os.path.exists(watchlist_file):
         print("Watchlist is empty.")
         return False
 
-    with open(WATCHLIST_FILE, "r", encoding="utf-8") as f:
+    with open(watchlist_file, "r", encoding="utf-8") as f:
         existing = [line.strip() for line in f if line.strip()]
 
     updated = [s for s in existing if not s.startswith(f"{ticker}|")]
@@ -25,7 +26,7 @@ def remove_stock(ticker: str) -> bool:
         print(f"{ticker} not found in watchlist")
         return False
 
-    with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
+    with open(watchlist_file, "w", encoding="utf-8") as f:
         for stock in updated:
             f.write(stock + "\n")
 
@@ -34,12 +35,14 @@ def remove_stock(ticker: str) -> bool:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 remove_stock.py <ticker>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Remove stock from watchlist")
+    parser.add_argument("--user", required=True, help="Janus user ID")
+    parser.add_argument("ticker", help="Stock ticker to remove (e.g. AAPL or CDR:WSE)")
+    args = parser.parse_args()
 
     try:
-        remove_stock(sys.argv[1])
+        _watchlist_dir, watchlist_file = watchlist_paths(args.user)
+        remove_stock(args.ticker, watchlist_file)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

@@ -136,6 +136,7 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
     console.log(chalk.green('Already up to date.'));
     await migrateFromHome(cwd);
     await ensureWorkspace(cwd);
+    await ensureStateUncertaintySection(cwd);
     await ensureTimezone();
     try {
       const { ensureGws } = await import('./onboard.js');
@@ -188,6 +189,9 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
   // 6. Ensure per-user directories exist
   await ensureWorkspace(cwd);
 
+  // 6a. Append State uncertainty section to AGENTS.md if missing
+  await ensureStateUncertaintySection(cwd);
+
   // 7. Auto-detect timezone if missing from config
   await ensureTimezone();
 
@@ -204,6 +208,37 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
 
   console.log();
   console.log(chalk.green('Update complete. Restart Janus to use the new version.'));
+}
+
+const STATE_UNCERTAINTY_SECTION = `## State uncertainty
+
+When requested data is unclear, missing, or contradicts what you remember:
+
+1. First, check \`<pinned_skill_state>\` — if the relevant file is there with content, use it as the source of truth.
+2. If the file shows \`status="missing"\`, call the appropriate tool (\`read_file\`, \`list_dir\`) to verify, or ask the user.
+3. If none of the above answers the question, ask the user for what you need.
+4. Never explain confusion in terms of memory limits, session boundaries, agent instances, summarization, or any other internal mechanism. The user needs an answer or a question, not an explanation of how the agent works.
+`;
+
+export async function ensureStateUncertaintySection(cwd: string): Promise<void> {
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const agentsPath = resolve(cwd, 'AGENTS.md');
+  let content: string;
+  try {
+    content = await readFile(agentsPath, 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return; // workspace doesn't have AGENTS.md yet — onboard step handles creation
+    }
+    throw err;
+  }
+  if (content.includes('## State uncertainty')) {
+    console.log('  AGENTS.md already has State uncertainty section.');
+    return;
+  }
+  const separator = content.endsWith('\n\n') ? '' : content.endsWith('\n') ? '\n' : '\n\n';
+  await writeFile(agentsPath, content + separator + STATE_UNCERTAINTY_SECTION, 'utf-8');
+  console.log(chalk.green('  + AGENTS.md updated with State uncertainty section'));
 }
 
 /** Auto-detect timezone and add to config if missing. */

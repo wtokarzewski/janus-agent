@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
 List all stocks in the watchlist.
-Usage: python3 list_stocks.py
+Usage: python3 list_stocks.py --user <userId>
 """
+import argparse
 import os
-from config import WATCHLIST_FILE
+import sys
+from config import watchlist_paths
 
 
-def list_stocks() -> None:
+def list_stocks(watchlist_file: str) -> None:
     """List all stocks in the watchlist."""
-    if not os.path.exists(WATCHLIST_FILE):
+    if not os.path.exists(watchlist_file):
         print("Watchlist is empty.")
         return
 
-    with open(WATCHLIST_FILE, "r", encoding="utf-8") as f:
+    with open(watchlist_file, "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f if line.strip()]
 
     if not lines:
@@ -32,4 +34,13 @@ def list_stocks() -> None:
 
 
 if __name__ == "__main__":
-    list_stocks()
+    parser = argparse.ArgumentParser(description="List stocks in watchlist")
+    parser.add_argument("--user", required=True, help="Janus user ID")
+    args = parser.parse_args()
+
+    try:
+        _watchlist_dir, watchlist_file = watchlist_paths(args.user)
+        list_stocks(watchlist_file)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
