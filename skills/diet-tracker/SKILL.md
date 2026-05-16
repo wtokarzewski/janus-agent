@@ -1,8 +1,11 @@
 ---
 name: diet-tracker
 description: "Diet tracking — logging meals, calories/macros, weigh-ins, daily summaries, weekly reports. Use when user mentions food, weight, calories, macros, diet, or asks about their food diary."
-version: "2.1.0"
+version: "2.2.0"
 always: false
+pinned:
+  - food-diary/profile.md
+  - food-diary/{today}.md
 ---
 
 # Diet Tracker
@@ -35,6 +38,7 @@ Communicate with the user in their preferred language (from PROFILE.md). All rep
 - Adapt explanation depth to user's experience level (noted in profile) — don't lecture a keto veteran about ketosis
 - The skill supports ANY diet approach — keto, low carb, standard, carnivore, Mediterranean, whatever the user chooses. Don't push a specific diet.
 - **Never delete food diary files.** To fix dates or correct data, use `edit_file` or `write_file` to update the existing file. Never use `exec` with `rm`, `del`, or any delete command on food diary files.
+- **State uncertainty.** If the data you need is unclear, missing from `<pinned_skill_state>`, or contradicts what you remember: ask the user for clarification. NEVER explain confusion in terms of memory, sessions, summarization, or other Janus internals. The user does not need to know how Janus works — they need an answer or a question.
 - **One event = one report.** Never send both DAY STATUS and Day Close for the same food log. Pick the right format for the moment.
 - **Calculate BEFORE reporting.** Always add the new item to totals first, then generate the report. Never send a report with stale numbers.
 - **Stick to the defined formats.** Use progress bars (▓░), not tables or custom layouts. Consistency matters — the user should recognize the format instantly.
@@ -116,8 +120,10 @@ Any day type with targets below 70% of normal calories counts as "restrictive":
 
 After every "I ate X" — mandatory sequence:
 
-1. Read `profile.md` (targets, fixed units, day types)
-2. Read/create today's file `food-diary/YYYY-MM-DD.md`
+1. Read `<pinned_skill_state>` — your profile (`food-diary/profile.md`) and today's
+   `food-diary/{today}.md` are already in your context, fresh. Do not call `read_file`
+   for them unless they show `status="missing"` (in which case create today's file first).
+2. If today's file is `status="missing"`, create it with the daily file format below.
 3. Check today's day type (declared in file header, or ask if not set)
 4. Add meal to the appropriate section (breakfast/lunch/dinner/snack)
 5. Recalculate totals using **this day type's targets** — always include ALL macros: protein, fat, carbs, AND fiber. Never skip fiber.
