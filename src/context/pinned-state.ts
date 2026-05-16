@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { resolve, relative, sep } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 import type { SkillDefinition } from '../skills/types.js';
 import * as log from '../utils/logger.js';
 
@@ -25,32 +26,59 @@ export async function buildPinnedStateSection(
   if (skillsWithPinned.length === 0) return null;
 
   const userFilesRoot = resolve(input.workspaceDir, '.janus', 'users', input.userId, 'files');
+  // Resolve the root itself to handle any symlinks in the workspace path
+  const realUserFilesRoot = realpathSync(resolve(userFilesRoot));
+
   const fileBlocks: string[] = [];
   const pinnedPaths = new Set<string>();
-  let totalChars = 0;
 
   for (const skill of skillsWithPinned) {
+    let skillChars = 0;
+    let skillFileCount = 0;
+
     for (const rawPath of skill.pinned) {
       const resolvedRelPath = substituteTemplates(rawPath, input);
       const absPath = resolve(userFilesRoot, resolvedRelPath);
 
-      // Path-escape guard: absPath must stay under userFilesRoot
-      const rel = relative(userFilesRoot, absPath);
-      if (rel.startsWith('..') || rel === '' || rel.startsWith(`..${sep}`)) {
-        log.warn(`[pinned] ${skill.name}: path escape blocked: ${rawPath}`);
-        continue;
+      // Path-escape guard using realpathSync to follow symlinks.
+      // Mirrors the pattern in src/tools/validate-path.ts.
+      //
+      // For existing paths: realpathSync resolves all symlinks, then we verify
+      // the real path is inside realUserFilesRoot.
+      //
+      // For non-existing paths (ENOENT): build the canonical path directly from
+      // the already-resolved realUserFilesRoot so the prefix check is consistent.
+      let guardedPath: string;
+      try {
+        const realPath = realpathSync(absPath);
+        if (!realPath.startsWith(realUserFilesRoot + sep) && realPath !== realUserFilesRoot) {
+          log.warn(`[pinned] ${skill.name}: path escape blocked: ${rawPath}`);
+          continue;
+        }
+        guardedPath = realPath;
+      } catch {
+        // realpathSync throws ENOENT for non-existing paths — treat as missing file
+        // but still guard against traversal. Compute canonical path using the
+        // real root so the startsWith comparison is consistent on all platforms.
+        const candidatePath = resolve(realUserFilesRoot, resolvedRelPath);
+        if (!candidatePath.startsWith(realUserFilesRoot + sep) && candidatePath !== realUserFilesRoot) {
+          log.warn(`[pinned] ${skill.name}: path escape blocked: ${rawPath}`);
+          continue;
+        }
+        guardedPath = candidatePath;
       }
-
-      pinnedPaths.add(absPath);
+      pinnedPaths.add(guardedPath);
 
       try {
         const content = await readFile(absPath, 'utf-8');
-        totalChars += content.length;
+        skillChars += content.length;
+        skillFileCount++;
         fileBlocks.push(
           `<file path="${resolvedRelPath}" skill="${skill.name}">\n${content}\n</file>`,
         );
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          skillFileCount++;
           fileBlocks.push(
             `<file path="${resolvedRelPath}" skill="${skill.name}" status="missing">\n` +
             `(file does not exist yet — will be created on first entry)\n</file>`,
@@ -60,12 +88,14 @@ export async function buildPinnedStateSection(
         }
       }
     }
+
+    if (skillFileCount > 0) {
+      const tokens = Math.ceil(skillChars / 2.5);
+      log.info(`[pinned] ${skill.name}: ${skillFileCount} files, ${tokens} tokens loaded`);
+    }
   }
 
   if (fileBlocks.length === 0) return null;
-
-  const tokens = Math.ceil(totalChars / 2.5);
-  log.info(`[pinned] ${skillsWithPinned.length} skill(s), ${fileBlocks.length} file(s), ~${tokens} tokens`);
 
   return {
     xml: `<pinned_skill_state>\n${fileBlocks.join('\n\n')}\n</pinned_skill_state>`,

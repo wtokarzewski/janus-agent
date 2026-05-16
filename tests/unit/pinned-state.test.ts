@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildPinnedStateSection } from '../../src/context/pinned-state.js';
@@ -54,7 +54,9 @@ describe('buildPinnedStateSection', () => {
     expect(result!.xml).toContain('skill="diet-tracker"');
     expect(result!.xml).toContain('path="profile.md"');
     expect(result!.xml).toContain('TARGET: 75kg');
-    expect(result!.pinnedPaths.has(join(userFilesDir, 'profile.md'))).toBe(true);
+    // pinnedPaths stores realpathSync-resolved paths — use realpathSync for comparison
+    // so this test passes on macOS where /var → /private/var via symlink.
+    expect(result!.pinnedPaths.has(realpathSync(join(userFilesDir, 'profile.md')))).toBe(true);
   });
 
   it('substitutes {today} in path', async () => {
@@ -114,7 +116,8 @@ describe('buildPinnedStateSection', () => {
   });
 
   it('blocks path escape via ..', async () => {
-    writeFileSync(join(workspaceDir, 'outside.md'), 'leaked');
+    // '../../outside.md' relative to .janus/users/u1/files/ resolves to .janus/users/outside.md
+    writeFileSync(join(workspaceDir, '.janus', 'users', 'outside.md'), 'leaked');
     const result = await buildPinnedStateSection({
       skills: [skill('bad', ['../../outside.md'])],
       workspaceDir,
@@ -123,5 +126,31 @@ describe('buildPinnedStateSection', () => {
       yesterday: '2026-05-13',
     });
     expect(result).toBeNull();
+  });
+
+  it('blocks path escape via symlink', async () => {
+    // Skip on Windows where symlinkSync may require elevated privileges
+    const outsidePath = join(workspaceDir, 'secret.md');
+    const symlinkPath = join(workspaceDir, '.janus', 'users', 'u1', 'files', 'sneaky.md');
+    writeFileSync(outsidePath, 'leaked');
+    try {
+      symlinkSync(outsidePath, symlinkPath);
+    } catch {
+      // symlinkSync can fail on Windows without admin — skip
+      return;
+    }
+    const result = await buildPinnedStateSection({
+      skills: [skill('bad', ['sneaky.md'])],
+      workspaceDir,
+      userId: 'u1',
+      today: '2026-05-14',
+      yesterday: '2026-05-13',
+    });
+    // Either null (all files blocked) or xml must not contain 'leaked'
+    if (result !== null) {
+      expect(result.xml).not.toContain('leaked');
+    } else {
+      expect(result).toBeNull();
+    }
   });
 });
