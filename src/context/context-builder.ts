@@ -13,12 +13,19 @@ import type { Database } from '../db/database.js';
 import { getKnownChats } from '../db/known-chats.js';
 import { localDate, localDateWithDay, localTimestamp, getTimezone } from '../utils/date.js';
 import { buildPinnedStateSection, isSkillActiveForChat, type SkillChannelPref } from './pinned-state.js';
+import { assembleWithBoundary } from '../prompts/cache-boundary.js';
 
 /** Split system prompt into cacheable static part and per-request dynamic part. */
 export interface ContextResult {
   staticPart: string;
   dynamicPart: string;
-  /** Absolute paths of pinned skill state files — for summarization filter (Task 4). */
+  /**
+   * Single system-prompt string with explicit CACHE_BOUNDARY marker between
+   * static (cacheable) and dynamic content. New consumers should use this
+   * field; legacy staticPart/dynamicPart kept for backwards compatibility.
+   */
+  systemPrompt: string;
+  /** Absolute paths of pinned skill state files — for summarization filter. */
   pinnedPaths?: Set<string>;
 }
 
@@ -212,9 +219,12 @@ export class ContextBuilder {
       dynamicParts.push(`<previous_summary>\n${opts.summary}\n</previous_summary>`);
     }
 
+    const staticPart = staticParts.join('\n\n---\n\n');
+    const dynamicPart = dynamicParts.join('\n\n---\n\n');
     return {
-      staticPart: staticParts.join('\n\n---\n\n'),
-      dynamicPart: dynamicParts.join('\n\n---\n\n'),
+      staticPart,
+      dynamicPart,
+      systemPrompt: assembleWithBoundary(staticParts, dynamicParts),
       pinnedPaths: pinnedPathsForSummary,
     };
   }
