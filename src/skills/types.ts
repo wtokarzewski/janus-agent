@@ -7,6 +7,12 @@ export interface SkillDefinition {
     env?: string[];
   };
   always: boolean;
+  /**
+   * Files listed here are read from disk every LLM call and injected into the
+   * system prompt — survives summarization. Supports {today}/{yesterday}/{userId}.
+   * See docs/superpowers/specs/2026-05-14-pinned-skill-state-design.md.
+   */
+  pinned: string[];
   complexity?: {
     simple?: TierConfig;
     medium?: TierConfig;
