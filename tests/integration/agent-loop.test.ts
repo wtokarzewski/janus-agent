@@ -18,7 +18,6 @@ import { createTestConfig } from '../helpers/test-fixtures.js';
 import { PatternGate } from '../../src/gates/pattern-gate.js';
 import type { GateService } from '../../src/gates/types.js';
 import type { LearnerStorage, ExecutionRecord } from '../../src/learner/types.js';
-import type { ChatRequest } from '../../src/llm/types.js';
 
 class InMemoryLearnerStorage implements LearnerStorage {
   records: ExecutionRecord[] = [];
@@ -229,11 +228,15 @@ describe('AgentLoop integration', () => {
     });
 
     expect(result).toBe('Hello Alice!');
-    // User info is now in the user message (dynamic context), not the system prompt
+    // User info now lives in systemParts.dynamicPart (second system block) — not
+    // baked into user message content. See spec §H.
+    const dynamicPart = mock.calls[0].systemParts?.dynamicPart ?? '';
+    expect(dynamicPart).toContain('Alice');
+    expect(dynamicPart).toContain('Sender: Alice (user1)');
+    expect(dynamicPart).toContain('Scope: user:user1');
+    // User message itself is plain content
     const lastMsg = mock.calls[0].messages[mock.calls[0].messages.length - 1];
-    expect(lastMsg.content).toContain('Alice');
-    expect(lastMsg.content).toContain('Sender: Alice (user1)');
-    expect(lastMsg.content).toContain('Scope: user:user1');
+    expect(lastMsg.content).toBe('hello');
   });
 
   it('should enforce tool deny list from user profile', async () => {

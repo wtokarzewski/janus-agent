@@ -380,7 +380,7 @@ export class AgentLoop {
     // 3. Get session + build system prompt (split into static/dynamic for prompt caching)
     const t0 = Date.now();
     const session = await this.deps.sessions.getOrCreate(sessionKey);
-    const { staticPart, dynamicPart, pinnedPaths } = await this.deps.context.build({
+    const { staticPart, dynamicPart, systemPrompt: systemPromptFull, pinnedPaths } = await this.deps.context.build({
       channel: msg.channel,
       chatId: msg.chatId,
       tools: this.deps.tools.summaries(isOwner),
@@ -391,11 +391,12 @@ export class AgentLoop {
       scope: msg.scope,
       agentCtx,
     });
-    // dynamicPart moves to user message for Anthropic prefix cache stability
-    const systemPrompt = staticPart;
+    // Dynamic content now goes into a separate (uncached) system block via systemParts.
+    // The user message is saved as PLAIN content — no <context> wrap — so history
+    // doesn't accumulate N copies of dynamicPart per turn. See spec §H.
+    const systemPrompt = systemPromptFull;
 
     // 3. Build messages: [system, ...history, user]
-    //    Trim history if estimated tokens exceed token budget
     const history = await this.deps.sessions.getHistory(sessionKey);
     const cleanHistory = repairToolMessages(history);
     let userContent = msg.replyContext
@@ -409,12 +410,6 @@ export class AgentLoop {
       if (injected) {
         userContent = `${injected}\n\n${userContent}`;
       }
-    }
-
-    // Dynamic context in user message — system blocks stay stable for Anthropic prefix cache.
-    // Order: <context>dynamic</context> → cron injection → reply context → user message
-    if (dynamicPart) {
-      userContent = `<context>\n${dynamicPart}\n</context>\n\n${userContent}`;
     }
 
     // Build user message — multimodal if images attached, plain string otherwise
