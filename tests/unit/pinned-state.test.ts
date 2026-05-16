@@ -175,7 +175,37 @@ describe('isSkillActiveForChat', () => {
     expect(isSkillActiveForChat(skillBase('diet-tracker'), 'telegram', '-200', prefs)).toBe(false);
   });
 
-  it('returns false when no preference and not always', () => {
-    expect(isSkillActiveForChat(skillBase('diet-tracker'), 'telegram', '-100', {})).toBe(false);
+  it('returns false when no preference and not always and no pinned files', () => {
+    const noPinned: SkillDefinition = {
+      name: 'diet-tracker', description: '', version: '1.0.0',
+      always: false, pinned: [], instructions: '', location: '/fake',
+    };
+    expect(isSkillActiveForChat(noPinned, 'telegram', '-100', {})).toBe(false);
+  });
+
+  it('returns true when no pref AND skill has pinned files (universal default)', () => {
+    const skill: SkillDefinition = {
+      name: 'diet-tracker', description: '', version: '1.0.0',
+      always: false, pinned: ['profile.md'], instructions: '', location: '/fake',
+    };
+    expect(isSkillActiveForChat(skill, 'telegram', '-100', {})).toBe(true);
+  });
+
+  it('returns false when no pref AND skill has empty pinned (no state to load)', () => {
+    const skill: SkillDefinition = {
+      name: 'stateless-skill', description: '', version: '1.0.0',
+      always: false, pinned: [], instructions: '', location: '/fake',
+    };
+    expect(isSkillActiveForChat(skill, 'telegram', '-100', {})).toBe(false);
+  });
+
+  it('respects skill-channels preference even when pinned declared', () => {
+    const skill: SkillDefinition = {
+      name: 'diet-tracker', description: '', version: '1.0.0',
+      always: false, pinned: ['profile.md'], instructions: '', location: '/fake',
+    };
+    const prefs = { 'diet-tracker': { channel: 'telegram', chatId: '-100', chatName: 'd', setAt: '' } };
+    // current chat doesn't match the preference → false (NOT fallback to universal rule)
+    expect(isSkillActiveForChat(skill, 'telegram', '-999', prefs)).toBe(false);
   });
 });

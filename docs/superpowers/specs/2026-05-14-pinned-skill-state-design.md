@@ -81,17 +81,18 @@ Explicit beats auto-detection. Five stateful skills × 30 seconds each is faster
 
 If a future skill author forgets `pinned:`, the bug returns *for that skill only* and is fixed by adding one line. The blast radius is bounded.
 
-### Decision 2: Skill activation is channel-aware
+### Decision 2: Skill activation is channel-aware (with universal-default fallback)
 
-Current activation: skill `description` keywords matched against the message.
+A skill is **active for pinning** in a chat when ANY of:
+1. The skill is `always: true` (always-on skills).
+2. The skill has a `skill-channels.json` preference AND that preference matches the current `(channel, chatId)`.
+3. The skill has no `skill-channels.json` preference for this skill AND declares non-empty `pinned: [...]` in its frontmatter.
 
-Change: a skill is **active** in a channel when:
-1. The current channel matches the skill's preferred channel in `skill-channels.json`, **OR**
-2. The skill's `description` matches the message text (existing rule).
+**Rule 3** is the universal default. It ensures pinned state works for users who haven't gone through a skill's "first use" channel-routing flow yet. Without it, every new installation would re-hit the bumerang for at least one message until `skill-channels.json` got populated.
 
-In the diet chat, diet-tracker is **always** active regardless of message wording. So `przeciez juz pisalem co jadlem` activates diet-tracker (because the chat is dedicated), pinned files load, agent has state.
+**Rule 2 takes priority over Rule 3.** If the user explicitly set a channel preference (via the skill's first-use flow), we respect it — pinning is scoped to that chat only. If they later want pinning everywhere, they delete the preference.
 
-In a non-dedicated chat (e.g., family general), diet-tracker still activates on keywords (`jadłem`, `waga`, etc.). Pinning only applies when the skill is active for that turn.
+For diet-tracker on a fresh install: no preference yet → Rule 3 activates pinning in every chat → after the first diet interaction, the skill writes `skill-channels.json` → from then on Rule 2 scopes pinning to the chosen chat. Smooth degradation.
 
 ### Decision 3: Refresh every LLM call
 

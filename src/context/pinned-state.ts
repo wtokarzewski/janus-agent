@@ -115,8 +115,14 @@ function substituteTemplates(path: string, ctx: BuildPinnedStateInput): string {
 
 /**
  * Returns true if a skill's pinned files should be loaded for the current chat.
- * Active when the skill is always-on (`always: true`) or when its skill-channels
- * preference matches the current (channel, chatId).
+ * Active when:
+ *   1. The skill is always-on (`always: true`), OR
+ *   2. Its skill-channels preference matches the current (channel, chatId), OR
+ *   3. No skill-channels preference exists AND the skill declared pinned files.
+ *
+ * Rule 3 is what makes pinned state work universally for users who haven't gone
+ * through the skill's "first use" channel-routing flow yet. See
+ * docs/superpowers/specs/2026-05-14-pinned-skill-state-design.md.
  */
 export function isSkillActiveForChat(
   skill: SkillDefinition,
@@ -126,6 +132,8 @@ export function isSkillActiveForChat(
 ): boolean {
   if (skill.always) return true;
   const pref = prefs[skill.name];
-  if (!pref) return false;
-  return pref.channel === channel && pref.chatId === chatId;
+  if (pref) return pref.channel === channel && pref.chatId === chatId;
+  // No explicit preference: skills that declared pinned files are active everywhere
+  // for this user. Avoids requiring skill-channels.json migration for existing installs.
+  return skill.pinned.length > 0;
 }

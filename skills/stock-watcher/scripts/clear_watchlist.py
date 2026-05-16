@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 """
 Clear the entire watchlist.
-Usage: python3 clear_watchlist.py
+Usage: python3 clear_watchlist.py --user <userId>
 """
+import argparse
 import os
-from config import WATCHLIST_FILE, WATCHLIST_DIR
+import sys
+from config import watchlist_paths
 
 
-def clear_watchlist() -> None:
+def clear_watchlist(watchlist_dir: str, watchlist_file: str) -> None:
     """Clear the entire watchlist."""
-    os.makedirs(WATCHLIST_DIR, exist_ok=True)
+    os.makedirs(watchlist_dir, exist_ok=True)
 
-    with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
+    with open(watchlist_file, "w", encoding="utf-8") as f:
         pass
 
     print("Watchlist cleared.")
 
 
 if __name__ == "__main__":
-    clear_watchlist()
+    parser = argparse.ArgumentParser(description="Clear the entire watchlist")
+    parser.add_argument("--user", required=True, help="Janus user ID")
+    args = parser.parse_args()
+
+    try:
+        watchlist_dir, watchlist_file = watchlist_paths(args.user)
+        clear_watchlist(watchlist_dir, watchlist_file)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)

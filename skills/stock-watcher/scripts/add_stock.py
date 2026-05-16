@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 Add stock to watchlist.
-Usage: python3 add_stock.py <ticker> [stock_name]
+Usage: python3 add_stock.py --user <userId> <ticker> [stock_name]
 """
+import argparse
 import sys
 import os
 import requests
 from bs4 import BeautifulSoup
-from config import WATCHLIST_FILE, GOOGLE_FINANCE_URL, validate_ticker
+from config import watchlist_paths, GOOGLE_FINANCE_URL, validate_ticker
 
 REQUEST_TIMEOUT = 10
 
@@ -56,7 +57,7 @@ def sanitize_name(name: str) -> str:
     return name.replace("|", " ").replace("\n", " ").replace("\r", "").strip()
 
 
-def add_stock(ticker: str, stock_name: str | None = None) -> bool:
+def add_stock(ticker: str, watchlist_dir: str, watchlist_file: str, stock_name: str | None = None) -> bool:
     """Add stock to watchlist."""
     ticker = validate_ticker(ticker)
 
@@ -66,10 +67,12 @@ def add_stock(ticker: str, stock_name: str | None = None) -> bool:
             stock_name = ticker  # fallback
     stock_name = sanitize_name(stock_name)
 
+    os.makedirs(watchlist_dir, exist_ok=True)
+
     # Read existing watchlist
     existing_stocks: list[str] = []
-    if os.path.exists(WATCHLIST_FILE):
-        with open(WATCHLIST_FILE, "r", encoding="utf-8") as f:
+    if os.path.exists(watchlist_file):
+        with open(watchlist_file, "r", encoding="utf-8") as f:
             existing_stocks = [line.strip() for line in f if line.strip()]
 
     # Check duplicate
@@ -80,7 +83,7 @@ def add_stock(ticker: str, stock_name: str | None = None) -> bool:
 
     existing_stocks.append(f"{ticker}|{stock_name}")
 
-    with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
+    with open(watchlist_file, "w", encoding="utf-8") as f:
         for stock in existing_stocks:
             f.write(stock + "\n")
 
@@ -89,14 +92,15 @@ def add_stock(ticker: str, stock_name: str | None = None) -> bool:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 add_stock.py <ticker> [stock_name]")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Add stock to watchlist")
+    parser.add_argument("--user", required=True, help="Janus user ID")
+    parser.add_argument("ticker", help="Stock ticker (e.g. AAPL or CDR:WSE)")
+    parser.add_argument("stock_name", nargs="?", default=None, help="Optional stock name")
+    args = parser.parse_args()
 
     try:
-        t = sys.argv[1]
-        n = sys.argv[2] if len(sys.argv) > 2 else None
-        add_stock(t, n)
+        watchlist_dir, watchlist_file = watchlist_paths(args.user)
+        add_stock(args.ticker, watchlist_dir, watchlist_file, args.stock_name)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
