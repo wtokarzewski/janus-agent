@@ -2,7 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import type { SkillDefinition } from '../skills/types.js';
+import type { SkillChannelPref } from '../users/user-resolver.js';
 import * as log from '../utils/logger.js';
+
+export type { SkillChannelPref };
 
 export interface BuildPinnedStateInput {
   skills: SkillDefinition[];
@@ -108,4 +111,21 @@ function substituteTemplates(path: string, ctx: BuildPinnedStateInput): string {
     .replaceAll('{today}', ctx.today)
     .replaceAll('{yesterday}', ctx.yesterday)
     .replaceAll('{userId}', ctx.userId);
+}
+
+/**
+ * Returns true if a skill's pinned files should be loaded for the current chat.
+ * Active when the skill is always-on (`always: true`) or when its skill-channels
+ * preference matches the current (channel, chatId).
+ */
+export function isSkillActiveForChat(
+  skill: SkillDefinition,
+  channel: string,
+  chatId: string,
+  prefs: Record<string, SkillChannelPref>,
+): boolean {
+  if (skill.always) return true;
+  const pref = prefs[skill.name];
+  if (!pref) return false;
+  return pref.channel === channel && pref.chatId === chatId;
 }

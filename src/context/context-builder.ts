@@ -11,11 +11,14 @@ import type { AgentContext } from '../agent/agent-resolver.js';
 import type { Database } from '../db/database.js';
 import { getKnownChats } from '../db/known-chats.js';
 import { localDate, localDateWithDay, localTimestamp, getTimezone } from '../utils/date.js';
+import { buildPinnedStateSection, isSkillActiveForChat, type SkillChannelPref } from './pinned-state.js';
 
 /** Split system prompt into cacheable static part and per-request dynamic part. */
 export interface ContextResult {
   staticPart: string;
   dynamicPart: string;
+  /** Absolute paths of pinned skill state files — for summarization filter (Task 4). */
+  pinnedPaths?: Set<string>;
 }
 
 interface ContextDeps {
@@ -150,6 +153,28 @@ export class ContextBuilder {
       if (skillChannels) dynamicParts.push(skillChannels);
     }
 
+    // Pinned skill state — survives summarization. Loaded fresh each call.
+    // See docs/superpowers/specs/2026-05-14-pinned-skill-state-design.md.
+    let pinnedPathsForSummary: Set<string> | undefined;
+    if (opts.user?.userId) {
+      const allSkills = await this.deps.skills.loadAll();
+      const skillPrefs = await loadSkillChannels(opts.user.userId, this.deps.config.workspace.dir);
+      const activeSkills = allSkills.filter(s =>
+        isSkillActiveForChat(s, opts.channel, opts.chatId, skillPrefs as Record<string, SkillChannelPref>),
+      );
+      const pinned = await buildPinnedStateSection({
+        skills: activeSkills,
+        workspaceDir: this.deps.config.workspace.dir,
+        userId: opts.user.userId,
+        today: localDate(),
+        yesterday: localDate(new Date(Date.now() - 86_400_000)),
+      });
+      if (pinned) {
+        dynamicParts.push(pinned.xml);
+        pinnedPathsForSummary = pinned.pinnedPaths;
+      }
+    }
+
     if (!minimal && !background) {
       // 7. Memory (hybrid: FTS5 search if available, else full dump)
       const memoryAgentId = opts.agentCtx && !opts.agentCtx.memoryShared ? opts.agentCtx.id : undefined;
@@ -185,6 +210,7 @@ export class ContextBuilder {
     return {
       staticPart: staticParts.join('\n\n---\n\n'),
       dynamicPart: dynamicParts.join('\n\n---\n\n'),
+      pinnedPaths: pinnedPathsForSummary,
     };
   }
 

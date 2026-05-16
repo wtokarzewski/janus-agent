@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildPinnedStateSection } from '../../src/context/pinned-state.js';
+import { buildPinnedStateSection, isSkillActiveForChat } from '../../src/context/pinned-state.js';
 import type { SkillDefinition } from '../../src/skills/types.js';
 
 const skill = (name: string, pinned: string[]): SkillDefinition => ({
@@ -152,5 +152,30 @@ describe('buildPinnedStateSection', () => {
     } else {
       expect(result).toBeNull();
     }
+  });
+});
+
+describe('isSkillActiveForChat', () => {
+  const skillBase = (name: string, always = false): SkillDefinition => ({
+    name, description: '', version: '1.0.0', always, pinned: ['x'],
+    instructions: '', location: '/fake',
+  });
+
+  it('returns true for always:true skill regardless of channel', () => {
+    expect(isSkillActiveForChat(skillBase('a', true), 'telegram', '123', {})).toBe(true);
+  });
+
+  it('returns true when skill-channels matches current chat', () => {
+    const prefs = { 'diet-tracker': { channel: 'telegram', chatId: '-100', chatName: 'd', setAt: '' } };
+    expect(isSkillActiveForChat(skillBase('diet-tracker'), 'telegram', '-100', prefs)).toBe(true);
+  });
+
+  it('returns false when skill-channels chatId differs', () => {
+    const prefs = { 'diet-tracker': { channel: 'telegram', chatId: '-100', chatName: 'd', setAt: '' } };
+    expect(isSkillActiveForChat(skillBase('diet-tracker'), 'telegram', '-200', prefs)).toBe(false);
+  });
+
+  it('returns false when no preference and not always', () => {
+    expect(isSkillActiveForChat(skillBase('diet-tracker'), 'telegram', '-100', {})).toBe(false);
   });
 });
