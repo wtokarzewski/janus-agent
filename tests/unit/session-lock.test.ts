@@ -6,15 +6,12 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type { JanusConfig } from '../../src/config/schema.js';
 
-function makeConfig(dir: string, overrides?: { contextWindow?: number; toolResultMaxShare?: number; toolResultHardMax?: number }) {
+function makeConfig(dir: string, overrides?: { contextWindow?: number }) {
   return {
     workspace: { dir, sessionsDir: 'sessions' },
     agent: {
-      contextWindow: overrides?.contextWindow ?? 1_000_000,
-      context: {
-        toolResultMaxShare: overrides?.toolResultMaxShare ?? 0.3,
-        toolResultHardMax: overrides?.toolResultHardMax ?? 400_000,
-      },
+      contextWindow: overrides?.contextWindow ?? 200_000,
+      context: {},
     },
   } as JanusConfig;
 }
@@ -121,16 +118,11 @@ describe('SessionManager tool result truncation', () => {
     mkdirSync(dir, { recursive: true });
   });
 
-  it('truncates tool results exceeding dynamic cap on append', async () => {
-    // contextWindow=1000, share=0.3 → dynamic cap = floor(1000 * 2.5 * 0.3) = 750
-    // hardMax=400_000 → min(750, 400_000) = 750
-    const manager = new SessionManager(makeConfig(dir, {
-      contextWindow: 1000,
-      toolResultMaxShare: 0.3,
-      toolResultHardMax: 400_000,
-    }));
+  it('truncates oversized tool results using unified cap', async () => {
+    // contextWindow=200_000 → effective=192_000 → cap=192_000 * 2.5 * 0.5 = 240_000 chars
+    const manager = new SessionManager(makeConfig(dir, { contextWindow: 200_000 }));
     const key = 'test-truncate';
-    const longContent = 'x'.repeat(2000);
+    const longContent = 'x'.repeat(300_000); // above cap
 
     await manager.append(key, [{ role: 'tool' as const, content: longContent, tool_call_id: 'tu_1' }]);
 
@@ -143,13 +135,7 @@ describe('SessionManager tool result truncation', () => {
   });
 
   it('does NOT truncate tool results under cap', async () => {
-    // contextWindow=1_000_000, share=0.3 → dynamic cap = 750_000
-    // hardMax=400_000 → min(750_000, 400_000) = 400_000
-    const manager = new SessionManager(makeConfig(dir, {
-      contextWindow: 1_000_000,
-      toolResultMaxShare: 0.3,
-      toolResultHardMax: 400_000,
-    }));
+    const manager = new SessionManager(makeConfig(dir, { contextWindow: 200_000 }));
     const key = 'test-no-truncate';
     const shortContent = 'hello world';
 
@@ -160,16 +146,11 @@ describe('SessionManager tool result truncation', () => {
     expect(history[0].content).toBe(shortContent);
   });
 
-  it('hard max applies even with huge context window', async () => {
-    // contextWindow=10_000_000, share=0.3 → dynamic cap = 7_500_000
-    // hardMax=1000 → min(7_500_000, 1000) = 1000
-    const manager = new SessionManager(makeConfig(dir, {
-      contextWindow: 10_000_000,
-      toolResultMaxShare: 0.3,
-      toolResultHardMax: 1000,
-    }));
-    const key = 'test-hard-max';
-    const longContent = 'y'.repeat(5000);
+  it('cap scales down with smaller contextWindow', async () => {
+    // contextWindow=20_000 → effective=12_000 → cap=12_000 * 2.5 * 0.5 = 15_000 chars
+    const manager = new SessionManager(makeConfig(dir, { contextWindow: 20_000 }));
+    const key = 'test-small-window';
+    const longContent = 'y'.repeat(50_000);
 
     await manager.append(key, [{ role: 'tool' as const, content: longContent, tool_call_id: 'tu_3' }]);
 
@@ -177,10 +158,7 @@ describe('SessionManager tool result truncation', () => {
     expect(history.length).toBe(1);
     const result = history[0].content as string;
     expect(result).toContain('[truncated:');
-    // Head (70% of 1000=700) + marker + tail (30% of 1000=300) — total should be around 1000 + marker length
     expect(result.length).toBeLessThan(longContent.length);
-    // The head and tail should come from the original content
-    expect(result.startsWith('y'.repeat(700))).toBe(true);
-    expect(result.endsWith('y'.repeat(300))).toBe(true);
+    expect(result.length).toBeLessThan(16_000); // cap + marker overhead
   });
 });

@@ -18,7 +18,6 @@ import { createTestConfig } from '../helpers/test-fixtures.js';
 import { PatternGate } from '../../src/gates/pattern-gate.js';
 import type { GateService } from '../../src/gates/types.js';
 import type { LearnerStorage, ExecutionRecord } from '../../src/learner/types.js';
-import type { ChatRequest } from '../../src/llm/types.js';
 
 class InMemoryLearnerStorage implements LearnerStorage {
   records: ExecutionRecord[] = [];
@@ -229,11 +228,15 @@ describe('AgentLoop integration', () => {
     });
 
     expect(result).toBe('Hello Alice!');
-    // User info is now in the user message (dynamic context), not the system prompt
+    // User info now lives in systemParts.dynamicPart (second system block) — not
+    // baked into user message content. See spec §H.
+    const dynamicPart = mock.calls[0].systemParts?.dynamicPart ?? '';
+    expect(dynamicPart).toContain('Alice');
+    expect(dynamicPart).toContain('Sender: Alice (user1)');
+    expect(dynamicPart).toContain('Scope: user:user1');
+    // User message itself is plain content
     const lastMsg = mock.calls[0].messages[mock.calls[0].messages.length - 1];
-    expect(lastMsg.content).toContain('Alice');
-    expect(lastMsg.content).toContain('Sender: Alice (user1)');
-    expect(lastMsg.content).toContain('Scope: user:user1');
+    expect(lastMsg.content).toBe('hello');
   });
 
   it('should enforce tool deny list from user profile', async () => {
@@ -346,53 +349,11 @@ describe('AgentLoop integration', () => {
     expect(result).toBe('Blocked.');
   });
 
-  it('should flush memory when tokens exceed 40% of budget', async () => {
-    // Low tokenBudget so pre-filled session + 1 message exceeds 40% threshold
-    const config = createTestConfig({
-      agent: { summarizationThreshold: 100, tokenBudget: 500 },
-      streaming: { enabled: false },
-    });
-    const bus = new MessageBus();
-
-    // 1 chat response + possible summarization + 1 flush response
-    const mock = new MockProvider([
-      { content: 'Response 1' },
-      { content: 'Summary of conversation' },
-      { content: '- Decision: use SQLite' },
-    ]);
-
-    const registry = new ProviderRegistry();
-    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
-
-    const tools = new ToolRegistry();
-    tools.setContext({ workspaceDir: config.workspace.dir, execDenyPatterns: [], execTimeout: 5000, maxFileSize: 1_000_000 });
-    const memory = new MemoryStore(config);
-    const sessions = new SessionManager(config);
-    const skills = new SkillLoader(config);
-    const context = new ContextBuilder({ skills, memory, config });
-    const learner = new SkillLearner(new InMemoryLearnerStorage());
-
-    const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner, memory });
-
-    // Pre-fill session to push tokens above 40% of 500
-    const sessionKey = 'cli:flush-test';
-    await sessions.append(sessionKey, [
-      { role: 'user', content: 'x'.repeat(500) },
-      { role: 'assistant', content: 'y'.repeat(500) },
-    ]);
-
-    await agent.processDirect('trigger flush', { channel: 'cli', chatId: 'flush-test' });
-
-    // Wait for fire-and-forget flush + summarization
-    await new Promise(r => setTimeout(r, 200));
-
-    // At least one of the async calls should be a memory flush (memory manager prompt)
-    const flushCall = mock.calls.find(c => {
-      const content = c.messages[0]?.content;
-      return typeof content === 'string' && content.includes('memory manager');
-    });
-    expect(flushCall).toBeTruthy();
-  });
+  // Removed: 'should flush memory when tokens exceed 40% of budget'.
+  // The token-based flush trigger (tokenBudget * 0.4) was deleted in the
+  // context-management redesign. Flush now fires when 20+ unflushed messages
+  // accumulate OR on shutdown. See spec at
+  // docs/superpowers/specs/2026-05-16-context-management-redesign.md.
 
   it('should flush all sessions on flushAllSessions()', async () => {
     const config = createTestConfig({
@@ -522,68 +483,12 @@ describe('AgentLoop integration', () => {
     expect(toolMsg?.content).toContain('Stopped by user');
   });
 
-  it('should retry flush before summarization and proceed on failure', async () => {
-    // Low summarizationThreshold so 3 messages (6 entries) triggers it
-    const config = createTestConfig({
-      agent: { summarizationThreshold: 4 },
-      streaming: { enabled: false },
-    });
-    const bus = new MessageBus();
-
-    // Track which calls are flush calls (contain "memory manager" in system prompt)
-    let flushAttempts = 0;
-
-    const mock = new MockProvider([
-      { content: 'Response 1' },
-      { content: 'Response 2' },
-      { content: 'Response 3' },
-      // Flush calls will fail (handled below), summarization call:
-      { content: 'Summary of conversation' },
-    ]);
-
-    // Override chat to fail on flush calls (memory manager in system prompt)
-    const originalChat = mock.chat.bind(mock);
-    mock.chat = async (request: ChatRequest) => {
-      const systemContent = request.messages[0]?.content ?? '';
-      if (typeof systemContent === 'string' && systemContent.includes('memory manager')) {
-        flushAttempts++;
-        throw new Error('Simulated flush LLM failure');
-      }
-      return originalChat(request);
-    };
-
-    const registry = new ProviderRegistry();
-    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
-
-    const tools = new ToolRegistry();
-    tools.setContext({ workspaceDir: config.workspace.dir, execDenyPatterns: [], execTimeout: 5000, maxFileSize: 1_000_000 });
-    const memory = new MemoryStore(config);
-    const sessions = new SessionManager(config);
-    const skills = new SkillLoader(config);
-    const context = new ContextBuilder({ skills, memory, config });
-    const learner = new SkillLearner(new InMemoryLearnerStorage());
-
-    const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner, memory });
-
-    // Send 3 messages = 6 session entries (user+assistant) > summarizationThreshold of 4
-    await agent.processDirect('message 1', { chatId: 'retry-test' });
-    await agent.processDirect('message 2', { chatId: 'retry-test' });
-    await agent.processDirect('message 3', { chatId: 'retry-test' });
-
-    // Wait for fire-and-forget summarization (includes flush retries with backoff: 2s + 4s)
-    await new Promise(r => setTimeout(r, 10_000));
-
-    // Flush should have been attempted 3 times (retry with backoff)
-    expect(flushAttempts).toBe(3);
-
-    // Summarization LLM call should have completed despite flush failures
-    // mock.calls only contains successful calls (flush throws before reaching originalChat)
-    const summarizeCall = mock.calls.find((c: ChatRequest) => {
-      const sys = c.messages[0]?.content;
-      return typeof sys === 'string' && sys.includes('summarizer');
-    });
-    expect(summarizeCall).toBeTruthy();
-  }, 15_000);
+  // Removed: 'should retry flush before summarization and proceed on failure'.
+  // Pre-compaction flush retries (3× with 2s/4s backoff inside doSummarization)
+  // were removed because they raced with the token-aware flush trigger via a
+  // shared state.flushing guard — when both fired concurrently the second one
+  // silently skipped, causing data loss. Flush and compaction are now
+  // independent paths with no shared state.
 
   it('should deny tool execution when gate denies', async () => {
     const mock = new MockProvider([
