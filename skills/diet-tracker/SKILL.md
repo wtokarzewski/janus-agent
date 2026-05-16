@@ -1,7 +1,7 @@
 ---
 name: diet-tracker
 description: "Diet tracking — logging meals, calories/macros, weigh-ins, daily summaries, weekly reports. Use when user mentions food, weight, calories, macros, diet, or asks about their food diary."
-version: "2.2.0"
+version: "2.3.0"
 always: false
 pinned:
   - food-diary/profile.md
@@ -29,7 +29,8 @@ Communicate with the user in their preferred language (from PROFILE.md). All rep
 
 ## Rules
 
-- Always read `profile.md` before calculating — each user has different targets and day types
+- The user's diet plan, targets, supplements, and milestones live in `profile.md` — which is in `<pinned_skill_state>` every turn. Do NOT call `read_file` on `profile.md` or `food-diary/{today}.md` — they're already in your context.
+- **Never `read_file` this SKILL.md at runtime.** When the user mentions "diet plan", "my plan", or asks to review their approach, they mean `profile.md` (in pinned), NOT this skill's instructions. This SKILL.md is your manual, not theirs. Re-reading it costs ~5k tokens per call and triggers context cascade.
 - When estimating calories: overestimate rather than underestimate
 - Don't moralize — if the user ate too much, just show the numbers
 - Diet day = first meal to sleep (not midnight to midnight)
