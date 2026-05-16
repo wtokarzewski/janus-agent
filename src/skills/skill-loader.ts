@@ -148,6 +148,7 @@ export class SkillLoader {
         version: String(meta.version ?? '0.0.0'),
         requires: meta.requires as SkillDefinition['requires'],
         always: Boolean(meta.always ?? false),
+        pinned: Array.isArray(meta.pinned) ? meta.pinned.map(String) : [],
         complexity: meta.complexity as SkillDefinition['complexity'],
         instructions: body.trim(),
         location: filePath,
