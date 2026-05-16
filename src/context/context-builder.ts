@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import * as log from '../utils/logger.js';
 import type { SkillDefinition } from '../skills/types.js';
 import type { MemoryStore } from '../memory/memory-store.js';
 import type { SkillLoader } from '../skills/skill-loader.js';
@@ -145,33 +146,37 @@ export class ContextBuilder {
     }
 
     // Skill channel routing — known chats + preferences (per-user)
+    let pinnedPathsForSummary: Set<string> | undefined;
     if (opts.user?.userId) {
       const knownChats = this.buildKnownChatsSection(opts.user.userId);
       if (knownChats) dynamicParts.push(knownChats);
 
-      const skillChannels = await this.buildSkillChannelsSection(opts.user.userId);
-      if (skillChannels) dynamicParts.push(skillChannels);
-    }
-
-    // Pinned skill state — survives summarization. Loaded fresh each call.
-    // See docs/superpowers/specs/2026-05-14-pinned-skill-state-design.md.
-    let pinnedPathsForSummary: Set<string> | undefined;
-    if (opts.user?.userId) {
-      const allSkills = await this.deps.skills.loadAll();
+      // Hoist single loadSkillChannels read — shared by skill_channels section and pinned filter.
       const skillPrefs = await loadSkillChannels(opts.user.userId, this.deps.config.workspace.dir);
-      const activeSkills = allSkills.filter(s =>
-        isSkillActiveForChat(s, opts.channel, opts.chatId, skillPrefs as Record<string, SkillChannelPref>),
-      );
-      const pinned = await buildPinnedStateSection({
-        skills: activeSkills,
-        workspaceDir: this.deps.config.workspace.dir,
-        userId: opts.user.userId,
-        today: localDate(),
-        yesterday: localDate(new Date(Date.now() - 86_400_000)),
-      });
-      if (pinned) {
-        dynamicParts.push(pinned.xml);
-        pinnedPathsForSummary = pinned.pinnedPaths;
+
+      const skillChannels = this.buildSkillChannelsSection(skillPrefs);
+      if (skillChannels) dynamicParts.push(skillChannels);
+
+      // Pinned skill state — survives summarization. Loaded fresh each call.
+      // See docs/superpowers/specs/2026-05-14-pinned-skill-state-design.md.
+      try {
+        const allSkills = await this.deps.skills.loadAll();
+        const activeSkills = allSkills.filter(s =>
+          isSkillActiveForChat(s, opts.channel, opts.chatId, skillPrefs),
+        );
+        const pinned = await buildPinnedStateSection({
+          skills: activeSkills,
+          workspaceDir: this.deps.config.workspace.dir,
+          userId: opts.user.userId,
+          today: localDate(),
+          yesterday: localDate(new Date(Date.now() - 86_400_000)),
+        });
+        if (pinned) {
+          dynamicParts.push(pinned.xml);
+          pinnedPathsForSummary = pinned.pinnedPaths;
+        }
+      } catch (err) {
+        log.warn(`[pinned] failed to build pinned section: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -243,8 +248,7 @@ export class ContextBuilder {
     return `<your_chats>\n${lines.join('\n')}\n</your_chats>`;
   }
 
-  private async buildSkillChannelsSection(userId: string): Promise<string | null> {
-    const prefs = await loadSkillChannels(userId, this.deps.config.workspace.dir);
+  private buildSkillChannelsSection(prefs: Record<string, SkillChannelPref>): string | null {
     const entries = Object.entries(prefs);
     if (entries.length === 0) return null;
 
