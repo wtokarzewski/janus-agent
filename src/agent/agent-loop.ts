@@ -1179,18 +1179,16 @@ export class AgentLoop {
         messages: [
           { role: 'system', content: `You are a memory manager. Extract and preserve important information from conversation messages.
 
-${contextStr}Respond in this exact format. Be CONCISE — only write what's worth remembering long-term.
+${contextStr}IMPORTANT: MEMORY.md is read-only during this flush. Never produce a "new MEMORY.md" — the agent itself maintains MEMORY.md during regular turns and heartbeats using edit_file. Your job here is ONLY to capture session events into append-only logs.
+
+Respond in this exact format. Be CONCISE — only write what's worth remembering long-term.
 
 <summary>1-2 sentence summary of what happened. Include specific names, numbers, decisions.</summary>
 <facts>
 - Key fact 1
 - Key fact 2
 (Write NONE if nothing worth remembering)
-</facts>
-<memory>
-Full updated MEMORY.md with new facts merged into existing content. Keep valid existing info, add new details, remove outdated info. Organize by topic.
-(Write UNCHANGED if no updates needed)
-</memory>` },
+</facts>` },
           { role: 'user', content: `New messages to process:\n${messagesText}` },
         ],
         temperature: 0.3,
@@ -1203,11 +1201,9 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
       const response = flushResponse.content;
       const summaryMatch = response.match(/<summary>([\s\S]*?)<\/summary>/);
       const factsMatch = response.match(/<facts>([\s\S]*?)<\/facts>/);
-      const memoryMatch = response.match(/<memory>([\s\S]*?)<\/memory>/);
 
       const summary = summaryMatch?.[1]?.trim() ?? '';
       const facts = factsMatch?.[1]?.trim() ?? '';
-      const memoryUpdate = memoryMatch?.[1]?.trim() ?? '';
 
       // HISTORY.md — append-only safety net (never lost)
       if (summary && summary !== 'NONE') {
@@ -1219,13 +1215,12 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
         await this.deps.memory.appendDaily(`## Session notes\n${facts}`, userId, scope);
       }
 
-      // MEMORY.md — holistic update (merge new facts into existing, per-user when userId available)
-      if (memoryUpdate && memoryUpdate !== 'UNCHANGED' && memoryUpdate !== 'NONE') {
-        await this.deps.memory.writeMemory(memoryUpdate, userId);
-      }
+      // MEMORY.md is NOT touched here. The agent owns curated long-term memory
+      // and updates it during regular turns/heartbeats via edit_file. Auto-flush
+      // would risk LLM truncation overwriting valid content.
 
       // Fallback: if XML parsing failed, treat whole response as daily notes
-      if (!summaryMatch && !factsMatch && !memoryMatch && response.trim() !== 'NONE') {
+      if (!summaryMatch && !factsMatch && response.trim() !== 'NONE') {
         await this.deps.memory.appendDaily(`## Session notes\n${response}`, userId, scope);
         await this.deps.memory.appendHistory(`[memory flush] Session notes extracted`);
       }
