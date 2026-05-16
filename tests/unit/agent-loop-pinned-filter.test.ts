@@ -54,7 +54,7 @@ describe('filterPinnedReadsFromSummarization', () => {
       },
       { role: 'tool', tool_call_id: 'call_3', content: 'page' },
     ];
-    const filtered = filterPinnedReadsFromSummarization(messages, new Set());
+    const filtered = filterPinnedReadsFromSummarization(messages, new Set(['/abs/path/profile.md']));
     expect(filtered.find(m => m.role === 'tool' && m.tool_call_id === 'call_3')).toBeDefined();
   });
 
