@@ -92,6 +92,51 @@ describe('Skill cache invalidation', () => {
   });
 });
 
+describe('Skill pinned field', () => {
+  it('parses pinned field from frontmatter', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'janus-skill-test-'));
+    const skillDir = join(tempDir, 'skills', 'demo');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), `---
+name: demo
+description: test
+version: 1.0.0
+always: false
+pinned:
+  - profile.md
+  - food-diary/{today}.md
+---
+body
+`);
+    const config = createTestConfig({ workspace: { dir: tempDir, skillsDir: 'skills' } });
+    const loader = new SkillLoader(config);
+    const skills = await loader.loadAll();
+    const demo = skills.find(s => s.name === 'demo');
+    expect(demo).toBeTruthy();
+    expect(demo!.pinned).toEqual(['profile.md', 'food-diary/{today}.md']);
+  });
+
+  it('treats missing pinned as empty array', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'janus-skill-test-'));
+    const skillDir = join(tempDir, 'skills', 'demo');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), `---
+name: demo
+description: test
+version: 1.0.0
+always: false
+---
+body
+`);
+    const config = createTestConfig({ workspace: { dir: tempDir, skillsDir: 'skills' } });
+    const loader = new SkillLoader(config);
+    const skills = await loader.loadAll();
+    const demo = skills.find(s => s.name === 'demo');
+    expect(demo).toBeTruthy();
+    expect(demo!.pinned).toEqual([]);
+  });
+});
+
 describe('Context builder skill stubs', () => {
   it('should emit location attribute in skill stubs', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'janus-skill-test-'));

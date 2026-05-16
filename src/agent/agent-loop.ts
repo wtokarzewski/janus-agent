@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
 import type { LLMMessage, ToolCall, ToolContentBlock, UserContentBlock } from '../llm/types.js';
@@ -57,6 +59,48 @@ interface IterateResult {
   toolCalls: number;
   totalTokens: number;
   outcome: 'success' | 'error' | 'max_iterations';
+}
+
+// Pinned-file tool_results are dropped from summarization: their content is
+// re-injected fresh on every call, so summarizing a stale snapshot adds nothing
+// and dilutes the narrative budget.
+// See docs/superpowers/specs/2026-05-14-pinned-skill-state-design.md.
+export function filterPinnedReadsFromSummarization(
+  messages: LLMMessage[],
+  pinnedPaths: Set<string>,
+): LLMMessage[] {
+  if (pinnedPaths.size === 0) return messages;
+
+  // Pass 1: collect tool_call_ids of read_file calls targeting a pinned path
+  const dropIds = new Set<string>();
+  for (const m of messages) {
+    if (m.role !== 'assistant') continue;
+    const tcs = m.tool_calls;
+    if (!tcs?.length) continue;
+    for (const tc of tcs) {
+      if (tc.function.name !== 'read_file') continue;
+      try {
+        const args = JSON.parse(tc.function.arguments) as { path?: string };
+        if (!args.path) continue;
+        let abs: string;
+        try {
+          abs = realpathSync(args.path);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+            abs = resolve(args.path);
+          } else {
+            continue; // unknown error: skip this call to be safe
+          }
+        }
+        if (pinnedPaths.has(abs)) dropIds.add(tc.id);
+      } catch { /* malformed args — keep */ }
+    }
+  }
+
+  if (dropIds.size === 0) return messages;
+
+  // Pass 2: filter out tool messages whose tool_call_id was marked
+  return messages.filter(m => !(m.role === 'tool' && dropIds.has(m.tool_call_id)));
 }
 
 /**
@@ -329,7 +373,7 @@ export class AgentLoop {
     // 3. Get session + build system prompt (split into static/dynamic for prompt caching)
     const t0 = Date.now();
     const session = await this.deps.sessions.getOrCreate(sessionKey);
-    const { staticPart, dynamicPart } = await this.deps.context.build({
+    const { staticPart, dynamicPart, pinnedPaths } = await this.deps.context.build({
       channel: msg.channel,
       chatId: msg.chatId,
       tools: this.deps.tools.summaries(isOwner),
@@ -467,7 +511,7 @@ export class AgentLoop {
       if (this.summarizing.has(sessionKey)) {
         log.debug(`[${sessionKey}] Skipping summarization — already in progress`);
       } else {
-        this.triggerSummarization(sessionKey, fullSession.messages, msg.user?.userId, msg.scope, sessionTokenEstimate).catch(err => {
+        this.triggerSummarization(sessionKey, fullSession.messages, msg.user?.userId, msg.scope, sessionTokenEstimate, pinnedPaths ?? new Set<string>()).catch(err => {
           log.warn(`Summarization failed: ${err instanceof Error ? err.message : String(err)}`);
         });
       }
@@ -1187,11 +1231,12 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     userId?: string,
     scope?: InboundMessage['scope'],
     preTokenEstimate?: number,
+    pinnedPaths: Set<string> = new Set(),
   ): Promise<void> {
     // Double-fire guard (C2)
     this.summarizing.add(sessionKey);
     try {
-      await this.doSummarization(sessionKey, messages, userId, scope, preTokenEstimate);
+      await this.doSummarization(sessionKey, messages, userId, scope, preTokenEstimate, pinnedPaths);
     } finally {
       this.summarizing.delete(sessionKey);
     }
@@ -1203,6 +1248,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     userId?: string,
     scope?: InboundMessage['scope'],
     _preTokenEstimate?: number,
+    pinnedPaths: Set<string> = new Set(),
   ): Promise<void> {
     log.info(`[${sessionKey}] Summarization: start`);
     const sumStart = Date.now();
@@ -1241,6 +1287,10 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
       return;
     }
 
+    // Drop pinned-file reads from summarization input — they live in system prompt
+    // and re-load fresh every call.
+    const filteredForSummary = filterPinnedReadsFromSummarization(toSummarize, pinnedPaths);
+
     // Pre-compaction memory flush
     const discardUpTo = cutIndex;
     let flushed = false;
@@ -1261,7 +1311,7 @@ Full updated MEMORY.md with new facts merged into existing content. Keep valid e
     // Include tool interactions (truncated) — they carry essential context
     // that the summarizer needs (file contents, data written, search results).
     const TOOL_RESULT_MAX = 300;
-    const rawConversation = toSummarize.map(m => {
+    const rawConversation = filteredForSummary.map(m => {
       if (m.role === 'user') {
         const content = 'content' in m ? m.content : '';
         return `user: ${typeof content === 'string' ? content : userContentText(content as any)}`;
