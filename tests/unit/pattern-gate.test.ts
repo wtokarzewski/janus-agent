@@ -57,6 +57,12 @@ describe('PatternGate', () => {
     expect(gate.shouldGate('write_file', { path: 'test.txt', content: 'rm -rf /' })).toBe(false);
   });
 
+  it('should not gate spawn_agent (subagent inherits gates for dangerous tools)', () => {
+    const gate = new PatternGate(defaultPatterns);
+    expect(gate.shouldGate('spawn_agent', { task: 'Generate weekly meal plan' })).toBe(false);
+    expect(gate.shouldGate('spawn_agent', { task: 'rm -rf /' })).toBe(false);
+  });
+
   it('should handle empty command', () => {
     const gate = new PatternGate(defaultPatterns);
     expect(gate.shouldGate('exec', { command: '' })).toBe(false);

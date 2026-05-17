@@ -175,7 +175,7 @@ After saving profile — add to the user's HEARTBEAT.md (`.janus/users/{userId}/
 ## Food check-in
 - schedule: at {adjusted_time, default 13:00}
 - chat: {chatId}
-- task: Ask user what they've eaten so far today. Save to food-diary/{date}.md, calculate calories/macros using today's day type targets, show DAY STATUS report (progress bars, calories/macros/supplements). Read diet-tracker skill for format.
+- task: Midday food check-in. First read food-diary/{date}.md and the recent session messages. If the user already logged meals or had a detailed food conversation within the last 60 minutes — DO NOT ask "what have you eaten" again. Instead send a short progress summary (current macros vs targets, what's left for the day, one practical tip). Otherwise ask what they've eaten so far. Either way save updates to food-diary/{date}.md and show DAY STATUS in the dedicated diet channel. Read diet-tracker skill for format.
 
 ## Evening diet close
 - schedule: at {adjusted_time, default 21:00}
