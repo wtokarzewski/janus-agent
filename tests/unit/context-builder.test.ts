@@ -99,13 +99,13 @@ describe('ContextBuilder multi-user', () => {
       channel: 'telegram',
       chatId: '123',
       tools: [{ name: 'exec', description: 'Run command' }],
-      user: { userId: 'wt', name: 'Wojciech' },
+      user: { userId: 'alice', name: 'Alice' },
     });
     const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
     expect(prompt).toContain('<user>');
-    expect(prompt).toContain('Wojciech');
-    expect(prompt).toContain('userId: wt');
+    expect(prompt).toContain('Alice');
+    expect(prompt).toContain('userId: alice');
   });
 
   it('should not include user section when user is not provided', async () => {
@@ -128,18 +128,18 @@ describe('ContextBuilder multi-user', () => {
       channel: 'telegram',
       chatId: '123',
       tools: [],
-      user: { userId: 'wt', name: 'Wojciech' },
-      scope: { kind: 'user', id: 'wt' },
+      user: { userId: 'alice', name: 'Alice' },
+      scope: { kind: 'user', id: 'alice' },
     });
     const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
-    expect(prompt).toContain('Sender: Wojciech (wt)');
-    expect(prompt).toContain('Scope: user:wt');
+    expect(prompt).toContain('Sender: Alice (alice)');
+    expect(prompt).toContain('Scope: user:alice');
   });
 
   it('should filter tools by user allow list', async () => {
     const { builder } = createBuilder(tempDir, {
-      users: [{ id: 'zuzia', name: 'Zuzia', identities: [], tools: { allow: ['read_file'] } }],
+      users: [{ id: 'dave', name: 'Dave', identities: [], tools: { allow: ['read_file'] } }],
     });
 
     const { staticPart, dynamicPart } = await builder.build({
@@ -150,7 +150,7 @@ describe('ContextBuilder multi-user', () => {
         { name: 'read_file', description: 'Read file' },
         { name: 'write_file', description: 'Write file' },
       ],
-      user: { userId: 'zuzia', name: 'Zuzia' },
+      user: { userId: 'dave', name: 'Dave' },
     });
     const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
@@ -161,7 +161,7 @@ describe('ContextBuilder multi-user', () => {
 
   it('should filter tools by user deny list', async () => {
     const { builder } = createBuilder(tempDir, {
-      users: [{ id: 'wt', name: 'W', identities: [], tools: { deny: ['exec'] } }],
+      users: [{ id: 'alice', name: 'W', identities: [], tools: { deny: ['exec'] } }],
     });
 
     const { staticPart, dynamicPart } = await builder.build({
@@ -171,7 +171,7 @@ describe('ContextBuilder multi-user', () => {
         { name: 'exec', description: 'Run command' },
         { name: 'read_file', description: 'Read file' },
       ],
-      user: { userId: 'wt', name: 'W' },
+      user: { userId: 'alice', name: 'W' },
     });
     const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
@@ -186,11 +186,11 @@ describe('ContextBuilder multi-user', () => {
       channel: 'telegram',
       chatId: '-100123',
       tools: [],
-      scope: { kind: 'family', id: 'family_wt' },
+      scope: { kind: 'family', id: 'family_alice' },
     });
     const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
-    expect(prompt).toContain('Scope: family:family_wt');
+    expect(prompt).toContain('Scope: family:family_alice');
   });
 });
 
@@ -203,35 +203,35 @@ describe('ContextBuilder per-user overrides', () => {
 
   it('should merge global and per-user AGENTS.md', async () => {
     writeFileSync(join(tempDir, 'AGENTS.md'), '# Global\nBe helpful.');
-    const userDir = join(tempDir, '.janus', 'users', 'wt');
+    const userDir = join(tempDir, '.janus', 'users', 'alice');
     mkdirSync(userDir, { recursive: true });
-    writeFileSync(join(userDir, 'AGENTS.md'), '# Wojtek\nAlways reply in Polish.');
+    writeFileSync(join(userDir, 'AGENTS.md'), '# Alice\nAlways reply in Polish.');
 
     const { builder } = createBuilder(tempDir);
     const { staticPart } = await builder.build({
       channel: 'telegram',
       chatId: '123',
       tools: [],
-      user: { userId: 'wt', name: 'Wojtek' },
+      user: { userId: 'alice', name: 'Alice' },
     });
 
     expect(staticPart).toContain('<agents>');
     expect(staticPart).toContain('Be helpful');
     expect(staticPart).toContain('Always reply in Polish');
-    expect(staticPart).toContain('user-specific rules for wt');
+    expect(staticPart).toContain('user-specific rules for alice');
   });
 
   it('should load per-user AGENTS.md without global', async () => {
-    const userDir = join(tempDir, '.janus', 'users', 'wt');
+    const userDir = join(tempDir, '.janus', 'users', 'alice');
     mkdirSync(userDir, { recursive: true });
-    writeFileSync(join(userDir, 'AGENTS.md'), '# Wojtek\nBe concise.');
+    writeFileSync(join(userDir, 'AGENTS.md'), '# Alice\nBe concise.');
 
     const { builder } = createBuilder(tempDir);
     const { staticPart } = await builder.build({
       channel: 'telegram',
       chatId: '123',
       tools: [],
-      user: { userId: 'wt', name: 'Wojtek' },
+      user: { userId: 'alice', name: 'Alice' },
     });
 
     expect(staticPart).toContain('<agents>');
@@ -240,9 +240,9 @@ describe('ContextBuilder per-user overrides', () => {
 
   it('should not load per-user AGENTS.md when no user provided', async () => {
     writeFileSync(join(tempDir, 'AGENTS.md'), '# Global\nBe helpful.');
-    const userDir = join(tempDir, '.janus', 'users', 'wt');
+    const userDir = join(tempDir, '.janus', 'users', 'alice');
     mkdirSync(userDir, { recursive: true });
-    writeFileSync(join(userDir, 'AGENTS.md'), '# Wojtek\nSecret rules.');
+    writeFileSync(join(userDir, 'AGENTS.md'), '# Alice\nSecret rules.');
 
     const { builder } = createBuilder(tempDir);
     const { staticPart } = await builder.build({
@@ -257,7 +257,7 @@ describe('ContextBuilder per-user overrides', () => {
 
   it('should merge global and per-user HEARTBEAT.md', async () => {
     writeFileSync(join(tempDir, 'HEARTBEAT.md'), '## Backup\n- schedule: every 1d\n- task: Run backup');
-    const userDir = join(tempDir, '.janus', 'users', 'wt');
+    const userDir = join(tempDir, '.janus', 'users', 'alice');
     mkdirSync(userDir, { recursive: true });
     writeFileSync(join(userDir, 'HEARTBEAT.md'), '## Briefing\n- schedule: at 08:00\n- task: Morning news');
 
@@ -266,17 +266,17 @@ describe('ContextBuilder per-user overrides', () => {
       channel: 'telegram',
       chatId: '123',
       tools: [],
-      user: { userId: 'wt', name: 'Wojtek' },
+      user: { userId: 'alice', name: 'Alice' },
     });
 
     expect(staticPart).toContain('<heartbeat>');
     expect(staticPart).toContain('Run backup');
     expect(staticPart).toContain('Morning news');
-    expect(staticPart).toContain('heartbeat tasks for wt');
+    expect(staticPart).toContain('heartbeat tasks for alice');
   });
 
   it('should load per-user HEARTBEAT.md without global', async () => {
-    const userDir = join(tempDir, '.janus', 'users', 'wt');
+    const userDir = join(tempDir, '.janus', 'users', 'alice');
     mkdirSync(userDir, { recursive: true });
     writeFileSync(join(userDir, 'HEARTBEAT.md'), '## Check\n- schedule: every 30m\n- task: Health check');
 
@@ -285,7 +285,7 @@ describe('ContextBuilder per-user overrides', () => {
       channel: 'telegram',
       chatId: '123',
       tools: [],
-      user: { userId: 'wt', name: 'Wojtek' },
+      user: { userId: 'alice', name: 'Alice' },
     });
 
     expect(staticPart).toContain('<heartbeat>');
@@ -444,12 +444,12 @@ describe('ContextBuilder static/dynamic split', () => {
       channel: 'telegram',
       chatId: '123',
       tools: [],
-      user: { userId: 'wt', name: 'Wojciech' },
+      user: { userId: 'alice', name: 'Alice' },
     });
 
     // User section is dynamic (profile can change)
     expect(dynamicPart).toContain('<user>');
-    expect(dynamicPart).toContain('Wojciech');
+    expect(dynamicPart).toContain('Alice');
     // Static part should NOT have user section
     expect(staticPart).not.toContain('<user>');
   });

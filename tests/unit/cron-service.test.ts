@@ -50,9 +50,9 @@ describe('CronService CRUD', () => {
       scheduleKind: 'every',
       scheduleValue: '60000',
       task: 'Personal task',
-      userId: 'wojtek',
+      userId: 'alice',
     });
-    expect(job.userId).toBe('wojtek');
+    expect(job.userId).toBe('alice');
   });
 
   it('should list jobs', () => {
@@ -96,24 +96,24 @@ describe('CronService CRUD', () => {
 
   it('should upsert by name and set userId', () => {
     const job = service.upsertByName({
-      name: 'heartbeat:wojtek:Morning',
+      name: 'heartbeat:alice:Morning',
       scheduleKind: 'cron',
       scheduleValue: '0 8 * * *',
       task: 'Morning briefing',
-      userId: 'wojtek',
+      userId: 'alice',
     });
-    expect(job.userId).toBe('wojtek');
+    expect(job.userId).toBe('alice');
 
     // Update preserves userId
     const updated = service.upsertByName({
-      name: 'heartbeat:wojtek:Morning',
+      name: 'heartbeat:alice:Morning',
       scheduleKind: 'cron',
       scheduleValue: '0 9 * * *',
       task: 'Morning briefing v2',
-      userId: 'wojtek',
+      userId: 'alice',
     });
     expect(updated.id).toBe(job.id);
-    expect(updated.userId).toBe('wojtek');
+    expect(updated.userId).toBe('alice');
   });
 
   it('should upsert by name', () => {
@@ -130,32 +130,32 @@ describe('CronService CRUD', () => {
 describe('CronService per-user filtering', () => {
   it('should list only system + own jobs for a user', () => {
     service.addJob({ name: 'system-job', scheduleKind: 'every', scheduleValue: '1000', task: 'system' });
-    service.addJob({ name: 'wojtek-job', scheduleKind: 'every', scheduleValue: '1000', task: 'wojtek', userId: 'wojtek' });
-    service.addJob({ name: 'maciek-job', scheduleKind: 'every', scheduleValue: '1000', task: 'maciek', userId: 'maciek' });
+    service.addJob({ name: 'alice-job', scheduleKind: 'every', scheduleValue: '1000', task: 'alice', userId: 'alice' });
+    service.addJob({ name: 'bob-job', scheduleKind: 'every', scheduleValue: '1000', task: 'bob', userId: 'bob' });
 
-    const wojtekJobs = service.listJobsForUser('wojtek');
-    expect(wojtekJobs).toHaveLength(2);
-    expect(wojtekJobs.map(j => j.name).sort()).toEqual(['system-job', 'wojtek-job']);
+    const aliceJobs = service.listJobsForUser('alice');
+    expect(aliceJobs).toHaveLength(2);
+    expect(aliceJobs.map(j => j.name).sort()).toEqual(['alice-job', 'system-job']);
 
-    const maciekJobs = service.listJobsForUser('maciek');
-    expect(maciekJobs).toHaveLength(2);
-    expect(maciekJobs.map(j => j.name).sort()).toEqual(['maciek-job', 'system-job']);
+    const bobJobs = service.listJobsForUser('bob');
+    expect(bobJobs).toHaveLength(2);
+    expect(bobJobs.map(j => j.name).sort()).toEqual(['bob-job', 'system-job']);
   });
 
   it('should include family members jobs when familyUserIds provided', () => {
     service.addJob({ name: 'system-job', scheduleKind: 'every', scheduleValue: '1000', task: 'system' });
-    service.addJob({ name: 'wojtek-job', scheduleKind: 'every', scheduleValue: '1000', task: 'w', userId: 'wojtek' });
-    service.addJob({ name: 'monika-job', scheduleKind: 'every', scheduleValue: '1000', task: 'm', userId: 'monika' });
-    service.addJob({ name: 'maciek-job', scheduleKind: 'every', scheduleValue: '1000', task: 'mac', userId: 'maciek' });
+    service.addJob({ name: 'alice-job', scheduleKind: 'every', scheduleValue: '1000', task: 'w', userId: 'alice' });
+    service.addJob({ name: 'carol-job', scheduleKind: 'every', scheduleValue: '1000', task: 'm', userId: 'carol' });
+    service.addJob({ name: 'bob-job', scheduleKind: 'every', scheduleValue: '1000', task: 'mac', userId: 'bob' });
 
-    const familyJobs = service.listJobsForUser('wojtek', ['monika', 'zuzia']);
-    expect(familyJobs).toHaveLength(3); // system + wojtek + monika (zuzia has no jobs)
-    expect(familyJobs.map(j => j.name).sort()).toEqual(['monika-job', 'system-job', 'wojtek-job']);
+    const familyJobs = service.listJobsForUser('alice', ['carol', 'dave']);
+    expect(familyJobs).toHaveLength(3); // system + alice + carol (dave has no jobs)
+    expect(familyJobs.map(j => j.name).sort()).toEqual(['alice-job', 'carol-job', 'system-job']);
   });
 
   it('should return only system jobs when no userId given', () => {
     service.addJob({ name: 'system', scheduleKind: 'every', scheduleValue: '1000', task: 'a' });
-    service.addJob({ name: 'personal', scheduleKind: 'every', scheduleValue: '1000', task: 'b', userId: 'wojtek' });
+    service.addJob({ name: 'personal', scheduleKind: 'every', scheduleValue: '1000', task: 'b', userId: 'alice' });
 
     const jobs = service.listJobsForUser(undefined);
     expect(jobs).toHaveLength(1);
@@ -343,12 +343,12 @@ describe('targets', () => {
       scheduleValue: '60000',
       task: 'remind',
       targets: [
-        { userId: 'wojtek', status: 'pending' },
-        { userId: 'zuzia', status: 'pending' },
+        { userId: 'alice', status: 'pending' },
+        { userId: 'dave', status: 'pending' },
       ],
     });
     expect(job.targets).toHaveLength(2);
-    expect(job.targets[0].userId).toBe('wojtek');
+    expect(job.targets[0].userId).toBe('alice');
     expect(job.targets[0].status).toBe('pending');
   });
 
@@ -368,10 +368,10 @@ describe('targets', () => {
       scheduleKind: 'every',
       scheduleValue: '60000',
       task: 'remind',
-      targets: [{ userId: 'wojtek', status: 'pending' }],
+      targets: [{ userId: 'alice', status: 'pending' }],
     });
     const updated = service.updateJob(job.id, {
-      targets: [{ userId: 'wojtek', status: 'confirmed', statusAt: new Date().toISOString() }],
+      targets: [{ userId: 'alice', status: 'confirmed', statusAt: new Date().toISOString() }],
     });
     expect(updated.targets[0].status).toBe('confirmed');
   });
@@ -384,8 +384,8 @@ describe('targets', () => {
       scheduleValue: '3600000',
       task: 'remind targets',
       targets: [
-        { userId: 'wojtek', status: 'confirmed', statusAt: new Date().toISOString() },
-        { userId: 'zuzia', status: 'rejected', statusAt: new Date().toISOString() },
+        { userId: 'alice', status: 'confirmed', statusAt: new Date().toISOString() },
+        { userId: 'dave', status: 'rejected', statusAt: new Date().toISOString() },
       ],
     });
 
@@ -415,7 +415,7 @@ describe('targets', () => {
       scheduleValue: '3600000',
       task: 'remind',
       targets: [
-        { userId: 'wojtek', status: 'confirmed', statusAt: new Date().toISOString() },
+        { userId: 'alice', status: 'confirmed', statusAt: new Date().toISOString() },
         { chatId: '-100group', status: 'pending' },
       ],
     });
