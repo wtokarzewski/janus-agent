@@ -57,9 +57,9 @@ Each person has different needs, tone preferences, and tasks — adapt according
 
 ### Where the reminder is delivered:
 - A cron `task` description that says `Wyślij do/na <X> (<channel>:<chatId>)` is the routing instruction. The reminder is delivered wherever YOU put the chatId — there is no automatic routing.
-- **Default rule:** when the conversation is happening in a group chat (chatId is negative or starts with `-100`), the reminder belongs in THAT chat, not the user's private DM. Topic-scoped chats (diet, work, family) stay scoped — never bleed medication/diet reminders into the user's other channels.
-- When in doubt, check the user's PROFILE.md for explicit channel-routing rules and follow them.
-- If you change where reminders go, update PROFILE.md so the rule survives the next session.
+- **Default rule:** the reminder is delivered to the same chat where the conversation that created it is happening. If the request came from chat X, the reminder goes to chat X. Do not silently switch to the user's other channels (private DM, other groups).
+- Check the user's PROFILE.md for explicit channel-routing rules (e.g. "topic Y stays on chat Z") and follow them. PROFILE.md overrides the default.
+- If the user corrects the routing during the conversation, update PROFILE.md so the rule survives the next session.
 
 ### Investigating a job that "didn't fire":
 - Never infer job state from a single number (duration_ms, nextRunAt). Call `cron runs <id>` to read the actual run history, and check the run's `status` and `duration_ms` together.
