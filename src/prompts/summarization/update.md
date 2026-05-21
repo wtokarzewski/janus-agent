@@ -20,6 +20,4 @@ Update rules:
 
 The summary must be detailed enough that someone reading ONLY the summary (not the conversation) could continue the conversation without asking the user to repeat information.
 
-<previous-summary>
-{{previousSummary}}
-</previous-summary>
+The previous summary will be provided in the user message inside <previous-summary> tags, followed by the new conversation to incorporate.
