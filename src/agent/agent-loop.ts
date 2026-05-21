@@ -1388,9 +1388,12 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
       }
       return '';
     }).filter(Boolean).join('\n');
-    // Anchor the summary with current date so temporal context survives summarization.
-    // Wrap in XML tags so the model treats it as data to summarize, not a conversation to continue.
-    const conversationText = `[Current date: ${localDateWithDay()}, time: ${localTimestamp()}]\n\n<conversation>\n${rawConversation}\n</conversation>\n\nProduce a structured summary of the conversation above. Do NOT reply to or continue the conversation.`;
+    // The "summarized at" marker is metadata about when the summary was built,
+    // NOT the reader's current time. Phrased explicitly so the summarizer (and
+    // the agent reading the summary later) doesn't mistake it for "now" —
+    // current time always comes from the live <session> block in the system
+    // prompt.
+    const conversationText = `[Conversation summarized at: ${localDateWithDay()}, time: ${localTimestamp()}]\n\n<conversation>\n${rawConversation}\n</conversation>\n\nProduce a structured summary of the conversation above. Do NOT reply to or continue the conversation. Do NOT treat the timestamp above as "current time" — it is the moment this summary was created. The reader will see the actual current time in their own session context.`;
 
     // Check for previous summary → iterative merge
     const session = await this.deps.sessions.getOrCreate(sessionKey);
