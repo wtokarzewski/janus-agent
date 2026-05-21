@@ -183,6 +183,8 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
   - Auto-cleanup of old disabled jobs: configurable via `cron.cleanup` (enabled, intervalDays, time, maxAgeDaysOneShot, maxAgeDaysRecurring). Runs on startup + periodically.
   - Job ID in execution context: `(id: {jobId})` in cron message enables agent self-removal via `cron remove`.
   - CRUD: addJob, updateJob, removeJob, listJobs, getRuns.
+  - **chat_id structural default** — when the agent calls `cron add` without `chat_id`, the tool inherits `reqCtx.chatId` so the reminder lands in the chat where the request was made. Synthetic Janus contexts (chatId starting with `cron:` / `system:`) are excluded so a job that spawns another job doesn't carry an internal routing token. The defaulting is reported in the response as `_chatIdDefaulted`. Channel-agnostic — works for any chat ID format the adapter publishes.
+  - **`cron runs` clarity** — response wrapped with `_note` that spells out what `durationMs` (publish-to-bus only, not agent runtime) and `status:"ok"` (trigger fired, not delivery confirmed) actually mean. Prevents the agent from misreading a 1ms publish time as "the job did nothing."
 - **HeartbeatService** — Parses `HEARTBEAT.md` for periodic tasks.
   - Supports `every Xm/h/d` and cron expressions.
   - Per-user `HEARTBEAT.md` in `.janus/users/{userId}/` — tasks tagged with userId, routed to user's Telegram chat.
@@ -339,7 +341,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 597 tests across 53 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 700 tests across 62 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 - **Install scripts** — One-liner installers for non-git users. Unix (`curl | bash`): downloads latest GitHub Release tarball, extracts to `~/.janus-agent/`, creates `janus` launcher in `~/.local/bin`. Windows (PowerShell `irm | iex`): extracts to `%LOCALAPPDATA%\janus-agent\`, creates `janus.cmd` launcher, adds to user PATH. Both: prerequisite checks (Node.js 20+, npm), backup of existing install.
 - **Tarball update mode** — `janus update` and `self_update` tool auto-detect install mode: git (`.git/` exists) uses `git pull` flow, tarball (no `.git/`) downloads latest GitHub Release with backup/rollback on failure. Version comparison via `isNewerVersion()` semver utility.
 
