@@ -186,21 +186,21 @@ describe('JanusConfigSchema', () => {
   it('should accept valid family config', () => {
     const config = JanusConfigSchema.parse({
       family: {
-        id: 'family_wt',
+        id: 'family_alice',
         name: 'Tokarzewscy',
         groupChatIds: ['-100987654321'],
       },
     });
     expect(config.family).toBeDefined();
-    expect(config.family!.id).toBe('family_wt');
+    expect(config.family!.id).toBe('family_alice');
     expect(config.family!.groupChatIds).toEqual(['-100987654321']);
   });
 
   it('should accept tool policy schema', () => {
     const config = JanusConfigSchema.parse({
       users: [{
-        id: 'zuzia',
-        name: 'Zuzia',
+        id: 'dave',
+        name: 'Dave',
         identities: [],
         tools: {
           allow: ['web.search'],

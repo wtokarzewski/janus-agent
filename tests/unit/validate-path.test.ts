@@ -91,22 +91,22 @@ describe('validateUserFileAccess', () => {
 
   it('allows system context (no userId) to access everything', () => {
     expect(() => validateUserFileAccess(ws, `${janus}/auth.json`, undefined, undefined, 'write')).not.toThrow();
-    expect(() => validateUserFileAccess(ws, `${janus}/users/maciek/files/note.txt`, undefined, undefined, 'read')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/bob/files/note.txt`, undefined, undefined, 'read')).not.toThrow();
   });
 
   it('allows paths outside .janus/ (non-protected dirs)', () => {
-    expect(() => validateUserFileAccess(ws, '/home/app/skills/test/SKILL.md', 'wojtek', undefined, 'write')).not.toThrow();
-    expect(() => validateUserFileAccess(ws, '/home/app/AGENTS.md', 'wojtek', undefined, 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, '/home/app/skills/test/SKILL.md', 'alice', undefined, 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, '/home/app/AGENTS.md', 'alice', undefined, 'write')).not.toThrow();
   });
 
   it('blocks access to sessions/ directory', () => {
-    expect(() => validateUserFileAccess(ws, '/home/app/sessions/telegram_123.jsonl', 'wojtek', undefined, 'read')).toThrow('Access denied');
-    expect(() => validateUserFileAccess(ws, '/home/app/sessions/telegram_123.jsonl', 'wojtek', undefined, 'write')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(ws, '/home/app/sessions/telegram_123.jsonl', 'alice', undefined, 'read')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(ws, '/home/app/sessions/telegram_123.jsonl', 'alice', undefined, 'write')).toThrow('Access denied');
   });
 
   it('blocks access to memory/ directory', () => {
-    expect(() => validateUserFileAccess(ws, '/home/app/memory/HISTORY.md', 'wojtek', undefined, 'read')).toThrow('Access denied');
-    expect(() => validateUserFileAccess(ws, '/home/app/memory/2026-03-07.md', 'wojtek', undefined, 'write')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(ws, '/home/app/memory/HISTORY.md', 'alice', undefined, 'read')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(ws, '/home/app/memory/2026-03-07.md', 'alice', undefined, 'write')).toThrow('Access denied');
   });
 
   it('allows system context to access sessions and memory', () => {
@@ -115,58 +115,58 @@ describe('validateUserFileAccess', () => {
   });
 
   it('allows user to access own directory', () => {
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/files/note.txt`, 'wojtek', undefined, 'write')).not.toThrow();
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/PROFILE.md`, 'wojtek', undefined, 'read')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/files/note.txt`, 'alice', undefined, 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/PROFILE.md`, 'alice', undefined, 'read')).not.toThrow();
   });
 
   it('allows writing known system files in user root', () => {
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/PROFILE.md`, 'wojtek', undefined, 'write')).not.toThrow();
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/HEARTBEAT.md`, 'wojtek', undefined, 'write')).not.toThrow();
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/AGENTS.md`, 'wojtek', undefined, 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/PROFILE.md`, 'alice', undefined, 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/HEARTBEAT.md`, 'alice', undefined, 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/AGENTS.md`, 'alice', undefined, 'write')).not.toThrow();
   });
 
   it('allows writing to files/ and memory/ subdirectories', () => {
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/files/mac-mini-monitor.md`, 'wojtek', undefined, 'write')).not.toThrow();
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/memory/2026-03-19.md`, 'wojtek', undefined, 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/files/mac-mini-monitor.md`, 'alice', undefined, 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/memory/2026-03-19.md`, 'alice', undefined, 'write')).not.toThrow();
   });
 
   it('blocks writing arbitrary files to user root directory', () => {
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/mac-mini-monitor.md`, 'wojtek', undefined, 'write')).toThrow('user files must be in');
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/random-notes.txt`, 'wojtek', undefined, 'write')).toThrow('user files must be in');
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/todo.md`, 'wojtek', undefined, 'write')).toThrow('user files must be in');
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/mac-mini-monitor.md`, 'alice', undefined, 'write')).toThrow('user files must be in');
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/random-notes.txt`, 'alice', undefined, 'write')).toThrow('user files must be in');
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/todo.md`, 'alice', undefined, 'write')).toThrow('user files must be in');
   });
 
   it('allows reading arbitrary files from user root directory', () => {
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/mac-mini-monitor.md`, 'wojtek', undefined, 'read')).not.toThrow();
-    expect(() => validateUserFileAccess(ws, `${janus}/users/wojtek/random-notes.txt`, 'wojtek', undefined, 'read')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/mac-mini-monitor.md`, 'alice', undefined, 'read')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/users/alice/random-notes.txt`, 'alice', undefined, 'read')).not.toThrow();
   });
 
   it('blocks user from accessing another user directory', () => {
-    expect(() => validateUserFileAccess(ws, `${janus}/users/monika/files/diary.txt`, 'wojtek', undefined, 'read')).toThrow('Access denied');
-    expect(() => validateUserFileAccess(ws, `${janus}/users/monika/PROFILE.md`, 'wojtek', undefined, 'write')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(ws, `${janus}/users/carol/files/diary.txt`, 'alice', undefined, 'read')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(ws, `${janus}/users/carol/PROFILE.md`, 'alice', undefined, 'write')).toThrow('Access denied');
   });
 
   it('allows read access to .janus/ root files', () => {
-    expect(() => validateUserFileAccess(ws, `${janus}/EGO.md`, 'wojtek', undefined, 'read')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/EGO.md`, 'alice', undefined, 'read')).not.toThrow();
   });
 
   it('blocks write access to .janus/ root files', () => {
-    expect(() => validateUserFileAccess(ws, `${janus}/EGO.md`, 'wojtek', undefined, 'write')).toThrow('Access denied');
-    expect(() => validateUserFileAccess(ws, `${janus}/auth.json`, 'wojtek', undefined, 'write')).toThrow('Access denied');
-    expect(() => validateUserFileAccess(ws, `${janus}/random-file.txt`, 'wojtek', undefined, 'write')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(ws, `${janus}/EGO.md`, 'alice', undefined, 'write')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(ws, `${janus}/auth.json`, 'alice', undefined, 'write')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(ws, `${janus}/random-file.txt`, 'alice', undefined, 'write')).toThrow('Access denied');
   });
 
   it('allows access to matching chat directory', () => {
-    expect(() => validateUserFileAccess(ws, `${janus}/chats/-100123/files/shopping.md`, 'wojtek', '-100123', 'write')).not.toThrow();
-    expect(() => validateUserFileAccess(ws, `${janus}/chats/-100123/files/shopping.md`, 'wojtek', '-100123', 'read')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/chats/-100123/files/shopping.md`, 'alice', '-100123', 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/chats/-100123/files/shopping.md`, 'alice', '-100123', 'read')).not.toThrow();
   });
 
   it('blocks access to non-matching chat directory', () => {
-    expect(() => validateUserFileAccess(ws, `${janus}/chats/-100999/files/secret.md`, 'wojtek', '-100123', 'read')).toThrow('Access denied');
-    expect(() => validateUserFileAccess(ws, `${janus}/chats/-100999/files/secret.md`, 'wojtek', undefined, 'read')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(ws, `${janus}/chats/-100999/files/secret.md`, 'alice', '-100123', 'read')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(ws, `${janus}/chats/-100999/files/secret.md`, 'alice', undefined, 'read')).toThrow('Access denied');
   });
 
   it('sanitizes chatId with forum topic (/ → _)', () => {
-    expect(() => validateUserFileAccess(ws, `${janus}/chats/-100123_42/files/topic.md`, 'wojtek', '-100123/42', 'write')).not.toThrow();
+    expect(() => validateUserFileAccess(ws, `${janus}/chats/-100123_42/files/topic.md`, 'alice', '-100123/42', 'write')).not.toThrow();
   });
 });

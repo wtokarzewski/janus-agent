@@ -108,15 +108,15 @@ describe('resolveUser', () => {
 
 describe('autoIdentifyUser', () => {
   it('should create synthetic user from channel metadata', () => {
-    const result = autoIdentifyUser('telegram', '6209059349', 'wojtek', 'Wojtek');
+    const result = autoIdentifyUser('telegram', '1000000001', 'alice', 'Alice');
     expect(result).not.toBeNull();
-    expect(result!.userId).toBe('telegram:6209059349');
-    expect(result!.name).toBe('Wojtek');
-    expect(result!.identity).toEqual({ channel: 'telegram', channelUserId: '6209059349', channelUsername: 'wojtek' });
+    expect(result!.userId).toBe('telegram:1000000001');
+    expect(result!.name).toBe('Alice');
+    expect(result!.identity).toEqual({ channel: 'telegram', channelUserId: '1000000001', channelUsername: 'alice' });
   });
 
   it('should return null when channelUserId is undefined', () => {
-    expect(autoIdentifyUser('telegram', undefined, 'wojtek', 'Wojtek')).toBeNull();
+    expect(autoIdentifyUser('telegram', undefined, 'alice', 'Alice')).toBeNull();
   });
 
   it('should fallback name to username when displayName is undefined', () => {

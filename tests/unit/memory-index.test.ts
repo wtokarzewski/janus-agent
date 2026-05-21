@@ -167,52 +167,52 @@ describe('MemoryIndex', () => {
   });
 
   it('should index with owner and scope', () => {
-    index.indexFile('user-notes.md', '## My Notes\n\nPersonal notes here', 'wt', 'user', 'wt');
+    index.indexFile('user-notes.md', '## My Notes\n\nPersonal notes here', 'alice', 'user', 'alice');
 
     const row = db.db.prepare(
       'SELECT owner, scope, scope_id FROM memory_chunks WHERE source = ?',
     ).get('user-notes.md') as { owner: string; scope: string; scope_id: string | null };
 
-    expect(row.owner).toBe('wt');
+    expect(row.owner).toBe('alice');
     expect(row.scope).toBe('user');
-    expect(row.scope_id).toBe('wt');
+    expect(row.scope_id).toBe('alice');
   });
 
   it('should filter search results by user scope', () => {
     // Insert shared global chunk
     index.indexFile('shared.md', '## Info\n\nShared project information', 'shared', 'global');
     // Insert user-private chunk
-    index.indexFile('wt-notes.md', '## Info\n\nPrivate user information', 'wt', 'user', 'wt');
+    index.indexFile('alice-notes.md', '## Info\n\nPrivate user information', 'alice', 'user', 'alice');
     // Insert another user's private chunk
-    index.indexFile('monika-notes.md', '## Info\n\nMonika private information', 'monika', 'user', 'monika');
+    index.indexFile('carol-notes.md', '## Info\n\nCarol private information', 'carol', 'user', 'carol');
 
-    // Search as user 'wt' — should see shared + own private, not monika's
-    const results = index.search('information', 10, 'wt', { kind: 'user', id: 'wt' });
+    // Search as user 'alice' — should see shared + own private, not carol's
+    const results = index.search('information', 10, 'alice', { kind: 'user', id: 'alice' });
     const sources = results.map(r => r.source);
     expect(sources).toContain('shared.md');
-    expect(sources).toContain('wt-notes.md');
-    expect(sources).not.toContain('monika-notes.md');
+    expect(sources).toContain('alice-notes.md');
+    expect(sources).not.toContain('carol-notes.md');
   });
 
   it('should filter search results by family scope (no user-private)', () => {
     // Insert shared global chunk
     index.indexFile('shared.md', '## Info\n\nShared project information', 'shared', 'global');
     // Insert family chunk
-    index.indexFile('family.md', '## Info\n\nFamily shared information', 'shared', 'family', 'family_wt');
+    index.indexFile('family.md', '## Info\n\nFamily shared information', 'shared', 'family', 'family_alice');
     // Insert user-private chunk
-    index.indexFile('wt-notes.md', '## Info\n\nPrivate user information', 'wt', 'user', 'wt');
+    index.indexFile('alice-notes.md', '## Info\n\nPrivate user information', 'alice', 'user', 'alice');
 
     // Family search — should see shared + family, not user-private
-    const results = index.search('information', 10, 'wt', { kind: 'family', id: 'family_wt' });
+    const results = index.search('information', 10, 'alice', { kind: 'family', id: 'family_alice' });
     const sources = results.map(r => r.source);
     expect(sources).toContain('shared.md');
     expect(sources).toContain('family.md');
-    expect(sources).not.toContain('wt-notes.md');
+    expect(sources).not.toContain('alice-notes.md');
   });
 
   it('should return all chunks when no scope (backward-compat)', () => {
     index.indexFile('shared.md', '## Info\n\nShared project information', 'shared', 'global');
-    index.indexFile('wt-notes.md', '## Info\n\nPrivate user information', 'wt', 'user', 'wt');
+    index.indexFile('alice-notes.md', '## Info\n\nPrivate user information', 'alice', 'user', 'alice');
 
     // No scope — should see everything
     const results = index.search('information', 10);
@@ -223,7 +223,7 @@ describe('MemoryIndex', () => {
     index.indexFile('family1.md', '## Info\n\nFamily one information', 'shared', 'family', 'family_a');
     index.indexFile('family2.md', '## Info\n\nFamily two information', 'shared', 'family', 'family_b');
 
-    const results = index.search('information', 10, 'wt', { kind: 'family', id: 'family_a' });
+    const results = index.search('information', 10, 'alice', { kind: 'family', id: 'family_a' });
     const sources = results.map(r => r.source);
     expect(sources).toContain('family1.md');
     expect(sources).not.toContain('family2.md');
@@ -232,7 +232,7 @@ describe('MemoryIndex', () => {
   it('should reindex with owner/scope metadata', () => {
     index.reindex([
       { source: 'MEMORY.md', content: '## Overview\n\nProject overview', owner: 'shared', scope: 'global' },
-      { source: 'wt-daily.md', content: '## Notes\n\nUser notes', owner: 'wt', scope: 'user', scopeId: 'wt' },
+      { source: 'alice-daily.md', content: '## Notes\n\nUser notes', owner: 'alice', scope: 'user', scopeId: 'alice' },
     ]);
 
     const rows = db.db.prepare('SELECT source, owner, scope, scope_id FROM memory_chunks').all() as Array<{ source: string; owner: string; scope: string; scope_id: string | null }>;
@@ -240,14 +240,14 @@ describe('MemoryIndex', () => {
     expect(shared?.owner).toBe('shared');
     expect(shared?.scope).toBe('global');
 
-    const userRow = rows.find(r => r.source === 'wt-daily.md');
-    expect(userRow?.owner).toBe('wt');
+    const userRow = rows.find(r => r.source === 'alice-daily.md');
+    expect(userRow?.owner).toBe('alice');
     expect(userRow?.scope).toBe('user');
-    expect(userRow?.scope_id).toBe('wt');
+    expect(userRow?.scope_id).toBe('alice');
   });
 
   it('should find results when searching with Polish Unicode characters', () => {
-    index.indexFile('notes.md', '## Zakupy\n\nTrzeba kupić mleko, jajka i chleb w sklepie na rogu.\n\n## Szkoła\n\nZuzia ma jutro sprawdzian z matematyki, trzeba poćwiczyć ułamki.');
+    index.indexFile('notes.md', '## Zakupy\n\nTrzeba kupić mleko, jajka i chleb w sklepie na rogu.\n\n## Szkoła\n\nDave ma jutro sprawdzian z matematyki, trzeba poćwiczyć ułamki.');
 
     const results = index.search('sprawdzian matematyki');
     expect(results.length).toBeGreaterThan(0);
@@ -263,14 +263,14 @@ describe('MemoryIndex', () => {
   });
 
   it('should replace chunks for same source+owner+scope on re-index', () => {
-    index.indexFile('notes.md', '## Old\n\nOld content about dogs', 'wt', 'user', 'wt');
-    let results = index.search('dogs', 5, 'wt', { kind: 'user', id: 'wt' });
+    index.indexFile('notes.md', '## Old\n\nOld content about dogs', 'alice', 'user', 'alice');
+    let results = index.search('dogs', 5, 'alice', { kind: 'user', id: 'alice' });
     expect(results.length).toBe(1);
 
-    index.indexFile('notes.md', '## New\n\nNew content about cats', 'wt', 'user', 'wt');
-    results = index.search('dogs', 5, 'wt', { kind: 'user', id: 'wt' });
+    index.indexFile('notes.md', '## New\n\nNew content about cats', 'alice', 'user', 'alice');
+    results = index.search('dogs', 5, 'alice', { kind: 'user', id: 'alice' });
     expect(results.length).toBe(0);
-    results = index.search('cats', 5, 'wt', { kind: 'user', id: 'wt' });
+    results = index.search('cats', 5, 'alice', { kind: 'user', id: 'alice' });
     expect(results.length).toBe(1);
   });
 });

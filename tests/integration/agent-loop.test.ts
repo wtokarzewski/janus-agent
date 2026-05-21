@@ -254,8 +254,8 @@ describe('AgentLoop integration', () => {
 
     const config = createTestConfig({
       users: [{
-        id: 'zuzia',
-        name: 'Zuzia',
+        id: 'dave',
+        name: 'Dave',
         identities: [],
         tools: { deny: ['exec'] },
       }],
@@ -280,8 +280,8 @@ describe('AgentLoop integration', () => {
 
     const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner });
     const result = await agent.processDirect('run ls', {
-      user: { userId: 'zuzia', name: 'Zuzia' },
-      scope: { kind: 'user', id: 'zuzia' },
+      user: { userId: 'dave', name: 'Dave' },
+      scope: { kind: 'user', id: 'dave' },
     });
 
     expect(result).toBe('Tool was blocked.');
@@ -317,8 +317,8 @@ describe('AgentLoop integration', () => {
 
     const config = createTestConfig({
       users: [{
-        id: 'zuzia',
-        name: 'Zuzia',
+        id: 'dave',
+        name: 'Dave',
         identities: [],
         tools: { allow: ['read_file'] }, // Only read_file allowed
       }],
@@ -343,7 +343,7 @@ describe('AgentLoop integration', () => {
 
     const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner });
     const result = await agent.processDirect('write test.txt', {
-      user: { userId: 'zuzia', name: 'Zuzia' },
+      user: { userId: 'dave', name: 'Dave' },
     });
 
     expect(result).toBe('Blocked.');
