@@ -1174,12 +1174,15 @@ export class AgentLoop {
       const flushInputTokens = Math.ceil(flushInputChars / 2.5);
       const flushMaxTokens = Math.min(1024, Math.max(256, Math.floor(flushInputTokens * 0.3)));
 
+      // System prompt is identical across flushes so the cache breakpoint on the
+      // system block hits between calls. Per-call context (user name, session
+      // summary, current MEMORY.md) goes into the user message.
       const flushResponse = await withTimeout(this.deps.llm.chat({
         model: '',
         messages: [
           { role: 'system', content: `You are a memory manager. Extract and preserve important information from conversation messages.
 
-${contextStr}IMPORTANT: MEMORY.md is read-only during this flush. Never produce a "new MEMORY.md" — the agent itself maintains MEMORY.md during regular turns and heartbeats using edit_file. Your job here is ONLY to capture session events into append-only logs.
+IMPORTANT: MEMORY.md is read-only during this flush. Never produce a "new MEMORY.md" — the agent itself maintains MEMORY.md during regular turns and heartbeats using edit_file. Your job here is ONLY to capture session events into append-only logs.
 
 Respond in this exact format. Be CONCISE — only write what's worth remembering long-term.
 
@@ -1189,7 +1192,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
 - Key fact 2
 (Write NONE if nothing worth remembering)
 </facts>` },
-          { role: 'user', content: `New messages to process:\n${messagesText}` },
+          { role: 'user', content: `${contextStr}New messages to process:\n${messagesText}` },
         ],
         temperature: 0.3,
         maxTokens: flushMaxTokens,
@@ -1398,21 +1401,23 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
 
     // If previous summary is too short it's likely corrupt from a broken
     // summarization cycle — discard and do a fresh initial summary.
+    // System prompt stays stable across calls (no per-call substitution) so the
+    // cache breakpoint on the system block hits between summarizations. The
+    // previousSummary moves into the user message where the changing data lives.
     const MIN_USABLE_SUMMARY_TOKENS = 100;
     const prevTokens = previousSummary ? Math.ceil(previousSummary.length / 2.5) : 0;
-    let systemContent: string;
-    if (previousSummary && prevTokens >= MIN_USABLE_SUMMARY_TOKENS) {
-      systemContent = loadPrompt('summarization/update', { previousSummary });
-    } else {
-      if (previousSummary && prevTokens < MIN_USABLE_SUMMARY_TOKENS) {
-        log.warn(`[${sessionKey}] Previous summary too short (${prevTokens} tokens), using initial prompt instead`);
-      }
-      systemContent = loadPrompt('summarization/initial');
+    const usePreviousSummary = !!previousSummary && prevTokens >= MIN_USABLE_SUMMARY_TOKENS;
+    if (previousSummary && !usePreviousSummary) {
+      log.warn(`[${sessionKey}] Previous summary too short (${prevTokens} tokens), using initial prompt instead`);
     }
+    const systemContent = loadPrompt(usePreviousSummary ? 'summarization/update' : 'summarization/initial');
+    const userContent = usePreviousSummary
+      ? `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n${conversationText}`
+      : conversationText;
 
     // Scale maxTokens to input size: target ~15% of input, clamped to 1024–4096.
     // At 48K input tokens, 2048 maxTokens was producing 342 tokens (0.7%) — too little.
-    const inputTokens = Math.ceil(conversationText.length / 2.5);
+    const inputTokens = Math.ceil(userContent.length / 2.5);
     const summaryMaxTokens = Math.min(4096, Math.max(1024, Math.ceil(inputTokens * 0.15)));
 
     log.info(`[${sessionKey}] Summarization: LLM call start (input ~${inputTokens} tokens, maxTokens=${summaryMaxTokens})`);
@@ -1424,7 +1429,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
         model: '',
         messages: [
           { role: 'system', content: systemContent },
-          { role: 'user', content: conversationText },
+          { role: 'user', content: userContent },
           // Assistant prefill forces the model into the template format from the first token,
           // preventing it from echoing the conversation or emitting chain-of-thought.
           { role: 'assistant', content: '## Goal\n' },
