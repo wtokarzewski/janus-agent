@@ -29,6 +29,7 @@ Canonical list of implemented, working features. Verified against source code an
 - **SSRF guard** — Blocks private/reserved IPs (localhost, 10.x, 172.16-31.x, 192.168.x, link-local, cloud metadata) and IPv6 private ranges (fc00::/7, fe80::/10, ff00::/8) in web_fetch and browser tools.
 - **Secret redaction in tool results** — Automatically masks secrets in tool output before sending to LLM: `KEY=`, `Bearer`, `sk-`/`ghp_`/`AKIA`/JWT patterns replaced with `[REDACTED]`.
 - **Token masking in logger** — Sensitive tokens and keys masked in log output to prevent credential leakage in logs.
+- **File logging (daily rotation)** — Opt-in mirroring of terminal output to daily files (`.janus/logs/YYYY-MM-DD.log`, same content minus ANSI colors, secrets masked). Configurable via `logging.file` (`enabled`, `dir`, `retentionDays`); old files auto-pruned on startup. Enables post-hoc debugging when running headless.
 - **Strict ownerIds** — Unknown userId is never treated as owner in multi-user mode. Only explicitly listed `ownerIds` have elevated privileges.
 
 ## Multi-Agent

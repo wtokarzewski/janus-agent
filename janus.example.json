@@ -130,6 +130,14 @@
     "telegramThrottleMs": 500
   },
 
+  "logging": {
+    "file": {
+      "enabled": false,
+      "dir": ".janus/logs",
+      "retentionDays": 14
+    }
+  },
+
   "cron": {
     "cleanup": {
       "enabled": true,

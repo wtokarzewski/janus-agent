@@ -65,6 +65,13 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   // 0. Timezone (configurable or auto-detected from system)
   setTimezone(config.timezone);
 
+  // 0b. File logging — mirror terminal output to daily files for debugging
+  if (config.logging.file.enabled) {
+    const logDir = resolve(config.workspace.dir, config.logging.file.dir);
+    log.initFileLogging({ dir: logDir, retentionDays: config.logging.file.retentionDays });
+    log.info(`File logging enabled → ${logDir} (retention ${config.logging.file.retentionDays}d)`);
+  }
+
   // 1. Database (optional — falls back to file-based storage)
   const db = config.database.enabled
     ? tryCreateDatabase(resolve(config.workspace.dir, config.database.path))
