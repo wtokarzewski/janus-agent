@@ -54,15 +54,15 @@ export class MemoryStore {
   }
 
   /** Search memory via FTS5 index. Falls back to full readMemory() if no index. */
-  async search(query: string, limit = 5, userId?: string, scope?: InboundMessage['scope']): Promise<MemoryChunk[]> {
+  async search(query: string, limit = 5, scope?: MemoryScope): Promise<MemoryChunk[]> {
     if (!this.index) return [];
-    return this.index.search(query, limit, userId, scope);
+    return this.index.search(query, limit, scope);
   }
 
   /** Hybrid search: FTS5 + vector similarity via RRF. Falls back to FTS-only if no embeddings. */
-  async hybridSearch(query: string, limit = 5, userId?: string, scope?: InboundMessage['scope']): Promise<MemoryChunk[]> {
+  async hybridSearch(query: string, limit = 5, scope?: MemoryScope): Promise<MemoryChunk[]> {
     if (!this.index) return [];
-    return this.index.hybridSearch(query, limit, userId, scope,
+    return this.index.hybridSearch(query, limit, scope,
       this.config.memory?.textWeight ?? 1.0,
       this.config.memory?.vectorWeight ?? 1.0);
   }
@@ -113,6 +113,19 @@ export class MemoryStore {
           files.push({ ...f, owner: user.id, scope: 'user', scopeId: user.id });
         }
       }
+    }
+
+    // Per-chat files: scan .janus/chats/{chatId}/memory/
+    try {
+      const chatsRoot = resolve(this.config.workspace.dir, '.janus', 'chats');
+      for (const chatId of await readdir(chatsRoot)) {
+        const chatFiles = await this.collectDirMemoryFiles(resolve(chatsRoot, chatId, 'memory'));
+        for (const f of chatFiles) {
+          files.push({ ...f, owner: chatId, scope: 'chat', scopeId: chatId });
+        }
+      }
+    } catch {
+      // No chats dir yet — fine
     }
 
     return files;

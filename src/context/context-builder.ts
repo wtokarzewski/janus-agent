@@ -462,8 +462,8 @@ ${toolList}
     if (this.deps.memory.hasIndex && userMessage) {
       const useVector = this.deps.config.memory?.vectorSearch ?? false;
       const chunks = useVector
-        ? await this.deps.memory.hybridSearch(userMessage, 8, userId, scope)
-        : await this.deps.memory.search(userMessage, 8, userId, scope);
+        ? await this.deps.memory.hybridSearch(userMessage, 8, memScope)
+        : await this.deps.memory.search(userMessage, 8, memScope);
       const parts: string[] = [];
 
       if (chunks.length > 0) {
