@@ -28,5 +28,22 @@
   "memory": {
     "vectorSearch": false
   },
-  "users": []
+  "logging": {
+    "file": {
+      "enabled": false,
+      "dir": ".janus/logs",
+      "retentionDays": 14
+    }
+  },
+  "voice": {
+    "enabled": false,
+    "provider": "groq",
+    "apiKey": "",
+    "maxDurationSec": 300
+  },
+  "users": [],
+  "family": {
+    "id": "family",
+    "groupChatIds": []
+  }
 }
