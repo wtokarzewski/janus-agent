@@ -3,7 +3,7 @@
  * CLI equivalent of the self_update agent tool.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { cp, readdir, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -195,8 +195,8 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
   // 7. Auto-detect timezone if missing from config
   await ensureTimezone();
 
-  // 8. Check for new config sections
-  checkNewConfigSections(cwd);
+  // 8. Auto-add new top-level config sections from janus.example.json
+  syncNewConfigSections(cwd);
 
   // 9. Check Google Workspace CLI auth
   try {
@@ -323,26 +323,58 @@ async function runTarballUpdate(cwd: string): Promise<void> {
   console.log(chalk.green('Update complete. Restart Janus to use the new version.'));
 }
 
-/** Compare janus.json top-level keys against janus.example.json and report new sections. */
-function checkNewConfigSections(cwd: string): void {
+/**
+ * Add top-level sections present in `example` but missing from `config`.
+ * Add-only: existing sections are never overwritten (preserves secrets like the
+ * Telegram token, model choices, allowlists). Example values are deep-cloned so the
+ * source object is never aliased. Pure — does no I/O.
+ */
+export function mergeMissingTopLevelSections(
+  config: Record<string, unknown>,
+  example: Record<string, unknown>,
+): { merged: Record<string, unknown>; added: string[] } {
+  const merged: Record<string, unknown> = {};
+  const added: string[] = [];
+  // 1. Walk example order: keep the user's existing value, or add the example default.
+  for (const key of Object.keys(example)) {
+    if (key in config) {
+      merged[key] = config[key];
+    } else {
+      merged[key] = structuredClone(example[key]);
+      added.push(key);
+    }
+  }
+  // 2. Append config-only keys (not in example) at the end, preserving their order.
+  for (const key of Object.keys(config)) {
+    if (!(key in merged)) {
+      merged[key] = config[key];
+    }
+  }
+  return { merged, added };
+}
+
+/**
+ * Sync janus.json with new top-level sections from janus.example.json.
+ * New feature sections (e.g. `logging`) are added automatically with the example's
+ * defaults, so the user never has to hand-edit JSON after an update. Existing values
+ * are left untouched; a backup is written to janus.json.bak before modifying.
+ */
+function syncNewConfigSections(cwd: string): void {
   try {
     const examplePath = resolve(cwd, 'janus.example.json');
     const configPath = resolve(cwd, 'janus.json');
     if (!existsSync(examplePath) || !existsSync(configPath)) return;
 
-    const example = JSON.parse(readFileSync(examplePath, 'utf-8'));
-    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    const example = JSON.parse(readFileSync(examplePath, 'utf-8')) as Record<string, unknown>;
+    const config = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
 
-    const newSections: string[] = [];
-    for (const key of Object.keys(example)) {
-      if (!(key in config)) {
-        newSections.push(key);
-      }
-    }
+    const { merged, added } = mergeMissingTopLevelSections(config, example);
+    if (added.length === 0) return;
 
-    if (newSections.length > 0) {
-      console.log(chalk.yellow(`  New config sections available: ${newSections.join(', ')} — see janus.example.json`));
-    }
+    // Back up first — janus.json holds secrets.
+    writeFileSync(`${configPath}.bak`, readFileSync(configPath, 'utf-8'), 'utf-8');
+    writeFileSync(configPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf-8');
+    console.log(chalk.green(`  Added new config section(s) to janus.json: ${added.join(', ')} (backup: janus.json.bak)`));
   } catch {
     // Non-critical
   }
