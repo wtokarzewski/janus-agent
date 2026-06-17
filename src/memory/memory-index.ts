@@ -42,7 +42,7 @@ export class MemoryIndex {
   }
 
   /** Search memory chunks by FTS5 query. Returns top-N ranked by bm25 with temporal decay. */
-  search(query: string, limit = 5, userId?: string, scope?: { kind: string; id: string }): MemoryChunk[] {
+  search(query: string, limit = 5, scope?: { chatId?: string; userId?: string; agentId?: string }): MemoryChunk[] {
     const sanitized = sanitizeFtsQuery(query);
     if (!sanitized) return [];
 
@@ -59,7 +59,7 @@ export class MemoryIndex {
       `).all(sanitized, limit * 5) as Array<MemoryChunk & { updated_at: string; bm25_score: number; owner: string; scope: string; scope_id: string | null }>;
 
       // Filter by scope visibility
-      const visible = this.filterByScope(candidates, userId, scope);
+      const visible = this.filterByScope(candidates, scope);
 
       // Apply temporal decay: 30-day half-life
       // BM25 returns negative values (lower = better match), so negate for scoring
@@ -85,9 +85,9 @@ export class MemoryIndex {
   }
 
   /** Hybrid search: combines FTS5 (BM25) + vector similarity via Reciprocal Rank Fusion. */
-  async hybridSearch(query: string, limit = 5, userId?: string, scope?: { kind: string; id: string }, textWeight = 1.0, vectorWeight = 1.0): Promise<MemoryChunk[]> {
+  async hybridSearch(query: string, limit = 5, scope?: { chatId?: string; userId?: string; agentId?: string }, textWeight = 1.0, vectorWeight = 1.0): Promise<MemoryChunk[]> {
     // 1. FTS5 results (already scope-filtered)
-    const ftsResults = this.search(query, limit * 2, userId, scope);
+    const ftsResults = this.search(query, limit * 2, scope);
 
     // 2. Vector results
     let vectorResults: Array<MemoryChunk & { similarity: number }> = [];
@@ -100,7 +100,7 @@ export class MemoryIndex {
       ).all() as Array<MemoryChunk & { embedding: Buffer; owner: string; scope: string; scope_id: string | null }>;
 
       // Filter by scope visibility
-      const visibleChunks = this.filterByScope(allChunks, userId, scope);
+      const visibleChunks = this.filterByScope(allChunks, scope);
 
       vectorResults = visibleChunks
         .map(c => ({
@@ -172,27 +172,14 @@ export class MemoryIndex {
    */
   private filterByScope<T extends { owner: string; scope: string; scope_id: string | null }>(
     chunks: T[],
-    userId?: string,
-    scopeFilter?: { kind: string; id: string },
+    scope?: { chatId?: string; userId?: string; agentId?: string },
   ): T[] {
-    if (!scopeFilter) return chunks; // backward-compat: no filtering
-
-    return chunks.filter(c => {
-      // Always include shared+global
-      if (c.owner === 'shared' && c.scope === 'global') return true;
-
-      if (scopeFilter.kind === 'user' && userId) {
-        // User-private: only own chunks
-        return c.owner === userId && c.scope === 'user' && c.scope_id === userId;
-      }
-
-      if (scopeFilter.kind === 'family') {
-        // Family: include family-scoped shared chunks, exclude user-private
-        return c.owner === 'shared' && c.scope === 'family' && c.scope_id === scopeFilter.id;
-      }
-
-      return false;
-    });
+    // Strict scoping: a search sees ONLY chunks of its own scope — no cross-scope merge.
+    // Precedence mirrors MemoryStore.resolveMemDir: agent > chat > user > global.
+    if (scope?.agentId) return chunks.filter(c => c.scope === 'agent' && c.scope_id === scope.agentId);
+    if (scope?.chatId) return chunks.filter(c => c.scope === 'chat' && c.scope_id === scope.chatId);
+    if (scope?.userId) return chunks.filter(c => c.scope === 'user' && c.scope_id === scope.userId);
+    return chunks.filter(c => c.scope === 'global'); // chatless / global context
   }
 
   /** Reindex all provided files. */

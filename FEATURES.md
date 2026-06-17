@@ -124,6 +124,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 
 ## Memory System
 
+- **Per-chat memory scoping** — Episodic memory (MEMORY.md + daily notes) is scoped by conversation: group/channel chats → `.janus/chats/{chatId}/memory/` (shared within the chat), direct/personal messages → `.janus/users/{userId}/memory/`, isolated agents → `.janus/agents/{agentId}/memory/`. `scopeForChat()` picks the key (the scope is NOT always the chat — DMs key by user). Both read paths — direct `getContext` and FTS5/vector `search` — scope strictly to the resolved key, so one chat's memory never bleeds into another (e.g. a dedicated "diet" chat stays out of the main chat). `PROFILE.md` stays per-user (stable facts, always loaded).
 - **MEMORY.md** — Persistent knowledge file. Agent reads/writes via tools. Evergreen in search ranking. Holistically updated by memory flush (not just appended — rewritten with full context).
 - **HISTORY.md** — Append-only conversation log. Memory flush appends session extracts chronologically.
 - **Daily notes** — `memory/YYYY-MM-DD.md`. Auto-populated by memory flush. Part of triple output (HISTORY.md + daily notes + MEMORY.md).
