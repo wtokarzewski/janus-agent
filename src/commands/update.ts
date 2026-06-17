@@ -345,21 +345,23 @@ export function mergeMissingTopLevelSections(
 }
 
 /**
- * Sync janus.json with new top-level sections from janus.example.json.
- * New feature sections (e.g. `logging`) are added automatically with the example's
- * defaults, so the user never has to hand-edit JSON after an update. Existing values
- * are left untouched; a backup is written to janus.json.bak before modifying.
+ * Sync janus.json with new top-level sections from janus.default.json (the minimal
+ * baseline). NOT janus.example.json — that's a full showcase incl. example
+ * agents/bindings/users which must never be injected into a real config. New baseline
+ * feature sections (e.g. `logging`) are added with their default values, so the user
+ * never hand-edits JSON after an update. Existing values are untouched; janus.json.bak
+ * is written first.
  */
 function syncNewConfigSections(cwd: string): void {
   try {
-    const examplePath = resolve(cwd, 'janus.example.json');
+    const defaultsPath = resolve(cwd, 'janus.default.json');
     const configPath = resolve(cwd, 'janus.json');
-    if (!existsSync(examplePath) || !existsSync(configPath)) return;
+    if (!existsSync(defaultsPath) || !existsSync(configPath)) return;
 
-    const example = JSON.parse(readFileSync(examplePath, 'utf-8')) as Record<string, unknown>;
+    const defaults = JSON.parse(readFileSync(defaultsPath, 'utf-8')) as Record<string, unknown>;
     const config = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
 
-    const { merged, added } = mergeMissingTopLevelSections(config, example);
+    const { merged, added } = mergeMissingTopLevelSections(config, defaults);
     if (added.length === 0) return;
 
     // Back up first — janus.json holds secrets.
