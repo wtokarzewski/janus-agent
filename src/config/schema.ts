@@ -360,6 +360,16 @@ const SessionSchema = z.object({
   identityLinks: z.record(z.string(), z.array(z.string())).default({}),
 });
 
+const FileLoggingSchema = z.object({
+  enabled: z.boolean().default(false),
+  dir: z.string().default('.janus/logs'),
+  retentionDays: z.number().int().positive().default(14),
+});
+
+const LoggingSchema = z.object({
+  file: FileLoggingSchema.optional().transform(v => FileLoggingSchema.parse(v ?? {})),
+});
+
 export const JanusConfigSchema = z.object({
   llm: LLMSchema.optional().transform(v => LLMSchema.parse(v ?? {})),
   agent: AgentSchema.optional().transform(v => AgentSchema.parse(v ?? {})),
@@ -371,6 +381,7 @@ export const JanusConfigSchema = z.object({
   whatsapp: WhatsAppSchema.optional().transform(v => WhatsAppSchema.parse(v ?? {})),
   telegram: TelegramSchema.optional().transform(v => TelegramSchema.parse(v ?? {})),
   streaming: StreamingSchema.optional().transform(v => StreamingSchema.parse(v ?? {})),
+  logging: LoggingSchema.optional().transform(v => LoggingSchema.parse(v ?? {})),
   gates: GatesSchema.optional().transform(v => GatesSchema.parse(v ?? {})),
   memory: MemorySchema.optional().transform(v => MemorySchema.parse(v ?? {})),
   voice: VoiceSchema.optional().transform(v => VoiceSchema.parse(v ?? {})),

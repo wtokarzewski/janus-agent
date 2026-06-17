@@ -1,4 +1,7 @@
 import chalk from 'chalk';
+import { appendFileSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { inspect } from 'node:util';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -55,20 +58,95 @@ function timestamp(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+// ---------- File logging ----------
+// Mirror terminal output to a daily file (.../YYYY-MM-DD.log). Same content as the
+// terminal, minus ANSI colors. Opt-in via initFileLogging(); never throws into callers.
+
+let fileLogDir: string | null = null;
+
+/**
+ * Enable file logging into `dir` (one file per day), or disable it with `null`.
+ * On enable, log files older than `retentionDays` (default 14) are removed.
+ */
+export function initFileLogging(config: { dir: string; retentionDays?: number } | null): void {
+  if (!config) {
+    fileLogDir = null;
+    return;
+  }
+  fileLogDir = config.dir;
+  try {
+    mkdirSync(config.dir, { recursive: true });
+    cleanupOldLogs(config.dir, config.retentionDays ?? 14);
+  } catch {
+    // logging setup must never crash the app
+  }
+}
+
+function dateStamp(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function cleanupOldLogs(dir: string, retentionDays: number): void {
+  try {
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - retentionDays);
+    for (const file of readdirSync(dir)) {
+      const match = /^(\d{4}-\d{2}-\d{2})\.log$/.exec(file);
+      if (!match) continue;
+      if (new Date(`${match[1]}T00:00:00`) < cutoff) unlinkSync(join(dir, file));
+    }
+  } catch {
+    // ignore cleanup failures
+  }
+}
+
+/** Append one already-formatted line (terminal content, no color) to today's file. */
+function writeRaw(line: string): void {
+  if (!fileLogDir) return;
+  try {
+    appendFileSync(join(fileLogDir, `${dateStamp()}.log`), `${line}\n`);
+  } catch {
+    // logging must never throw into the caller
+  }
+}
+
+function writeToFile(level: string, maskedMsg: string, args: unknown[]): void {
+  if (!fileLogDir) return;
+  const extra = args.length
+    ? ' ' + args.map((a) => (typeof a === 'string' ? a : inspect(a, { depth: 3 }))).join(' ')
+    : '';
+  writeRaw(`[${timestamp()}] [${level}] ${maskedMsg}${extra}`);
+}
+
 export function debug(msg: string, ...args: unknown[]): void {
-  if (shouldLog('debug')) console.log(chalk.gray(`[${timestamp()}] [DEBUG] ${maskSecrets(msg)}`), ...args);
+  if (!shouldLog('debug')) return;
+  const masked = maskSecrets(msg);
+  console.log(chalk.gray(`[${timestamp()}] [DEBUG] ${masked}`), ...args);
+  writeToFile('DEBUG', masked, args);
 }
 
 export function info(msg: string, ...args: unknown[]): void {
-  if (shouldLog('info')) console.log(chalk.blue(`[${timestamp()}] [INFO] ${maskSecrets(msg)}`), ...args);
+  if (!shouldLog('info')) return;
+  const masked = maskSecrets(msg);
+  console.log(chalk.blue(`[${timestamp()}] [INFO] ${masked}`), ...args);
+  writeToFile('INFO', masked, args);
 }
 
 export function warn(msg: string, ...args: unknown[]): void {
-  if (shouldLog('warn')) console.log(chalk.yellow(`[${timestamp()}] [WARN] ${maskSecrets(msg)}`), ...args);
+  if (!shouldLog('warn')) return;
+  const masked = maskSecrets(msg);
+  console.log(chalk.yellow(`[${timestamp()}] [WARN] ${masked}`), ...args);
+  writeToFile('WARN', masked, args);
 }
 
 export function error(msg: string, ...args: unknown[]): void {
-  if (shouldLog('error')) console.error(chalk.red(`[${timestamp()}] [ERROR] ${maskSecrets(msg)}`), ...args);
+  if (!shouldLog('error')) return;
+  const masked = maskSecrets(msg);
+  console.error(chalk.red(`[${timestamp()}] [ERROR] ${masked}`), ...args);
+  writeToFile('ERROR', masked, args);
 }
 
 // ---------- Token debug logging ----------
@@ -119,4 +197,5 @@ export function logTokenUsage(
 
   const line = `[TOKEN] ${purpose.padEnd(10)}| ${providerModel.padEnd(30)}| in:${String(usage.promptTokens).padEnd(6)}out:${String(usage.completionTokens).padEnd(6)}| cache_read:${String(cacheRead).padEnd(6)}cache_write:${String(cacheWrite).padEnd(6)}| hit:${hitRate}%${cacheMiss}`;
   console.log(line);
+  writeRaw(line);
 }
