@@ -179,7 +179,7 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - known_users with channel info in context builder
 - Multi-target context injection (per-target status, max 3 pending targets, 5 msgs each)
 - Auto-cleanup of old disabled cron jobs (configurable via cron.cleanup)
-- Update command detects new config sections (compares janus.example.json vs janus.json)
+- Update command auto-adds new top-level config sections (merges janus.example.json into janus.json, add-only, backup to janus.json.bak)
 - 466 tests across 42 files
 
 ### Phase 13: Distribution Overhaul (#174, #175, #177, #178, #179)
