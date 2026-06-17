@@ -11,6 +11,7 @@ import {
   CONTEXT_WINDOW_HARD_MIN_TOKENS,
 } from '../../src/context/context-manager.js';
 import type { LLMMessage } from '../../src/llm/types.js';
+import { stripOrphanSurrogates } from '../../src/utils/sanitize.js';
 
 const userMsg = (content: string): LLMMessage => ({ role: 'user', content });
 const assistantMsg = (content: string): LLMMessage => ({ role: 'assistant', content });
@@ -212,5 +213,30 @@ describe('routeCall', () => {
     ];
     const res = routeCall({ messages: msgs, systemPrompt: 'sp', budget });
     expect(res.route.type).toBe('compact_then_truncate');
+  });
+});
+
+describe('softTrimOldToolResults — surrogate safety', () => {
+  it('does not split surrogate pairs at head/tail cut points', () => {
+    const settings = {
+      ...DEFAULT_TRANSFORM_SETTINGS,
+      keepLastAssistants: 1,
+      softTrim: { maxChars: 20, headChars: 10, tailChars: 10 },
+    };
+    // 😀 sits exactly on the head cut (index 9-10) and the tail cut (index 51-52)
+    const content = 'x'.repeat(9) + '😀' + 'm'.repeat(40) + '😀' + 'z'.repeat(9);
+    const msgs: LLMMessage[] = [
+      toolMsg('t1', content),
+      userMsg('q'), assistantMsg('a'),
+      userMsg('q2'), assistantMsg('a2'),
+    ];
+
+    const result = softTrimOldToolResults(msgs, settings);
+    const trimmed = result[0].content as string;
+
+    // trimming actually happened (marker present)
+    expect(trimmed).toContain('[trimmed:');
+    // and produced NO orphan surrogates (the bug: raw .slice() split the emoji)
+    expect(stripOrphanSurrogates(trimmed)).toBe(trimmed);
   });
 });
