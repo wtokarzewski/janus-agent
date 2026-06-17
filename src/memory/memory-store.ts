@@ -11,6 +11,14 @@ export interface MemoryContext {
   recentNotes: string;
 }
 
+/** Which slice of memory to read/write. Resolution precedence: agent > chat > user > global. */
+export interface MemoryScope {
+  chatId?: string;
+  userId?: string;
+  /** Set only for agents with isolated memory (`memory.shared: false`). */
+  agentId?: string;
+}
+
 export class MemoryStore {
   private memoryDir: string;
   private config: JanusConfig;
@@ -112,25 +120,23 @@ export class MemoryStore {
     return this.index !== null;
   }
 
-  /** Resolve memory directory: per-agent > per-user > global. */
-  private resolveMemDir(userId?: string, agentId?: string): string {
-    if (agentId) {
-      return resolve(this.config.workspace.dir, '.janus', 'agents', agentId, 'memory');
-    }
-    if (userId) {
-      return resolve(this.config.workspace.dir, '.janus', 'users', userId, 'memory');
-    }
+  /** Resolve memory directory. Precedence: isolated agent > chat > user > global. */
+  private resolveMemDir(scope: MemoryScope = {}): string {
+    const ws = this.config.workspace.dir;
+    if (scope.agentId) return resolve(ws, '.janus', 'agents', scope.agentId, 'memory');
+    if (scope.chatId) return resolve(ws, '.janus', 'chats', scope.chatId, 'memory');
+    if (scope.userId) return resolve(ws, '.janus', 'users', scope.userId, 'memory');
     return this.memoryDir;
   }
 
-  async readMemory(userId?: string, agentId?: string): Promise<string> {
-    return this.readSafe(join(this.resolveMemDir(userId, agentId), 'MEMORY.md'));
+  async readMemory(scope: MemoryScope = {}): Promise<string> {
+    return this.readSafe(join(this.resolveMemDir(scope), 'MEMORY.md'));
   }
 
   private writeFailures = 0;
 
-  async writeMemory(content: string, userId?: string, agentId?: string): Promise<void> {
-    const dir = this.resolveMemDir(userId, agentId);
+  async writeMemory(content: string, scope: MemoryScope = {}): Promise<void> {
+    const dir = this.resolveMemDir(scope);
     await mkdir(dir, { recursive: true });
     const path = join(dir, 'MEMORY.md');
 
@@ -161,45 +167,32 @@ export class MemoryStore {
     }
   }
 
-  async appendDaily(entry: string, userId?: string, scope?: InboundMessage['scope'], agentId?: string): Promise<void> {
-    let dir = this.memoryDir;
-
-    // Per-agent isolated memory goes to .janus/agents/{agentId}/memory/
-    if (agentId) {
-      dir = resolve(this.config.workspace.dir, '.janus', 'agents', agentId, 'memory');
-    } else if (scope?.kind === 'user' && userId) {
-      // Per-user private memory goes to .janus/users/{userId}/memory/
-      dir = resolve(this.config.workspace.dir, '.janus', 'users', userId, 'memory');
-    }
-    // Family scope stays in workspace memory (owner='shared', scope='family')
-    // No scope / global: workspace memory (existing behavior)
-
+  async appendDaily(entry: string, scope: MemoryScope = {}): Promise<void> {
+    const dir = this.resolveMemDir(scope);
     await mkdir(dir, { recursive: true });
     const path = join(dir, `${this.todayDate()}.md`);
     const prefix = (await this.readSafe(path)) ? '\n' : `# ${this.todayDate()}\n\n`;
     await appendFile(path, `${prefix}${entry}\n`, 'utf-8');
   }
 
-  async readDaily(date?: string, userId?: string, agentId?: string): Promise<string> {
+  async readDaily(date: string | undefined, scope: MemoryScope = {}): Promise<string> {
     const d = date ?? this.todayDate();
-    return this.readSafe(join(this.resolveMemDir(userId, agentId), `${d}.md`));
+    return this.readSafe(join(this.resolveMemDir(scope), `${d}.md`));
   }
 
   /**
-   * Get context for system prompt.
-   * Loads MEMORY.md + last 3 daily notes for system prompt context.
-   * When userId is provided, reads per-user memory (multi-user isolation).
+   * Get context for system prompt: MEMORY.md + last 3 daily notes, scoped per chat/user/agent.
    */
-  async getContext(userId?: string, agentId?: string): Promise<MemoryContext> {
+  async getContext(scope: MemoryScope = {}): Promise<MemoryContext> {
     const [memory, recentNotes] = await Promise.all([
-      this.readMemory(userId, agentId),
-      this.getRecentDailyNotes(3, userId, agentId),
+      this.readMemory(scope),
+      this.getRecentDailyNotes(3, scope),
     ]);
     return { memory, recentNotes };
   }
 
   /** Load last N days of daily notes (today + N-1 previous days). */
-  private async getRecentDailyNotes(days: number, userId?: string, agentId?: string): Promise<string> {
+  private async getRecentDailyNotes(days: number, scope: MemoryScope = {}): Promise<string> {
     const notes: string[] = [];
     const today = new Date();
 
@@ -207,7 +200,7 @@ export class MemoryStore {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
       const dateStr = localDate(date);
-      const content = await this.readDaily(dateStr, userId, agentId);
+      const content = await this.readDaily(dateStr, scope);
       if (content.trim()) {
         notes.push(`<!-- ${dateStr} -->\n${content.trim()}`);
       }

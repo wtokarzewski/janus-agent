@@ -124,7 +124,7 @@ export function filterPinnedReadsFromSummarization(
  */
 export class AgentLoop {
   private deps: AgentDeps;
-  private flushState = new Map<string, { lastFlushed: number; userId?: string; userName?: string; scope?: InboundMessage['scope']; flushing?: boolean }>();
+  private flushState = new Map<string, { lastFlushed: number; userId?: string; userName?: string; chatId?: string; scope?: InboundMessage['scope']; flushing?: boolean }>();
   private _iterationControllers = new Map<string, AbortController>();
   /** Guard against concurrent summarization (C2) */
   private summarizing = new Set<string>();
@@ -492,6 +492,7 @@ export class AgentLoop {
     const state = this.flushState.get(sessionKey)!;
     state.userId = msg.user?.userId;
     state.userName = msg.user?.name;
+    state.chatId = msg.chatId;
     state.scope = msg.scope;
 
     // Memory flush trigger — simplified. Was: 5 triggers (count/token/pre-summary/idle/shutdown)
@@ -500,7 +501,7 @@ export class AgentLoop {
     const unflushed = fullSession.messages.length - state.lastFlushed;
     const sessionTokenEstimate = estimateMessagesTokensV2(fullSession.messages);
     if (this.deps.memory && unflushed >= 20 && !state.flushing) {
-      this.flushMemory(sessionKey, state.userId, state.scope).catch(err => {
+      this.flushMemory(sessionKey, state.userId, state.chatId).catch(err => {
         log.warn(`Count-aware memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
@@ -1134,7 +1135,7 @@ export class AgentLoop {
   }
 
   /** Extract key facts from messages and save to daily notes + HISTORY.md + MEMORY.md. */
-  private async flushMemory(sessionKey: string, userId?: string, scope?: InboundMessage['scope'], upToIndex?: number): Promise<void> {
+  private async flushMemory(sessionKey: string, userId?: string, chatId?: string, upToIndex?: number): Promise<void> {
     if (!this.deps.memory) return;
 
     const state = this.flushState.get(sessionKey);
@@ -1149,7 +1150,7 @@ export class AgentLoop {
     if (messagesToFlush.length === 0) { state.flushing = false; return; }
     try {
       // Build context: session summary + current MEMORY.md
-      const currentMemory = await this.deps.memory.readMemory(userId);
+      const currentMemory = await this.deps.memory.readMemory({ chatId, userId });
       const sessionSummary = session.metadata.summary ?? '';
       const contextParts: string[] = [];
       const userName = this.flushState.get(sessionKey)?.userName;
@@ -1212,7 +1213,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
 
       // Daily notes — for temporal search (FTS5 + vector)
       if (facts && facts !== 'NONE') {
-        await this.deps.memory.appendDaily(`## Session notes\n${facts}`, userId, scope);
+        await this.deps.memory.appendDaily(`## Session notes\n${facts}`, { chatId, userId });
       }
 
       // MEMORY.md is NOT touched here. The agent owns curated long-term memory
@@ -1221,7 +1222,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
 
       // Fallback: if XML parsing failed, treat whole response as daily notes
       if (!summaryMatch && !factsMatch && response.trim() !== 'NONE') {
-        await this.deps.memory.appendDaily(`## Session notes\n${response}`, userId, scope);
+        await this.deps.memory.appendDaily(`## Session notes\n${response}`, { chatId, userId });
         await this.deps.memory.appendHistory(`[memory flush] Session notes extracted`);
       }
 
@@ -1253,7 +1254,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
 
     const timeout = AbortSignal.timeout(30_000);
     const promises = toFlush.map(([sessionKey, state]) =>
-      this.flushMemory(sessionKey, state.userId, state.scope),
+      this.flushMemory(sessionKey, state.userId, state.chatId),
     );
 
     try {
