@@ -25,7 +25,7 @@ Scope episodic memory by **chat**: `.janus/chats/{chatId}/memory/` holding `MEMO
 ## Out of scope (explicitly decided)
 
 - **No retention/pruning of daily notes.** Daily `.md` files are KB-scale; the real problem is bleed (fixed by routing), not volume. Index temporal decay already down-weights old chunks. Revisit only if chat dirs genuinely balloon.
-- **No migration of existing memory.** Clean break: existing `users/*/memory/` and root `memory/` are left on disk (nothing deleted) and no longer auto-read. Wojtek deletes the old root pile manually.
+- **No migration of existing memory.** `users/*/memory/` stays LIVE (read/written for DMs) — nothing changes there. Only the root workspace `memory/` (the old group/family dump) is left on disk and no longer auto-read, since group chats now write to `chats/{chatId}/`. Wojtek deletes that root pile manually when ready.
 - **No new config toggle.** Per-chat is the default behavior (keep it simple). Consequence noted below.
 
 ## Design
@@ -33,26 +33,31 @@ Scope episodic memory by **chat**: `.janus/chats/{chatId}/memory/` holding `MEMO
 ### Directory layout
 - Episodic per chat: `.janus/chats/{chatId}/memory/MEMORY.md` + `{date}.md`.
 - Unchanged per user: `.janus/users/{userId}/PROFILE.md`, `files/`, `HEARTBEAT.md`.
-- Legacy (retained on disk, not read): root `memory/`, `users/*/memory/`.
-- DMs are chats too: a private chat's memory goes to `chats/{dmChatId}/memory/` (on Telegram a private chat's id equals the user's id, so DM memory stays naturally per-person). Episodic memory thus moves off `users/{userId}/memory/` entirely; only `PROFILE.md`/`files/`/`HEARTBEAT.md` remain under `users/`.
+- **Per-user memory is preserved and stays live.** Direct/personal (DM) conversations keep reading and writing `.janus/users/{userId}/memory/` — each user has their own memory, unchanged. Only GROUP/family chats change: their memory moves from the old global `memory/` dump to `.janus/chats/{chatId}/memory/`.
+- Legacy (retained on disk, no longer read): the root workspace `memory/` ONLY — it was the shared dump for group/family scope, now replaced by per-chat dirs. `users/*/memory/` is NOT legacy — it stays live for DMs.
 
-### Resolution precedence
-`resolveMemDir({ chatId?, userId?, agentId? })`:
-1. `agentId` — only passed when an agent opts into isolated memory (`memory.shared: false`) → `.janus/agents/{agentId}/memory/`. **Preserves the existing per-agent isolation feature.**
-2. `chatId` → `.janus/chats/{chatId}/memory/`. **New — the normal path.**
-3. `userId` → `.janus/users/{userId}/memory/`. Legacy fallback.
-4. global `memory/`. Fallback when there is no chat (e.g. a chatless internal context).
+### Resolution: scopeForChat → resolveMemDir
+`scopeForChat({ scope, userId, chatId, agentId })` picks the key from the message context — **the key is NOT always the chat:**
+- isolated agent (`memory.shared:false`) → `{ agentId }`
+- direct/personal message (`scope.kind === 'user'`) → `{ userId }` — **DMs keep their own per-user memory**
+- group/family chat (`scope.kind === 'family'`) → `{ chatId }`
+- no context → `{}` (global)
 
-All read/write methods (`readMemory`, `writeMemory`, `appendDaily`, `readDaily`, `getRecentDailyNotes`, `getContext`) accept `chatId` and route via `resolveMemDir`. `appendDaily`'s current inline routing is unified to use `resolveMemDir`.
+`resolveMemDir(scope: MemoryScope)` maps it, precedence agent > chat > user > global:
+1. `agentId` → `.janus/agents/{agentId}/memory/`
+2. `chatId` → `.janus/chats/{chatId}/memory/`
+3. `userId` → `.janus/users/{userId}/memory/`
+4. global `memory/`
 
-### Threading `chatId`
-- `AgentLoop.flushState` gains `chatId` (alongside `userId`/`userName`/`scope`). Source: the inbound message, or parsed from the session key (`{agentId}:{channel}:{chatId}`).
-- `flushMemory()` passes `chatId` to `appendDaily`, so flushed daily notes land in the originating chat's dir.
-- `ContextBuilder` passes `chatId` to `getContext()` (direct reads) **and** to `memory.search()` (retrieval).
+All read/write methods (`readMemory`, `writeMemory`, `appendDaily`, `readDaily`, `getRecentDailyNotes`, `getContext`) take a `MemoryScope`.
+
+### Threading the scope
+- `AgentLoop.flushState` gains `chatId` (alongside `userId`/`userName`/`scope`). `flushMemory()` computes `scopeForChat({ scope: state.scope, userId, chatId })` and passes it to `readMemory`/`appendDaily` — so a DM's notes land under `users/{userId}/` and a group's under `chats/{chatId}/`.
+- `ContextBuilder.buildMemorySection` computes the same scope and passes it to `getContext()` (direct reads) **and** `memory.search()` (retrieval).
 
 ### Search / index scoping
-- `MemoryIndex` tags each chunk with the `chatId` derived from its file path (`chats/{chatId}/memory/...`). Chunks from legacy user/global memory carry no `chatId`.
-- `MemoryStore.search(query, limit, chatId)` → `MemoryIndex.search(query, limit, chatId)` filters results to the current chat's chunks. This closes the retrieval-bleed path.
+- `collectMemoryFiles` indexes `chats/{chatId}/memory/` as `scope='chat', scope_id=chatId`, and keeps `users/{id}/memory/` as `scope='user', scope_id=userId`.
+- `MemoryStore.search`/`hybridSearch` → `MemoryIndex.search(query, limit, scope)` filter STRICTLY to the resolved scope's chunks (chat→chat, user→user, no cross-scope merge). Closes the retrieval-bleed path.
 - Indexing walks `chats/*/memory/` and tags accordingly.
 
 ### Behavior consequence
