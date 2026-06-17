@@ -134,14 +134,7 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
 
   if (count === 0) {
     console.log(chalk.green('Already up to date.'));
-    await migrateFromHome(cwd);
-    await ensureWorkspace(cwd);
-    await ensureStateUncertaintySection(cwd);
-    await ensureTimezone();
-    try {
-      const { ensureGws } = await import('./onboard.js');
-      await ensureGws();
-    } catch { /* non-critical */ }
+    await finalizeUpdate(cwd);
     return;
   }
 
@@ -183,31 +176,29 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
     }
   }
 
-  // 5. Migrate files from ~/.janus/ to workspace .janus/ (one-time)
+  // 5. Post-update housekeeping (shared with the up-to-date path above)
+  await finalizeUpdate(cwd);
+
+  console.log();
+  console.log(chalk.green('Update complete. Restart Janus to use the new version.'));
+}
+
+/**
+ * Post-update housekeeping — runs whether or not new commits were pulled, so config
+ * sync and workspace setup happen even when the repo is already up to date.
+ */
+async function finalizeUpdate(cwd: string): Promise<void> {
   await migrateFromHome(cwd);
-
-  // 6. Ensure per-user directories exist
   await ensureWorkspace(cwd);
-
-  // 6a. Append State uncertainty section to AGENTS.md if missing
   await ensureStateUncertaintySection(cwd);
-
-  // 7. Auto-detect timezone if missing from config
   await ensureTimezone();
-
-  // 8. Auto-add new top-level config sections from janus.example.json
   syncNewConfigSections(cwd);
-
-  // 9. Check Google Workspace CLI auth
   try {
     const { ensureGws } = await import('./onboard.js');
     await ensureGws();
   } catch {
     // Non-critical — skip silently
   }
-
-  console.log();
-  console.log(chalk.green('Update complete. Restart Janus to use the new version.'));
 }
 
 const STATE_UNCERTAINTY_SECTION = `## State uncertainty
