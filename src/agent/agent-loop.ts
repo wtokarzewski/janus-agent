@@ -11,7 +11,7 @@ import type { SessionManager } from '../session/session-manager.js';
 import type { ContextBuilder } from '../context/context-builder.js';
 import type { SkillLoader } from '../skills/skill-loader.js';
 import type { JanusConfig } from '../config/schema.js';
-import type { MemoryStore } from '../memory/memory-store.js';
+import { type MemoryStore, scopeForChat } from '../memory/memory-store.js';
 import type { GateService } from '../gates/types.js';
 import { findUserProfile } from '../users/user-resolver.js';
 import { loadPrompt } from '../prompts/loader.js';
@@ -1142,6 +1142,7 @@ export class AgentLoop {
     if (!state) return;
     if (state.flushing) return;
     state.flushing = true;
+    const memScope = scopeForChat({ scope: state.scope, userId, chatId });
 
     const session = await this.deps.sessions.getOrCreate(sessionKey);
     const from = state.lastFlushed;
@@ -1150,7 +1151,7 @@ export class AgentLoop {
     if (messagesToFlush.length === 0) { state.flushing = false; return; }
     try {
       // Build context: session summary + current MEMORY.md
-      const currentMemory = await this.deps.memory.readMemory({ chatId, userId });
+      const currentMemory = await this.deps.memory.readMemory(memScope);
       const sessionSummary = session.metadata.summary ?? '';
       const contextParts: string[] = [];
       const userName = this.flushState.get(sessionKey)?.userName;
@@ -1213,7 +1214,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
 
       // Daily notes — for temporal search (FTS5 + vector)
       if (facts && facts !== 'NONE') {
-        await this.deps.memory.appendDaily(`## Session notes\n${facts}`, { chatId, userId });
+        await this.deps.memory.appendDaily(`## Session notes\n${facts}`, memScope);
       }
 
       // MEMORY.md is NOT touched here. The agent owns curated long-term memory
@@ -1222,7 +1223,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
 
       // Fallback: if XML parsing failed, treat whole response as daily notes
       if (!summaryMatch && !factsMatch && response.trim() !== 'NONE') {
-        await this.deps.memory.appendDaily(`## Session notes\n${response}`, { chatId, userId });
+        await this.deps.memory.appendDaily(`## Session notes\n${response}`, memScope);
         await this.deps.memory.appendHistory(`[memory flush] Session notes extracted`);
       }
 

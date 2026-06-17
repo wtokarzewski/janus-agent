@@ -19,6 +19,26 @@ export interface MemoryScope {
   agentId?: string;
 }
 
+/**
+ * Pick the memory scope for a message context. The key is NOT always the chat:
+ * - isolated agent (`memory.shared:false`) → the agent's own memory;
+ * - direct/personal message (`scope.kind === 'user'`) → that user's memory (`.janus/users/{id}/`);
+ * - group/family chat (`scope.kind === 'family'`) → that chat's shared memory (`.janus/chats/{chatId}/`),
+ *   keyed by the actual chatId so different groups stay isolated;
+ * - no context → global.
+ */
+export function scopeForChat(opts: {
+  scope?: InboundMessage['scope'];
+  userId?: string;
+  chatId?: string;
+  agentId?: string;
+}): MemoryScope {
+  if (opts.agentId) return { agentId: opts.agentId };
+  if (opts.scope?.kind === 'user' && opts.userId) return { userId: opts.userId };
+  if (opts.chatId) return { chatId: opts.chatId };
+  return {};
+}
+
 export class MemoryStore {
   private memoryDir: string;
   private config: JanusConfig;

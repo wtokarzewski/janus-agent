@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import * as log from '../utils/logger.js';
 import type { SkillDefinition } from '../skills/types.js';
-import type { MemoryStore } from '../memory/memory-store.js';
+import { type MemoryStore, scopeForChat } from '../memory/memory-store.js';
 import type { SkillLoader } from '../skills/skill-loader.js';
 import type { JanusConfig } from '../config/schema.js';
 import type { InboundMessage } from '../bus/types.js';
@@ -457,6 +457,7 @@ ${toolList}
     agentId?: string,
     chatId?: string,
   ): Promise<string | null> {
+    const memScope = scopeForChat({ scope, userId, chatId, agentId });
     // Hybrid search: if index available and user message provided, search FTS5 (+ vectors if enabled)
     if (this.deps.memory.hasIndex && userMessage) {
       const useVector = this.deps.config.memory?.vectorSearch ?? false;
@@ -477,7 +478,7 @@ ${toolList}
         const date = new Date();
         date.setDate(date.getDate() - d);
         const dateStr = localDate(date);
-        const dayNote = await this.deps.memory.readDaily(dateStr, { chatId, userId, agentId });
+        const dayNote = await this.deps.memory.readDaily(dateStr, memScope);
         if (dayNote.trim()) {
           const label = d === 0 ? 'today' : dateStr;
           parts.push(`<memory_chunk source="${label}" section="daily_note">\n${dayNote.trim()}\n</memory_chunk>`);
@@ -490,7 +491,7 @@ ${toolList}
     }
 
     // Fallback: full dump (no index, no results, or no user message)
-    const ctx = await this.deps.memory.getContext({ chatId, userId, agentId });
+    const ctx = await this.deps.memory.getContext(memScope);
     const parts: string[] = [];
 
     if (ctx.memory) parts.push(`<!-- MEMORY.md -->\n${ctx.memory}`);

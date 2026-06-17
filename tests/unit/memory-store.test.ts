@@ -1,8 +1,33 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { MemoryStore } from '../../src/memory/memory-store.js';
+import { MemoryStore, scopeForChat } from '../../src/memory/memory-store.js';
 import { createTestConfig, createTempDir } from '../helpers/test-fixtures.js';
+
+describe('scopeForChat', () => {
+  it('routes a direct/personal (kind=user) message to the user', () => {
+    expect(scopeForChat({ scope: { kind: 'user', id: 'wojtek' }, userId: 'wojtek', chatId: '123' }))
+      .toEqual({ userId: 'wojtek' });
+  });
+
+  it('routes a group/family (kind=family) message to the chat', () => {
+    expect(scopeForChat({ scope: { kind: 'family', id: 'family' }, userId: 'wojtek', chatId: '-100' }))
+      .toEqual({ chatId: '-100' });
+  });
+
+  it('lets an isolated agent take precedence over chat and user', () => {
+    expect(scopeForChat({ scope: { kind: 'user', id: 'wojtek' }, userId: 'wojtek', chatId: '123', agentId: 'diet' }))
+      .toEqual({ agentId: 'diet' });
+  });
+
+  it('falls back to chatId when there is no scope', () => {
+    expect(scopeForChat({ chatId: '-100' })).toEqual({ chatId: '-100' });
+  });
+
+  it('falls back to global (empty) when nothing is known', () => {
+    expect(scopeForChat({})).toEqual({});
+  });
+});
 
 describe('MemoryStore per-chat scoping', () => {
   let tempDir: string;
