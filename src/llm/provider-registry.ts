@@ -1,6 +1,44 @@
-import type { LLMProvider, ChatRequest, ChatResponse, ProviderEntry, StreamCallback } from './types.js';
+import type { LLMProvider, ChatRequest, ChatResponse, ProviderEntry, StreamCallback, LLMMessage } from './types.js';
 import { isFailoverCandidate } from './retry.js';
+import { stripOrphanSurrogates } from '../utils/sanitize.js';
 import * as log from '../utils/logger.js';
+
+/**
+ * Defense-in-depth: strip orphan UTF-16 surrogates from all message content
+ * before any provider sees it. A split surrogate pair (e.g. an emoji cut by
+ * truncation upstream) serializes to invalid JSON and makes providers reject
+ * the request with 400 "no low surrogate in string". Returns the same array
+ * reference when nothing changed, to preserve prompt-cache stability.
+ */
+function sanitizeRequestMessages(messages: LLMMessage[]): LLMMessage[] {
+  let changed = false;
+  const out = messages.map((m): LLMMessage => {
+    if (typeof m.content === 'string') {
+      const clean = stripOrphanSurrogates(m.content);
+      if (clean === m.content) return m;
+      changed = true;
+      return { ...m, content: clean };
+    }
+    if (Array.isArray(m.content)) {
+      let blockChanged = false;
+      const blocks = (m.content as Array<Record<string, unknown>>).map((b) => {
+        if (b && typeof b.text === 'string') {
+          const clean = stripOrphanSurrogates(b.text);
+          if (clean !== b.text) {
+            blockChanged = true;
+            return { ...b, text: clean };
+          }
+        }
+        return b;
+      });
+      if (!blockChanged) return m;
+      changed = true;
+      return { ...m, content: blocks } as LLMMessage;
+    }
+    return m;
+  });
+  return changed ? out : messages;
+}
 
 /**
  * ProviderRegistry — manages multiple LLM providers with purpose routing and failover.
@@ -42,10 +80,11 @@ export class ProviderRegistry implements LLMProvider {
     }
 
     let lastError: Error | undefined;
+    const messages = sanitizeRequestMessages(request.messages);
 
     for (const entry of candidates) {
       try {
-        const req = { ...request, model: request.model || entry.model };
+        const req = { ...request, messages, model: request.model || entry.model };
         log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} request`);
         const result = await entry.provider.chat(req);
         result.provider = entry.name;
@@ -74,10 +113,11 @@ export class ProviderRegistry implements LLMProvider {
     }
 
     let lastError: Error | undefined;
+    const messages = sanitizeRequestMessages(request.messages);
 
     for (const entry of candidates) {
       try {
-        const req = { ...request, model: request.model || entry.model };
+        const req = { ...request, messages, model: request.model || entry.model };
         log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} stream request`);
 
         if (entry.provider.chatStream) {

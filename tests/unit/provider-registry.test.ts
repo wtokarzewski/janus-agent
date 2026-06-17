@@ -194,3 +194,54 @@ describe('ProviderRegistry', () => {
     expect(registry.list()[0].name).toBe('p1');
   });
 });
+
+describe('ProviderRegistry — orphan surrogate sanitization (defense-in-depth)', () => {
+  it('strips orphan surrogates from message content before dispatch', async () => {
+    let captured: ChatRequest | undefined;
+    const registry = new ProviderRegistry();
+    registry.register({
+      name: 'cap',
+      model: 'm',
+      purpose: [],
+      priority: 0,
+      provider: {
+        async chat(req: ChatRequest): Promise<ChatResponse> {
+          captured = req;
+          return { content: 'ok', toolCalls: [], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, finishReason: 'stop' };
+        },
+      },
+    });
+
+    await registry.chat({
+      model: 'm',
+      messages: [
+        { role: 'user', content: 'hello\uD83D' },            // lone HIGH surrogate (split emoji head)
+        { role: 'tool', tool_call_id: 't', content: '\uDE00world' }, // lone LOW surrogate (split emoji tail)
+      ],
+    });
+
+    expect(captured).toBeDefined();
+    expect(captured!.messages[0].content).toBe('hello');
+    expect(captured!.messages[1].content).toBe('world');
+  });
+
+  it('leaves clean content (and valid emoji) untouched', async () => {
+    let captured: ChatRequest | undefined;
+    const registry = new ProviderRegistry();
+    registry.register({
+      name: 'cap',
+      model: 'm',
+      purpose: [],
+      priority: 0,
+      provider: {
+        async chat(req: ChatRequest): Promise<ChatResponse> {
+          captured = req;
+          return { content: 'ok', toolCalls: [], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, finishReason: 'stop' };
+        },
+      },
+    });
+
+    await registry.chat({ model: 'm', messages: [{ role: 'user', content: 'clean 😀 text' }] });
+    expect(captured!.messages[0].content).toBe('clean 😀 text');
+  });
+});

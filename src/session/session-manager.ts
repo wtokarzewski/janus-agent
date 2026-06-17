@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { LLMMessage } from '../llm/types.js';
 import type { JanusConfig } from '../config/schema.js';
 import * as log from '../utils/logger.js';
-import { stripJsonSurrogates } from '../utils/sanitize.js';
+import { stripJsonSurrogates, safeSlice } from '../utils/sanitize.js';
 import { resolveBudget, CHARS_PER_TOKEN_ESTIMATE } from '../context/context-manager.js';
 
 // Unified tool result cap: 50% of effective budget converted to chars.
@@ -291,7 +291,8 @@ export class SessionManager {
     const tailLen = cap - headLen;
     const removed = content.length - headLen - tailLen;
     const marker = `\n\n[truncated: ${removed} chars removed to fit context budget]\n\n`;
-    return content.slice(0, headLen) + marker + content.slice(-tailLen);
+    // safeSlice so a split surrogate pair never lands in the archived JSONL
+    return safeSlice(content, 0, headLen) + marker + safeSlice(content, content.length - tailLen);
   }
 
   private async appendIncremental(key: string, session: Session, newMessages: LLMMessage[]): Promise<void> {

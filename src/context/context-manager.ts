@@ -1,4 +1,5 @@
 import type { LLMMessage, UserContentBlock, ToolContentBlock } from '../llm/types.js';
+import { safeSlice } from '../utils/sanitize.js';
 
 // Single source of truth for context-management decisions.
 // Replaces the 7-mechanism / 12-threshold system that accumulated 20+ patch PRs
@@ -146,8 +147,10 @@ export function softTrimOldToolResults(
     const content = asString(m.content);
     if (content.length <= maxChars) continue;
 
-    const head = content.slice(0, headChars);
-    const tail = content.slice(-tailChars);
+    // safeSlice (not raw .slice) so we never split a UTF-16 surrogate pair —
+    // an orphan surrogate makes the request body invalid JSON → provider 400.
+    const head = safeSlice(content, 0, headChars);
+    const tail = safeSlice(content, content.length - tailChars);
     const note = `\n\n[trimmed: kept first ${headChars} + last ${tailChars} of ${content.length} chars]\n\n`;
     const trimmed = head + note + tail;
 
