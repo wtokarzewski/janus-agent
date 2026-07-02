@@ -505,3 +505,68 @@ describe('HeartbeatService → CronService sync', () => {
     ac.abort();
   });
 });
+
+describe('CronService memory scope', () => {
+  function createServiceWithUsers(): CronService {
+    const config = createTestConfig({
+      users: [
+        {
+          id: 'wojtek',
+          name: 'Wojtek',
+          identities: [{ channel: 'telegram', channelUserId: '111222333' }],
+        },
+      ],
+    });
+    return new CronService(db, bus, config);
+  }
+
+  async function fire(svc: CronService, jobId: string): Promise<void> {
+    const job = svc.getJob(jobId)!;
+    await (svc as unknown as { executeJob(job: unknown): Promise<void> }).executeJob(job);
+  }
+
+  it('scopes a DM-delivered job to the user memory', async () => {
+    const svc = createServiceWithUsers();
+    const published: Array<{ scope?: { kind: string; id: string } }> = [];
+    bus.publishInbound = async (msg) => { published.push(msg); };
+
+    const job = svc.addJob({
+      name: 'dm-job', scheduleKind: 'every', scheduleValue: '60000',
+      task: 'remind', userId: 'wojtek', chatId: '111222333',
+    });
+    await fire(svc, job.id);
+
+    expect(published).toHaveLength(1);
+    expect(published[0].scope).toEqual({ kind: 'user', id: 'wojtek' });
+  });
+
+  it('scopes a user-owned pseudo-chat job (no chatId) to the user memory', async () => {
+    const svc = createServiceWithUsers();
+    const published: Array<{ scope?: { kind: string; id: string } }> = [];
+    bus.publishInbound = async (msg) => { published.push(msg); };
+
+    const job = svc.addJob({
+      name: 'pseudo-job', scheduleKind: 'every', scheduleValue: '60000',
+      task: 'remind', userId: 'wojtek',
+    });
+    await fire(svc, job.id);
+
+    expect(published).toHaveLength(1);
+    expect(published[0].scope).toEqual({ kind: 'user', id: 'wojtek' });
+  });
+
+  it('leaves group-chat jobs unscoped (per-chat memory)', async () => {
+    const svc = createServiceWithUsers();
+    const published: Array<{ scope?: { kind: string; id: string } }> = [];
+    bus.publishInbound = async (msg) => { published.push(msg); };
+
+    const job = svc.addJob({
+      name: 'group-job', scheduleKind: 'every', scheduleValue: '60000',
+      task: 'remind', userId: 'wojtek', chatId: '-100999888777',
+    });
+    await fire(svc, job.id);
+
+    expect(published).toHaveLength(1);
+    expect(published[0].scope).toBeUndefined();
+  });
+});
