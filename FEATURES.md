@@ -312,11 +312,11 @@ Subagents use minimal mode. Cron/heartbeat use background mode.
 | Section | Key settings |
 |---------|-------------|
 | `llm` | providers (object), slots (default/background), maxTokens, temperature (default 0.3), thinking, reasoningEffort |
-| `agent` | maxIterations (30), tokenBudget (750K), contextWindow (1M), summarizationThreshold (40), toolRetries, lanes |
+| `agent` | maxIterations (30), tokenBudget (750K), contextWindow (1M), summarizationThreshold (40), toolRetries, lanes, laneTimeoutMs (600000) |
 | `workspace` | dir, memoryDir, sessionsDir, skillsDir |
 | `tools` | execEnabled, execTimeout, execDenyPatterns[], maxFileSize |
 | `database` | enabled, path |
-| `heartbeat` | enabled, checkIntervalMs |
+| `heartbeat` | enabled, checkIntervalMs, resyncIntervalMs (60000) |
 | `telegram` | enabled, token, allowlist[], denyByDefault (true), groupPolicy (all\|mention) |
 | `streaming` | enabled, telegramThrottleMs |
 | `gates` | enabled, execPatterns[] |
@@ -339,11 +339,15 @@ Load priority: defaults < user config < workspace config < env vars.
 
 ## Infrastructure
 
-- **MessageBus** — AsyncQueue with bounded capacity (100) and backpressure. Multi-lane concurrent processing (user:3, cron:1, heartbeat:1) with semaphore-based concurrency control and AbortSignal support. Steering message buffering during processing.
+- **MessageBus** — AsyncQueue with bounded capacity (100) and backpressure. Multi-lane concurrent processing (user:6, cron:3, heartbeat:2) with semaphore-based concurrency control and AbortSignal support. Steering message buffering during processing. System-lane publishes log queue depth and warn when messages pile up with no waiting consumer (wedge detection). Dispatcher failures go through the file logger.
+- **Lane watchdog** — Per-run timeout (`agent.laneTimeoutMs`, default 10 min): a run that never settles is aborted and its concurrency slot released, so a hung run can never wedge a lane into silently dropping cron/heartbeat messages.
+- **Heartbeat re-sync** — HEARTBEAT.md files are re-checked for edits (`heartbeat.resyncIntervalMs`, default 60s, mtime polling): added sections become cron jobs and removed sections disable their jobs, without a restart.
+- **Gateway instance lock** — `.janus/gateway.pid` prevents two gateways from running against one workspace (shared cron table = jobs claimed by a half-dead instance = silently lost reminders). Stale locks (dead pid) are taken over; a live holder is waited on ~30s (self_update respawn overlap) then startup is refused. Shutdown force-exits after 15s if teardown hangs.
+- **Cron/heartbeat memory scope** — System runs delivered to a user's DM (chatId matches a channel identity) flush memory to `users/{id}/memory/`; group-chat runs keep per-chat scope (`chats/{chatId}/memory/`).
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 700 tests across 62 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 741 tests across 68 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 - **Install scripts** — One-liner installers for non-git users. Unix (`curl | bash`): downloads latest GitHub Release tarball, extracts to `~/.janus-agent/`, creates `janus` launcher in `~/.local/bin`. Windows (PowerShell `irm | iex`): extracts to `%LOCALAPPDATA%\janus-agent\`, creates `janus.cmd` launcher, adds to user PATH. Both: prerequisite checks (Node.js 20+, npm), backup of existing install.
 - **Tarball update mode** — `janus update` and `self_update` tool auto-detect install mode: git (`.git/` exists) uses `git pull` flow, tarball (no `.git/`) downloads latest GitHub Release with backup/rollback on failure. Version comparison via `isNewerVersion()` semver utility.
 

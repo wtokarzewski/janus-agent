@@ -1,9 +1,9 @@
 # Roadmap
 
-## Current State (Phase 14 complete)
+## Current State (Phase 15 complete + reliability hardening)
 
-- **Version:** 0.14.0
-- **Codebase:** ~17,500 LOC TypeScript, 700 tests across 62 files, CI
+- **Version:** 0.14.1
+- **Codebase:** ~17,500 LOC TypeScript, 741 tests across 68 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
@@ -204,6 +204,20 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - Diet tracker skill
 - Version scheme: 1.0.0 → 0.14.0 (pre-stable)
 - 597 tests across 53 files
+
+### Phase 15: Context Management Redesign (#208-223)
+- Single pre-call router in `context/context-manager.ts` (4 routes: fits / truncate_only / compact_only / compact_then_truncate) replacing Phase 1/2/3 budget passes + emergency cascade
+- Transcript rotation on compaction (bounded on-disk sessions), unified tool result cap
+- Pinned skill state, per-chat memory scoping (#220), file logging with daily rotation (#218)
+- Update command config-section sync from janus.default.json (#219, #221, #222)
+
+### Reliability: cron delivery hardening (#224-226)
+- Root cause of the 2026-06-30 "no reminders" outage: a second half-dead gateway instance claimed cron jobs from the shared SQLite table and published them into a bus nobody consumed
+- Lane watchdog (`agent.laneTimeoutMs`): hung run aborted + slot released, lanes can't wedge silently
+- Queue telemetry: system-lane publishes log depth, warn on unconsumed pile-up; bus errors to file logger
+- HEARTBEAT.md re-sync without restart (`heartbeat.resyncIntervalMs`), removed sections disable their jobs
+- Cron/heartbeat memory scope: DM-delivered runs flush to `users/{id}/memory/`, groups stay per-chat
+- Gateway instance lock (`.janus/gateway.pid`) + shutdown force-exit backstop (15s)
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed

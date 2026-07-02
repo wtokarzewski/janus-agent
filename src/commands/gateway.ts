@@ -17,7 +17,11 @@ import { consumeUpdateMarker } from '../tools/builtin/self-update.js';
 import { InviteStore } from '../invites/invite-store.js';
 import { InviteTool } from '../tools/builtin/invite.js';
 import { deriveChannelAllowlist } from '../users/user-resolver.js';
+import { acquireInstanceLock, releaseInstanceLock } from '../utils/instance-lock.js';
 import * as log from '../utils/logger.js';
+
+/** After abort, give teardown this long before force-exiting the process. */
+const SHUTDOWN_FORCE_EXIT_MS = 15_000;
 
 export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void> {
   const config = await loadConfig();
@@ -35,6 +39,16 @@ export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void>
     log.enableTokenDebug();
   }
 
+  // Single-instance lock. Two gateways on one workspace share the cron table:
+  // whichever polls first claims each job, and if that instance is half-dead
+  // its runs are silently lost. Refuse to start alongside a live gateway.
+  const lock = await acquireInstanceLock(config.workspace.dir);
+  if (!lock.acquired) {
+    console.error(`Error: another Janus gateway (pid ${lock.holderPid}) is already running for this workspace.`);
+    console.error('Stop it first (or delete .janus/gateway.pid if the pid is wrong).');
+    process.exit(1);
+  }
+
   // Create all dependencies
   const app = await createApp(config);
 
@@ -47,6 +61,13 @@ export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void>
     if (shuttingDown) { process.exit(1); return; }
     shuttingDown = true;
     console.log('\nShutting down gateway...');
+    // Backstop: if teardown hangs (stuck timer, wedged await), force-exit so
+    // the process can't linger as a half-dead instance that still owns cron.
+    const forceExit = setTimeout(() => {
+      log.error(`Shutdown did not complete within ${SHUTDOWN_FORCE_EXIT_MS}ms — forcing exit`);
+      process.exit(1);
+    }, SHUTDOWN_FORCE_EXIT_MS);
+    forceExit.unref();
     app.agent.flushAllSessions()
       .catch(err => log.warn(`Shutdown flush failed: ${err instanceof Error ? err.message : String(err)}`))
       .finally(() => ac.abort());
@@ -185,4 +206,9 @@ export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void>
   await stopBrowserRuntime();
   ac.abort();
   await Promise.allSettled([agentPromise, dispatcherPromise]);
+  await releaseInstanceLock(config.workspace.dir);
+
+  // Teardown done — exit explicitly. Any leaked timer or open handle would
+  // otherwise keep the process alive as a half-dead instance.
+  process.exit(0);
 }
