@@ -247,14 +247,36 @@ export class AgentLoop {
         await acquire(signal);
         log.info(`Lane "${lane}": slot acquired (active=${active}/${concurrency})`);
 
-        // Fire-and-forget: process message concurrently, release slot when done
+        // Fire-and-forget: process message concurrently, release slot when done.
+        // Watchdog: a run that never settles (hung stream, stuck await) must not
+        // hold its slot forever — once all slots leak, the lane silently stops
+        // consuming its queue. On timeout we abort the run and free the slot.
+        let released = false;
+        const releaseOnce = () => {
+          if (released) return;
+          released = true;
+          release();
+        };
+        const runCtrl = new AbortController();
+        // System runs read this signal in iterate(); user runs replace it with
+        // their own per-chat controller in processLaneMessage.
+        (msg as InboundMessage & { signal?: AbortSignal }).signal = runCtrl.signal;
+        const timeoutMs = this.deps.config.agent.laneTimeoutMs;
+        const watchdog = setTimeout(() => {
+          log.error(`Lane "${lane}": run ${msg.channel}:${msg.chatId} still active after ${Math.round(timeoutMs / 1000)}s — aborting run and releasing slot (watchdog)`);
+          runCtrl.abort();
+          releaseOnce();
+        }, timeoutMs);
         this.processLaneMessage(msg, signal)
           .catch(err => {
             if (!signal.aborted) {
               log.error(`Lane "${lane}" message error: ${err instanceof Error ? err.message : String(err)}`);
             }
           })
-          .finally(() => release());
+          .finally(() => {
+            clearTimeout(watchdog);
+            releaseOnce();
+          });
       } catch (err) {
         if (signal.aborted) break;
         log.error(`Lane "${lane}" error: ${err instanceof Error ? err.message : String(err)}`);
