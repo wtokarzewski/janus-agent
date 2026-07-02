@@ -5,6 +5,7 @@ import type { JanusConfig } from '../config/schema.js';
 import type { CronService } from './cron-service.js';
 import * as log from '../utils/logger.js';
 import { localTimestamp, getTimezone } from '../utils/date.js';
+import { findUserByDmChatId } from '../users/user-resolver.js';
 
 export interface HeartbeatTask {
   name: string;
@@ -172,6 +173,13 @@ export class HeartbeatService {
         task.lastRun = now;
         log.info(`Heartbeat: firing task "${task.name}"`);
 
+        // Memory scope: DM chat → that user's memory; user-owned pseudo chat →
+        // the owning user; real group chat → undefined (per-chat scope).
+        const dmUser = findUserByDmChatId(task.chatId, this.config);
+        const scope = dmUser
+          ? { kind: 'user' as const, id: dmUser.id }
+          : (!task.chatId && task.userId ? { kind: 'user' as const, id: task.userId } : undefined);
+
         const inbound: Parameters<typeof this.bus.publishInbound>[0] = {
           id: `heartbeat-${Date.now()}`,
           channel: 'system',
@@ -180,6 +188,7 @@ export class HeartbeatService {
           author: 'system',
           timestamp: new Date(),
           lane: 'heartbeat',
+          scope,
         };
         if (task.userId) {
           inbound.user = { userId: task.userId };

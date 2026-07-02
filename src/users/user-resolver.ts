@@ -122,6 +122,17 @@ export function findUserProfile(userId: string, config: JanusConfig): UserProfil
 }
 
 /**
+ * Find the user whose channel identity matches a chat id — i.e. the chat is
+ * that user's direct (1:1) conversation with the agent. Used to scope
+ * cron/heartbeat runs delivered to a DM to the user's memory instead of a
+ * per-chat bucket.
+ */
+export function findUserByDmChatId(chatId: string | undefined, config: JanusConfig): UserProfile | undefined {
+  if (!chatId) return undefined;
+  return config.users.find(u => u.identities.some(i => i.channelUserId === chatId));
+}
+
+/**
  * Ensure per-user directory exists with default PROFILE.md.
  * Non-destructive — never overwrites existing files.
  * Cached per-process so it only runs once per user.
