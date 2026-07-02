@@ -126,6 +126,8 @@ const AgentSchema = z.object({
   onToolError: z.enum(['continue', 'ask']).default('continue'),
   maxSkillsInPrompt: z.number().default(150),
   maxSkillsPromptChars: z.number().default(30_000),
+  /** Watchdog: max wall-clock time a single lane run may hold its concurrency slot. */
+  laneTimeoutMs: z.number().default(600_000),
   lanes: LanesSchema.optional().transform(v => LanesSchema.parse(v ?? {})),
   subagents: SubagentsSchema.optional().transform(v => SubagentsSchema.parse(v ?? {})),
   context: ContextSchema.optional().transform(v => ContextSchema.parse(v ?? {})),
@@ -167,6 +169,8 @@ const CronSchema = z.object({
 const HeartbeatSchema = z.object({
   enabled: z.boolean().default(false),
   checkIntervalMs: z.number().default(60_000),
+  /** How often HEARTBEAT.md files are re-checked for edits (mtime polling). */
+  resyncIntervalMs: z.number().default(60_000),
 });
 
 const AutoUpdateSchema = z.object({
