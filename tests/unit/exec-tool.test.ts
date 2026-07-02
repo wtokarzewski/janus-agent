@@ -42,12 +42,14 @@ describe('ExecTool', () => {
     expect(result).toContain('blocked by safety rules');
   });
 
+  // 30s budget: on Windows, spawning cmd + ping and tearing the tree down via
+  // taskkill can take well over 10s on a slow machine.
   it('times out and kills process group', async () => {
     const tool = makeTool({ timeout: 500 });
     const cmd = process.platform === 'win32' ? 'ping -n 60 127.0.0.1' : 'sleep 60';
     const result = await tool.execute({ command: cmd });
     expect(result).toContain('timed out');
-  }, 10_000);
+  }, 30_000);
 
   it('returns no output marker for silent commands', async () => {
     const tool = makeTool();

@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import { resolve } from 'node:path';
 import { filterPinnedReadsFromSummarization } from '../../src/agent/agent-loop.js';
 import type { LLMMessage } from '../../src/llm/types.js';
 
 describe('filterPinnedReadsFromSummarization', () => {
-  const pinned = new Set<string>(['/abs/path/profile.md']);
+  // The filter resolves tool-call paths to platform-native form before
+  // comparing, so the pinned set must hold resolved paths (as it does in
+  // production) — a raw '/abs/...' literal never matches on Windows.
+  const pinned = new Set<string>([resolve('/abs/path/profile.md')]);
 
   it('drops tool result of read_file targeting a pinned path', () => {
     const messages: LLMMessage[] = [
