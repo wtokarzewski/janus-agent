@@ -13,9 +13,11 @@ import { Cron } from 'croner';
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/database.js';
 import type { MessageBus } from '../bus/message-bus.js';
+import type { InboundMessage } from '../bus/types.js';
 import type { JanusConfig } from '../config/schema.js';
 import * as log from '../utils/logger.js';
 import { localTimestamp, getTimezone } from '../utils/date.js';
+import { findUserByDmChatId } from '../users/user-resolver.js';
 
 export type ScheduleKind = 'at' | 'every' | 'cron';
 
@@ -432,6 +434,17 @@ export class CronService {
       const chatId = job.chatId
         ?? (isIsolated ? `cron:${job.id}:${Date.now()}` : (job.sessionId ? `cron:${job.sessionId}` : `cron:${job.id}`));
 
+      // Memory scope for this run. Without it, scopeForChat falls back to
+      // per-chat scope and a DM-delivered job writes its memory to
+      // chats/{chatId}/ instead of the user's own memory dir.
+      // - chat is a user's DM (chatId matches a channel identity) → that user
+      // - pseudo chat (cron:*) owned by a user → the owning user
+      // - real group chat → undefined (per-chat scope is correct there)
+      const dmUser = this.config ? findUserByDmChatId(job.chatId ?? undefined, this.config) : undefined;
+      const scope: InboundMessage['scope'] = dmUser
+        ? { kind: 'user', id: dmUser.id }
+        : (!job.chatId && job.userId ? { kind: 'user', id: job.userId } : undefined);
+
       // Auto-disable when all user targets have responded
       const targets = job.targets;
       const userTargets = targets.filter(t => t.userId);
@@ -454,6 +467,7 @@ export class CronService {
             timestamp: new Date(),
             lane: 'cron',
             user: { userId: job.userId },
+            scope,
             agentId: job.agentId ?? undefined,
           });
         }
@@ -473,6 +487,7 @@ export class CronService {
         contextMode: 'background',
         lane: job.name.startsWith('heartbeat:') ? 'heartbeat' : 'cron',
         user: job.userId ? { userId: job.userId } : undefined,
+        scope,
         agentId: job.agentId ?? undefined,
       });
 
