@@ -33,6 +33,14 @@ export class MessageBus {
   publishInbound(msg: InboundMessage, signal?: AbortSignal): Promise<void> {
     const lane = msg.lane ?? 'user';
     const queue = this.inboundLanes.get(lane) ?? this.inboundLanes.get('user')!;
+    // Telemetry for system lanes: a growing queue with no waiting consumer means
+    // the lane's consumers are stuck or dead — the failure is otherwise silent.
+    if (lane !== 'user') {
+      log.info(`Bus: inbound → lane "${lane}" (queued=${queue.size}, waitingConsumers=${queue.pending})`);
+      if (queue.size > 0 && queue.pending === 0) {
+        log.warn(`Bus: lane "${lane}" has ${queue.size} unconsumed message(s) and no waiting consumer — lane may be wedged`);
+      }
+    }
     return queue.publish(msg, signal);
   }
 
@@ -71,7 +79,7 @@ export class MessageBus {
 
     const msg: OutboundMessage = { chatId, channel, content, timestamp: new Date(), type };
     handler(msg).catch(err => {
-      console.error(`Bus: stream handler for "${channel}" failed:`, err instanceof Error ? err.message : String(err));
+      log.error(`Bus: stream handler for "${channel}" failed: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
 
@@ -144,9 +152,9 @@ export class MessageBus {
           await this.sendWithRetry(handler, msg, msg.channel);
         } else {
           if (msg.channel === 'system') {
-            console.log(`Bus: system channel outbound dropped (expected — cron/heartbeat responses handled internally)`);
+            log.info(`Bus: system channel outbound dropped (expected — cron/heartbeat responses handled internally)`);
           } else {
-            console.warn(`Bus: no handler for channel "${msg.channel}", message dropped`);
+            log.warn(`Bus: no handler for channel "${msg.channel}", message dropped`);
           }
         }
       } catch {
@@ -164,11 +172,11 @@ export class MessageBus {
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         if (attempt === maxRetries) {
-          console.error(`Bus: handler for "${channel}" failed after ${maxRetries + 1} attempts: ${errMsg}`);
+          log.error(`Bus: handler for "${channel}" failed after ${maxRetries + 1} attempts, message to ${msg.chatId} dropped: ${errMsg}`);
           return;
         }
         const delay = Math.min(1000 * 2 ** attempt, 8000);
-        console.warn(`Bus: handler for "${channel}" failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${errMsg}`);
+        log.warn(`Bus: handler for "${channel}" failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${errMsg}`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }

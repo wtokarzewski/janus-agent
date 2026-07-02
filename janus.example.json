@@ -34,6 +34,7 @@
     "onToolError": "continue",
     "maxSkillsInPrompt": 150,
     "maxSkillsPromptChars": 30000,
+    "laneTimeoutMs": 600000,
     "lanes": {
       "user": 6,
       "cron": 3,
@@ -150,7 +151,8 @@
 
   "heartbeat": {
     "enabled": false,
-    "checkIntervalMs": 60000
+    "checkIntervalMs": 60000,
+    "resyncIntervalMs": 60000
   },
 
   "timezone": "Europe/Warsaw",
