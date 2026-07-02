@@ -63,6 +63,11 @@ export function validateUserFileAccess(
   // System/cron context (no userId) → allow everything
   if (!userId) return;
 
+  // Normalize to a platform-native absolute path — prefix checks below compare
+  // against resolve()d directories, so a caller passing an unnormalized path
+  // (e.g. forward slashes on Windows) must not silently bypass them.
+  fullPath = resolve(fullPath);
+
   const wsDir = resolve(workspaceDir);
 
   // Protected directories outside .janus/
