@@ -66,7 +66,9 @@ Three auth modes (mutually exclusive):
 
 - **Native OAuth (PKCE)** — Browser-based login for Anthropic + Codex with auto-refresh. Credential storage (`~/.janus/auth.json`, 0o600) — both OAuth tokens and API keys. Proactive refresh: 30-min interval checks for tokens expiring within 1 hour via `getExpiringProviders()`, auto-refreshes before failover is needed.
 - **Credential encryption** — AES-256-GCM encryption for `auth.json` at rest. Transparent encrypt/decrypt on read/write.
-- **Anthropic OAuth identity** — Injects required "You are Claude Code" system prompt + beta headers (`claude-code-20250219`, `oauth-2025-04-20`) for subscription OAuth tokens.
+- **Anthropic OAuth identity** — Injects required "You are Claude Code" system prompt + beta headers (`claude-code-20250219`, `oauth-2025-04-20`) for subscription OAuth tokens. Impersonated `user-agent: claude-cli/2.1.195`.
+- **Model catalog** — `claude-agent` alias map: `opus`→`claude-opus-4-8`, `sonnet`→`claude-sonnet-5`, `haiku`→`claude-haiku-4-5-20251001`, `fable`→`claude-fable-5` (+ explicit `opus-4-7`/`opus-4-8`/`sonnet-5`/`fable-5`). Default slot ships `claude-sonnet-5`. `anthropic` API-key provider takes full model IDs.
+- **Sampling-param gating** — `modelRejectsSamplingParams()` omits `temperature`/`top_p`/`top_k` for models that reject them with a 400 (Opus 4.7/4.8, Sonnet 5, Fable, Mythos); Opus 4.6 / Sonnet 4.6 and older still receive `temperature`.
 - **Extended thinking** — `llm.thinking.enabled` + `budgetTokens`. Thinking levels: off/minimal/low/medium/high.
 - **Prompt caching** — Static/dynamic system prompt split: stable content (identity, EGO, AGENTS, HEARTBEAT, JANUS, skills) cached via `cache_control: ephemeral`, dynamic content (session info, memory, learner, summary) sent uncached. Cache breakpoints on last user message and tool definitions. `fine-grained-tool-streaming` beta enabled.
 - **Multi-provider failover** — Priority-ordered providers, automatic failover on error. Purpose-based routing via slots (default, background). RESOURCE_EXHAUSTED/overload detection, rate-limit hardening (rate_limit, too many requests), HTTP 422 classification (billing vs format errors).
@@ -347,7 +349,7 @@ Load priority: defaults < user config < workspace config < env vars.
 - **Shared bootstrap** — `createApp()` in `bootstrap.ts` eliminates duplication between CLI and gateway.
 - **Docker** — Multi-stage Dockerfile (node:20-bookworm), docker-compose.yml.
 - **CI** — GitHub Actions (typecheck + vitest on push/PR).
-- **Tests** — 741 tests across 68 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
+- **Tests** — 744 tests across 68 files (vitest, mock LLM, in-memory SQLite). Windows-compatible (conditional skip for symlink/permission tests).
 - **Install scripts** — One-liner installers for non-git users. Unix (`curl | bash`): downloads latest GitHub Release tarball, extracts to `~/.janus-agent/`, creates `janus` launcher in `~/.local/bin`. Windows (PowerShell `irm | iex`): extracts to `%LOCALAPPDATA%\janus-agent\`, creates `janus.cmd` launcher, adds to user PATH. Both: prerequisite checks (Node.js 20+, npm), backup of existing install.
 - **Tarball update mode** — `janus update` and `self_update` tool auto-detect install mode: git (`.git/` exists) uses `git pull` flow, tarball (no `.git/`) downloads latest GitHub Release with backup/rollback on failure. Version comparison via `isNewerVersion()` semver utility.
 
