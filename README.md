@@ -29,18 +29,20 @@ npm start -- -m "message"   # Single message
 npm start -- gateway        # Headless (Telegram bot)
 npm start -- onboard        # Init workspace (EGO.md, AGENTS.md, etc.)
 npm start -- mcp-server     # MCP server for editor integration
+npm start -- setup          # Setup wizard — (re)configure providers / re-login (OAuth)
 ```
 
-On first run, setup wizard detects missing config and guides you through provider selection.
+On first run, setup wizard detects missing config and guides you through provider selection. Run `npm start -- setup` anytime to reconfigure or re-authenticate.
 
 ## Config
 
-`janus.json` in workspace root. Two auth modes:
+`janus.json` in workspace root. Three auth modes:
 
 - **API Key** — openrouter, anthropic, openai, deepseek, groq
 - **Subscription** — `claude-agent` (Claude Code Max), `codex` (ChatGPT Plus/Pro)
+- **Native OAuth (PKCE)** — `anthropic` or `codex` via browser login; tokens saved to `~/.janus/auth.json` and auto-refreshed
 
-Run `/config` during a session to reconfigure. See `examples/janus.json` for a config template.
+Run `npm start -- setup` to (re)configure or re-login (OAuth opens a browser), or `/config` during a session. See `janus.example.json` for a config template.
 
 ## Key Features
 
