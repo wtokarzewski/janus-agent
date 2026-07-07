@@ -6,8 +6,8 @@
     },
     "slots": {
       "default": {
-        "anthropic": "claude-sonnet-4-6",
-        "openrouter": "anthropic/claude-sonnet-4-6"
+        "anthropic": "claude-sonnet-5",
+        "openrouter": "anthropic/claude-sonnet-5"
       },
       "background": {
         "anthropic": "claude-haiku-4-5-20251001",
