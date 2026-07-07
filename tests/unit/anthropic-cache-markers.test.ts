@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyCacheMarkers, applyCacheToPenultimateMessage, trimLastAssistantWhitespace } from '../../src/llm/anthropic-provider.js';
+import { applyCacheMarkers, applyCacheToPenultimateMessage, trimLastAssistantWhitespace, modelRejectsSamplingParams } from '../../src/llm/anthropic-provider.js';
 
 describe('applyCacheMarkers', () => {
   it('marks only last tool when no MCP tools present', () => {
@@ -144,6 +144,27 @@ describe('trimLastAssistantWhitespace', () => {
     ];
     trimLastAssistantWhitespace(messages);
     expect(messages[0].content).toBe('\n## Goal\nbody text');
+  });
+});
+
+describe('modelRejectsSamplingParams', () => {
+  it('flags models that 400 on temperature (Opus 4.7/4.8, Sonnet 5, Fable, Mythos)', () => {
+    expect(modelRejectsSamplingParams('claude-opus-4-8')).toBe(true);
+    expect(modelRejectsSamplingParams('claude-opus-4-7')).toBe(true);
+    expect(modelRejectsSamplingParams('claude-sonnet-5')).toBe(true);
+    expect(modelRejectsSamplingParams('claude-fable-5')).toBe(true);
+    expect(modelRejectsSamplingParams('claude-mythos-5')).toBe(true);
+  });
+
+  it('accepts sampling params on older families (Opus 4.6, Sonnet 4.6, Haiku)', () => {
+    expect(modelRejectsSamplingParams('claude-opus-4-6')).toBe(false);
+    expect(modelRejectsSamplingParams('claude-sonnet-4-6')).toBe(false);
+    expect(modelRejectsSamplingParams('claude-haiku-4-5-20251001')).toBe(false);
+  });
+
+  it('strips the anthropic/ provider prefix before matching', () => {
+    expect(modelRejectsSamplingParams('anthropic/claude-sonnet-5')).toBe(true);
+    expect(modelRejectsSamplingParams('anthropic/claude-sonnet-4-6')).toBe(false);
   });
 });
 
