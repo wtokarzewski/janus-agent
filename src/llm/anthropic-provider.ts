@@ -40,6 +40,24 @@ export function trimLastAssistantWhitespace(messages: Anthropic.MessageParam[]):
 }
 
 /**
+ * Sampling params (`temperature`, `top_p`, `top_k`) are removed on the newest
+ * Claude models and return a 400 if sent. Matches the model families that reject
+ * them: Opus 4.7/4.8, Sonnet 5, Fable 5, Mythos. Structural prefix check so future
+ * point releases in these families are covered without another edit.
+ * Opus 4.6 / Sonnet 4.6 and older still accept `temperature`.
+ */
+export function modelRejectsSamplingParams(model: string): boolean {
+  const id = model.replace(/^anthropic\//, '');
+  return (
+    id.startsWith('claude-opus-4-7') ||
+    id.startsWith('claude-opus-4-8') ||
+    id.startsWith('claude-sonnet-5') ||
+    id.startsWith('claude-fable-') ||
+    id.startsWith('claude-mythos-')
+  );
+}
+
+/**
  * Anthropic Messages API provider using official SDK.
  * Built-in retry, proper TypeScript types, streaming-ready.
  * Supports both API key and OAuth token authentication.
@@ -89,7 +107,7 @@ export class AnthropicProvider implements LLMProvider {
       authToken: token,
       defaultHeaders: {
         'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14',
-        'user-agent': 'claude-cli/2.1.104',
+        'user-agent': 'claude-cli/2.1.195',
         'x-app': 'cli',
       },
       maxRetries: 3,
@@ -115,10 +133,10 @@ export class AnthropicProvider implements LLMProvider {
     // Extended thinking requires temperature=1 and uses a dedicated budget
     if (request.thinking) {
       (params as unknown as Record<string, unknown>).thinking = request.thinking;
-      params.temperature = 1;
+      if (!modelRejectsSamplingParams(model)) params.temperature = 1;
       // Ensure max_tokens accommodates thinking budget
       params.max_tokens = Math.max(params.max_tokens, request.thinking.budgetTokens + 4096);
-    } else {
+    } else if (!modelRejectsSamplingParams(model)) {
       params.temperature = request.temperature ?? 0.7;
     }
 
@@ -273,9 +291,9 @@ export class AnthropicProvider implements LLMProvider {
 
     if (request.thinking) {
       (params as unknown as Record<string, unknown>).thinking = request.thinking;
-      params.temperature = 1;
+      if (!modelRejectsSamplingParams(model)) params.temperature = 1;
       params.max_tokens = Math.max(params.max_tokens, request.thinking.budgetTokens + 4096);
-    } else {
+    } else if (!modelRejectsSamplingParams(model)) {
       params.temperature = request.temperature ?? 0.7;
     }
 

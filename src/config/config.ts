@@ -123,7 +123,7 @@ export function resolveLLM(config: RawJanusConfig): ResolvedLLM {
       name: 'default',
       entries: [{
         provider: providerName,
-        model: llm.model ?? 'claude-sonnet-4-6',
+        model: llm.model ?? 'claude-sonnet-5',
         priority: 0,
       }],
     }];
