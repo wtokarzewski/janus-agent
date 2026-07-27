@@ -184,6 +184,12 @@ const TelegramSchema = z.object({
   allowlist: z.array(z.string()).default([]),
   denyByDefault: z.boolean().default(true),
   groupPolicy: z.enum(['all', 'mention']).default('all'),
+  /**
+   * How long gateway startup waits for the initial getMe call before continuing
+   * without Telegram. grammy retries forever on its own, so an unbounded wait
+   * would hold back cron and heartbeat during a Telegram outage.
+   */
+  initTimeoutMs: z.number().default(15_000),
 });
 
 const StreamingSchema = z.object({

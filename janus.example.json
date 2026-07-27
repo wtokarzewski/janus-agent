@@ -95,7 +95,8 @@
     "token": "123456789:AABBccDDeeFFggHHiiJJkkLLmmNNoo",
     "allowlist": ["123456789"],
     "denyByDefault": true,
-    "groupPolicy": "all"
+    "groupPolicy": "all",
+    "initTimeoutMs": 15000
   },
 
   "whatsapp": {
