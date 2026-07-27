@@ -152,4 +152,16 @@ CREATE TABLE IF NOT EXISTS user_known_chats (
   PRIMARY KEY (user_id, channel, chat_id)
 );
 `,
+
+  // Migration 15: embedding_cache — content-addressed embeddings.
+  // indexFile() deletes and reinserts chunk rows, dropping their embeddings, so a
+  // restart used to recompute every embedding from scratch. Keyed by content hash,
+  // not by source, so unchanged text survives reindexing and moving between files.
+  `
+CREATE TABLE IF NOT EXISTS embedding_cache (
+  content_hash TEXT PRIMARY KEY,
+  embedding BLOB NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`,
 ];
