@@ -5,9 +5,15 @@
  * Chunks over ~2000 chars split further at paragraph boundaries.
  */
 
+import { createHash } from 'node:crypto';
 import type BetterSqlite3 from 'better-sqlite3';
 import type { Database } from '../db/database.js';
 import * as log from '../utils/logger.js';
+
+/** Cache key for a chunk's embedding — model identity plus exact text. */
+function hashContent(model: string, content: string): string {
+  return createHash('sha256').update(`${model}\n${content}`).digest('hex');
+}
 
 export interface MemoryChunk {
   source: string;
@@ -144,21 +150,46 @@ export class MemoryIndex {
     // First do the regular FTS index
     this.indexFile(source, content, owner, scope, scopeId);
 
-    // Then compute and store embeddings (yields to event loop between chunks)
+    // Then compute and store embeddings (yields to event loop between chunks).
+    // indexFile() above dropped and reinserted the rows, so every embedding column is
+    // NULL again — but the vectors themselves only depend on the chunk text. Look them
+    // up by content hash first, so an unchanged workspace costs no model inference.
     try {
-      const { embed } = await import('./embedder.js');
+      const { embed, EMBEDDING_MODEL } = await import('./embedder.js');
       const chunks = this.db.prepare(
         'SELECT id, content FROM memory_chunks WHERE source = ? AND owner = ? AND scope = ?',
       ).all(source, owner, scope) as Array<{ id: number; content: string }>;
 
       const updateStmt = this.db.prepare('UPDATE memory_chunks SET embedding = ? WHERE id = ?');
+      const readCache = this.db.prepare('SELECT embedding FROM embedding_cache WHERE content_hash = ?');
+      const writeCache = this.db.prepare(
+        'INSERT OR REPLACE INTO embedding_cache (content_hash, embedding) VALUES (?, ?)',
+      );
+
+      let computed = 0;
       for (const chunk of chunks) {
-        const embedding = await embed(chunk.content);
-        updateStmt.run(Buffer.from(embedding.buffer), chunk.id);
+        const hash = hashContent(EMBEDDING_MODEL, chunk.content);
+        const cached = readCache.get(hash) as { embedding: Buffer } | undefined;
+
+        let buffer: Buffer;
+        if (cached) {
+          buffer = cached.embedding;
+        } else {
+          const embedding = await embed(chunk.content);
+          buffer = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
+          writeCache.run(hash, buffer);
+          computed++;
+        }
+        updateStmt.run(buffer, chunk.id);
         // embed() already yields, but yield again after SQLite write
         // to keep event loop responsive during bulk indexing
       }
-      log.info(`Computed embeddings for ${chunks.length} chunks from ${source}`);
+
+      if (computed > 0) {
+        log.info(`Computed embeddings for ${computed}/${chunks.length} chunks from ${source}`);
+      } else {
+        log.debug(`Embeddings for ${source} served from cache (${chunks.length} chunks)`);
+      }
     } catch (err) {
       log.warn(`Embedding computation failed for ${source}: ${err instanceof Error ? err.message : String(err)}`);
     }

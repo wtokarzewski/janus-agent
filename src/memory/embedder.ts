@@ -8,6 +8,12 @@
  * so that Grammy, timers, and I/O can keep running.
  */
 
+/**
+ * Model identity. Part of the embedding cache key — swapping models must not
+ * serve vectors produced by the previous one.
+ */
+export const EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
+
 let pipelineInstance: any = null;
 let loading: Promise<any> | null = null;
 
@@ -19,7 +25,7 @@ async function getEmbedder() {
       const { pipeline } = await import('@xenova/transformers');
       // Yield before heavy WASM compilation
       await yieldToEventLoop();
-      pipelineInstance = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+      pipelineInstance = await pipeline('feature-extraction', EMBEDDING_MODEL);
       return pipelineInstance;
     })();
   }
