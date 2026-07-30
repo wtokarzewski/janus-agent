@@ -18,6 +18,7 @@ import { InviteStore } from '../invites/invite-store.js';
 import { InviteTool } from '../tools/builtin/invite.js';
 import { deriveChannelAllowlist } from '../users/user-resolver.js';
 import { acquireInstanceLock, releaseInstanceLock } from '../utils/instance-lock.js';
+import { withTimeout } from '../utils/with-timeout.js';
 import * as log from '../utils/logger.js';
 
 /** After abort, give teardown this long before force-exiting the process. */
@@ -109,13 +110,23 @@ export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void>
         app.agent.setGateService(telegramGate);
       }
 
-      // Initialize bot (fetches bot info once — reused by bot.start(), no duplicate getMe call)
-      try {
-        await bot.init();
-      } catch (err) {
-        log.error(`Gateway: bot.init() failed: ${err instanceof Error ? err.message : err}`);
+      // Initialize bot (fetches bot info once — reused by bot.start(), no duplicate getMe call).
+      //
+      // grammy retries network failures inside init() forever with a backoff growing to
+      // 20 minutes, and never rejects, logging only through the (silenced) `debug` package.
+      // A Telegram-side outage therefore used to block the rest of startup indefinitely and
+      // in total silence — cron and heartbeat never started, so medication reminders died
+      // along with a chat outage they have nothing to do with. Bound the wait instead: on
+      // timeout we carry on, and bot.start() keeps retrying in the background.
+      const initResult = await withTimeout(bot.init(), config.telegram.initTimeoutMs);
+      if (!initResult.ok) {
+        const detail = initResult.reason === 'timeout'
+          ? `no response within ${Math.round(config.telegram.initTimeoutMs / 1000)}s`
+          : initResult.error instanceof Error ? initResult.error.message : String(initResult.error);
+        log.warn(`Gateway: Telegram not reachable (${detail}) — continuing without it. Cron and heartbeat start as usual; Telegram reconnects in the background.`);
       }
-      const botUsername = bot.botInfo?.username ?? 'unknown';
+      // Reading botInfo before a successful init throws, so gate it on the result.
+      const botUsername = initResult.ok ? bot.botInfo.username : 'unknown';
       const inviteStore = new InviteStore(botUsername);
       app.tools.register(new InviteTool(inviteStore));
 
