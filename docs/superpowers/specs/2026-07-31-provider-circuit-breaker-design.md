@@ -134,6 +134,14 @@ No other classification changes.
 Zod schema in `src/config/schema.ts` with those defaults, plus an entry in
 `janus.example.json`. `enabled: false` restores current behaviour.
 
+**No config edit is required on upgrade.** The section is nested under `llm`, and
+`syncNewConfigSections` (`src/commands/update.ts:355`) merges top-level keys only — an
+existing `llm` block is preserved untouched, so the new key is never injected. The Zod
+schema therefore uses the same `.optional().transform(v => v ?? {...})` pattern as
+`cron.cleanup` (`src/config/schema.ts:166`): an absent `llm.circuitBreaker` resolves to
+the defaults above. Operators edit `janus.json` only to tune or disable. A restart is
+required — `watchConfig()` reloads configuration, not code.
+
 Defaults are 2 failures / 5 minutes: a single hiccup switches nothing, a real incident
 costs at most two slow messages, and a still-broken primary costs one retried message
 per five minutes.
