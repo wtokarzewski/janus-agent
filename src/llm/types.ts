@@ -84,7 +84,13 @@ export interface LLMProvider {
 }
 
 export interface ProviderEntry {
+  /** Registration label — unique per entry (a slot may decorate the provider name). */
   name: string;
+  /**
+   * Base provider name from config. Several entries (default slot, background
+   * slot) can share one upstream; health state is keyed by this, never by `name`.
+   */
+  providerName: string;
   provider: LLMProvider;
   model: string;
   purpose: string[];

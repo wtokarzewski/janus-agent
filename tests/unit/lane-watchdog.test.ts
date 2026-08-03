@@ -62,6 +62,7 @@ describe('lane watchdog', () => {
     const registry = new ProviderRegistry();
     registry.register({
       name: 'mock',
+      providerName: 'mock',
       provider: new HangThenAnswerProvider(),
       model: 'test-model',
       purpose: [],

@@ -22,6 +22,18 @@ const ThinkingSchema = z.object({
   level: z.enum(['off', 'minimal', 'low', 'medium', 'high']).optional(),
 });
 
+/**
+ * Provider health tracking. Defaults: two consecutive failover-eligible failures
+ * demote a provider for five minutes, so an incident costs a bounded number of
+ * slow messages instead of one per message. `enabled: false` restores the plain
+ * priority ladder.
+ */
+const CircuitBreakerSchema = z.object({
+  enabled: z.boolean().default(true),
+  failureThreshold: z.number().default(2),
+  cooldownMs: z.number().default(300_000),
+});
+
 // --- LEGACY: flat single-provider config (for backward compat during migration) ---
 
 const LegacyProviderSpecSchema = z.object({
@@ -60,6 +72,9 @@ const LLMSchema = z.object({
   toolTemperature: z.number().optional(),
   reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
   thinking: ThinkingSchema.optional(),
+  circuitBreaker: CircuitBreakerSchema.optional().transform(
+    v => v ?? { enabled: true, failureThreshold: 2, cooldownMs: 300_000 },
+  ),
 });
 
 // --- Resolved types (computed at load time, used by runtime) ---

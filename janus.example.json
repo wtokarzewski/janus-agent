@@ -22,6 +22,11 @@
       "enabled": false,
       "budgetTokens": 10000,
       "level": "medium"
+    },
+    "circuitBreaker": {
+      "enabled": true,
+      "failureThreshold": 2,
+      "cooldownMs": 300000
     }
   },
 

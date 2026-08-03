@@ -99,8 +99,10 @@ export function isFailoverCandidate(err: Error): boolean {
   // Network errors
   if (msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('fetch failed')) return true;
 
-  // Auth errors — failing over won't help (credentials are per-provider, but the request won't change)
-  if (msg.includes('invalid_api_key') || msg.includes('authentication_error')) return false;
+  // Auth errors — DO failover. Credentials are per-provider (separate entries in
+  // .janus/auth.json), so a rejected key or a failed OAuth refresh on one provider
+  // says nothing about the next one's credentials.
+  if (msg.includes('invalid_api_key') || msg.includes('authentication_error')) return true;
 
   // Request format errors — DO failover, different providers accept different formats
   // (invalid_request from Anthropic may succeed on OpenAI and vice versa)

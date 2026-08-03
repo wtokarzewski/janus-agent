@@ -9,6 +9,7 @@ import { FileTokenStore, loadApiKey, getExpiringProviders } from './auth/token-s
 import { MessageBus } from './bus/message-bus.js';
 import { createProvider } from './llm/openai-compatible-provider.js';
 import { ProviderRegistry } from './llm/provider-registry.js';
+import { ProviderCircuitBreaker } from './llm/circuit-breaker.js';
 import { ToolRegistry } from './tools/tool-registry.js';
 import { ExecTool } from './tools/builtin/exec.js';
 import { ReadFileTool } from './tools/builtin/read-file.js';
@@ -85,7 +86,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   // 2. Core components
   const bus = new MessageBus();
 
-  const llm = new ProviderRegistry();
+  const llm = new ProviderRegistry(new ProviderCircuitBreaker(config.llm.circuitBreaker));
   const { resolved } = config;
   if (resolved.providers.length > 0) {
     const sharedTokenStore = new FileTokenStore();
@@ -102,6 +103,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
         const apiKey = isOAuth ? '' : (loadApiKey(entry.provider) ?? config.llm.apiKey ?? '');
         llm.register({
           name: entry.provider,
+          providerName: entry.provider,
           provider: await createProvider({
             provider: entry.provider, apiKey, model: entry.model,
             apiBase: rp.apiBase, auth: rp.auth, tokenStore: isOAuth ? sharedTokenStore : undefined,
@@ -128,6 +130,9 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
         if (!alreadyRegistered) {
           llm.register({
             name: `${entry.provider}-background`,
+            // Health is keyed by the config name, so this entry is demoted
+            // together with the default-slot entry for the same upstream.
+            providerName: entry.provider,
             provider: await createProvider({
               provider: entry.provider, apiKey, model: entry.model,
               apiBase: rp.apiBase, auth: rp.auth, tokenStore: isOAuth ? sharedTokenStore : undefined,
