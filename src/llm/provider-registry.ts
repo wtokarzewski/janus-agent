@@ -1,5 +1,6 @@
 import type { LLMProvider, ChatRequest, ChatResponse, ProviderEntry, StreamCallback, LLMMessage } from './types.js';
 import { isFailoverCandidate } from './retry.js';
+import type { ProviderCircuitBreaker } from './circuit-breaker.js';
 import { stripOrphanSurrogates } from '../utils/sanitize.js';
 import * as log from '../utils/logger.js';
 
@@ -52,6 +53,9 @@ function sanitizeRequestMessages(messages: LLMMessage[]): LLMMessage[] {
 export class ProviderRegistry implements LLMProvider {
   private entries: ProviderEntry[] = [];
 
+  /** Without a breaker the registry re-walks the full priority ladder on every call. */
+  constructor(private readonly breaker?: ProviderCircuitBreaker) {}
+
   register(entry: ProviderEntry): void {
     this.entries.push(entry);
     this.entries.sort((a, b) => a.priority - b.priority);
@@ -87,6 +91,7 @@ export class ProviderRegistry implements LLMProvider {
         const req = { ...request, messages, model: request.model || entry.model };
         log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} request`);
         const result = await entry.provider.chat(req);
+        this.breaker?.recordSuccess(entry.providerName);
         result.provider = entry.name;
         result.model = entry.model;
         return result;
@@ -94,7 +99,10 @@ export class ProviderRegistry implements LLMProvider {
         lastError = err instanceof Error ? err : new Error(String(err));
         logProviderError(entry, 'chat', lastError, request);
 
+        // The same gate decides failover and demotion, so the two can never disagree:
+        // an error that fails on any provider must not count against this one.
         if (!isFailoverCandidate(lastError)) throw lastError;
+        this.breaker?.recordFailure(entry.providerName);
 
         if (candidates.length > 1) {
           log.info(`Failing over from "${entry.name}" (${entry.model}) to next provider...`);
@@ -122,6 +130,7 @@ export class ProviderRegistry implements LLMProvider {
 
         if (entry.provider.chatStream) {
           const result = await entry.provider.chatStream(req, onChunk);
+          this.breaker?.recordSuccess(entry.providerName);
           result.provider = entry.name;
           result.model = entry.model;
           return result;
@@ -129,6 +138,7 @@ export class ProviderRegistry implements LLMProvider {
 
         // Fallback: non-streaming chat, then deliver content as single chunk
         const response = await entry.provider.chat(req);
+        this.breaker?.recordSuccess(entry.providerName);
         response.provider = entry.name;
         response.model = entry.model;
         if (response.content) {
@@ -140,6 +150,7 @@ export class ProviderRegistry implements LLMProvider {
         logProviderError(entry, 'stream', lastError, request);
 
         if (!isFailoverCandidate(lastError)) throw lastError;
+        this.breaker?.recordFailure(entry.providerName);
 
         if (candidates.length > 1) {
           log.info(`Failing over from "${entry.name}" (${entry.model}) to next provider...`);
@@ -151,6 +162,12 @@ export class ProviderRegistry implements LLMProvider {
   }
 
   private getCandidates(purpose?: string): ProviderEntry[] {
+    const byPurpose = this.matchPurpose(purpose);
+    // Health filtering comes last, so it never widens the purpose match.
+    return this.breaker ? this.breaker.filter(byPurpose) : byPurpose;
+  }
+
+  private matchPurpose(purpose?: string): ProviderEntry[] {
     if (!purpose) return this.entries;
 
     // Providers with matching purpose, or with empty purpose (serves all)

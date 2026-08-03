@@ -29,7 +29,7 @@ function createDeps(mockProvider: MockProvider) {
   const config = createTestConfig({ streaming: { enabled: false } });
   const bus = new MessageBus();
   const registry = new ProviderRegistry();
-  registry.register({ name: 'mock', provider: mockProvider, model: 'test', purpose: [], priority: 0 });
+  registry.register({ name: 'mock', providerName: 'mock', provider: mockProvider, model: 'test', purpose: [], priority: 0 });
   const tools = new ToolRegistry();
   tools.setContext({ workspaceDir: config.workspace.dir, execDenyPatterns: [], execTimeout: 5000, maxFileSize: 1_000_000 });
   const memory = new MemoryStore(config);

@@ -43,7 +43,7 @@ describe('Streaming', () => {
     it('should use provider chatStream when available', async () => {
       const mock = new MockProvider([{ content: 'streamed' }]);
       const registry = new ProviderRegistry();
-      registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
+      registry.register({ name: 'mock', providerName: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
 
       const chunks: string[] = [];
       const result = await registry.chatStream(
@@ -70,7 +70,7 @@ describe('Streaming', () => {
       };
 
       const registry = new ProviderRegistry();
-      registry.register({ name: 'basic', provider, model: 'test', purpose: [], priority: 0 });
+      registry.register({ name: 'basic', providerName: 'basic', provider, model: 'test', purpose: [], priority: 0 });
 
       const chunks: string[] = [];
       const result = await registry.chatStream(
@@ -90,8 +90,8 @@ describe('Streaming', () => {
       const goodMock = new MockProvider([{ content: 'recovered' }]);
 
       const registry = new ProviderRegistry();
-      registry.register({ name: 'fail', provider: failProvider, model: 'test', purpose: [], priority: 0 });
-      registry.register({ name: 'good', provider: goodMock, model: 'test', purpose: [], priority: 1 });
+      registry.register({ name: 'fail', providerName: 'fail', provider: failProvider, model: 'test', purpose: [], priority: 0 });
+      registry.register({ name: 'good', providerName: 'good', provider: goodMock, model: 'test', purpose: [], priority: 1 });
 
       const chunks: string[] = [];
       const result = await registry.chatStream(

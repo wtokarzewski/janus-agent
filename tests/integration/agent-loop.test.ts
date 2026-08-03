@@ -32,6 +32,7 @@ function createDeps(mockProvider: MockProvider): { deps: AgentDeps; learnerStora
   const registry = new ProviderRegistry();
   registry.register({
     name: 'mock',
+    providerName: 'mock',
     provider: mockProvider,
     model: 'test-model',
     purpose: [],
@@ -160,6 +161,7 @@ describe('AgentLoop integration', () => {
     const registry = new ProviderRegistry();
     registry.register({
       name: 'failing',
+      providerName: 'failing',
       provider: failingProvider,
       model: 'test',
       purpose: [],
@@ -187,7 +189,7 @@ describe('AgentLoop integration', () => {
     const config = createTestConfig({ streaming: { enabled: true } });
     const bus = new MessageBus();
     const registry = new ProviderRegistry();
-    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
+    registry.register({ name: 'mock', providerName: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
 
     const tools = new ToolRegistry();
     tools.setContext({ workspaceDir: config.workspace.dir, execDenyPatterns: [], execTimeout: 5000, maxFileSize: 1_000_000 });
@@ -262,7 +264,7 @@ describe('AgentLoop integration', () => {
     });
     const bus = new MessageBus();
     const registry = new ProviderRegistry();
-    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
+    registry.register({ name: 'mock', providerName: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
 
     const tools = new ToolRegistry();
     tools.register({
@@ -325,7 +327,7 @@ describe('AgentLoop integration', () => {
     });
     const bus = new MessageBus();
     const registry = new ProviderRegistry();
-    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
+    registry.register({ name: 'mock', providerName: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
 
     const tools = new ToolRegistry();
     tools.register({
@@ -370,7 +372,7 @@ describe('AgentLoop integration', () => {
       { content: 'Flushed B' },
     ]);
     const registry = new ProviderRegistry();
-    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
+    registry.register({ name: 'mock', providerName: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
 
     const tools = new ToolRegistry();
     tools.setContext({ workspaceDir: config.workspace.dir, execDenyPatterns: [], execTimeout: 5000, maxFileSize: 1_000_000 });
@@ -451,7 +453,7 @@ describe('AgentLoop integration', () => {
     const config = createTestConfig({ agent: { onToolError: 'ask' as const, toolRetries: 1 } });
     const bus = new MessageBus();
     const registry = new ProviderRegistry();
-    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
+    registry.register({ name: 'mock', providerName: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
 
     const tools = new ToolRegistry();
     tools.setContext({ workspaceDir: config.workspace.dir, execDenyPatterns: [], execTimeout: 5000, maxFileSize: 1_000_000 });
