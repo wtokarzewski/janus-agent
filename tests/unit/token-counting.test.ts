@@ -55,6 +55,7 @@ describe('Token counting and emergency compression', () => {
     const registry = new ProviderRegistry();
     registry.register({
       name: 'test',
+      providerName: 'test',
       provider: failThenSucceed,
       model: 'test',
       purpose: [],
@@ -106,7 +107,7 @@ describe('Token counting and emergency compression', () => {
     });
     const bus = new MessageBus();
     const registry = new ProviderRegistry();
-    registry.register({ name: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
+    registry.register({ name: 'mock', providerName: 'mock', provider: mock, model: 'test', purpose: [], priority: 0 });
 
     const tools = new ToolRegistry();
     tools.setContext({ workspaceDir: config.workspace.dir });

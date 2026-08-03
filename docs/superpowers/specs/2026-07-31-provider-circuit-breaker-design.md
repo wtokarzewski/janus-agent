@@ -1,7 +1,7 @@
 # Provider circuit breaker + failover classification
 
 **Date:** 2026-07-31
-**Status:** Design approved, not yet implemented
+**Status:** Implemented 2026-08-03
 
 ## Problem
 
@@ -173,6 +173,18 @@ New `tests/unit/circuit-breaker.test.ts`, plus cases added to the existing
 - `enabled: false` disables filtering and counting entirely
 
 Provider names in tests are fabricated (`alpha`, `beta`) and match no real config.
+
+## As built — deviations from the design above
+
+- **Filtering is per call, not mid-loop.** `getCandidates()` filters once per
+  request. If a provider trips *during* a request, another entry backed by the same
+  upstream can still be tried later in that same ladder walk; from the next request
+  on it is skipped. Re-filtering mid-loop would risk skipping the last remaining
+  candidate, which the "never return an empty list" rule exists to prevent.
+- **Only typed auth errors fail over.** The branch that changed matches
+  `authentication_error` / `invalid_api_key`. A bare `401` with no typed marker is
+  still caught by the generic 4xx rule and does not fail over. Widening that is a
+  one-line change if a provider turns out to report auth failures untyped.
 
 ## Risks
 
