@@ -159,7 +159,7 @@ npm test           # Run all tests (vitest)
 npm run typecheck   # TypeScript type checking
 ```
 
-783 tests across 72 test files: unit (agent-resolver, anthropic-oauth, async-queue, browser-tool, circuit-breaker, codex-oauth, config-schema, context-builder, cron-service, cron-tool, error-classification, exec-tool, gate-routing, heartbeat-parser, heartbeat-resync, instance-lock, invite, lane-watchdog, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sanitize, sdk-utils, self-update-tool, session-lock, setup, shell, skill-loading, stop-command, streaming, system-message, telegram-channel, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search, version-utils, voice-transcribe, web-tools) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
+798 tests across 73 test files: unit (agent-resolver, anthropic-oauth, async-queue, browser-tool, circuit-breaker, codex-oauth, config-schema, error-classification, model-catalog, context-builder, cron-service, cron-tool, error-classification, exec-tool, gate-routing, heartbeat-parser, heartbeat-resync, instance-lock, invite, lane-watchdog, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sanitize, sdk-utils, self-update-tool, session-lock, setup, shell, skill-loading, stop-command, streaming, system-message, telegram-channel, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search, version-utils, voice-transcribe, web-tools) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
 
 ## Conventions
 
