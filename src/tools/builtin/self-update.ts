@@ -1,10 +1,11 @@
 import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Tool } from '../types.js';
 import * as log from '../../utils/logger.js';
 import { classifyTestRun } from '../../utils/test-run-outcome.js';
+import { respawnSelf } from '../../utils/respawn.js';
 
 const IS_WIN = process.platform === 'win32';
 const execAsync = promisify(execFile);
@@ -158,16 +159,13 @@ export class SelfUpdateTool implements Tool {
       }
 
       log.info('self_update: respawning...');
-      // Spawn a new process with the same args, then exit
+      // Hand over to a fresh process; stay alive on the old code if it dies,
+      // because nothing else would bring Janus back up.
       setTimeout(() => {
-        const child = spawn(process.execPath, process.argv.slice(1), {
-          cwd: process.cwd(),
-          detached: !IS_WIN,
-          stdio: 'inherit',
-          env: process.env,
+        void respawnSelf().then((started) => {
+          if (started) process.exit(0);
+          log.error('self_update: staying on the running (now outdated) process — restart Janus by hand.');
         });
-        child.unref();
-        process.exit(0);
       }, 500);
 
       return `Updated successfully.\n${summary}\nRestarting...`;
@@ -245,15 +243,13 @@ export class SelfUpdateTool implements Tool {
       }
 
       log.info('self_update: respawning...');
+      // Hand over to a fresh process; stay alive on the old code if it dies,
+      // because nothing else would bring Janus back up.
       setTimeout(() => {
-        const child = spawn(process.execPath, process.argv.slice(1), {
-          cwd: process.cwd(),
-          detached: !IS_WIN,
-          stdio: 'inherit',
-          env: process.env,
+        void respawnSelf().then((started) => {
+          if (started) process.exit(0);
+          log.error('self_update: staying on the running (now outdated) process — restart Janus by hand.');
         });
-        child.unref();
-        process.exit(0);
       }, 500);
 
       return `Updated from v${CURRENT_VERSION} to v${release.version}. Restarting...`;
