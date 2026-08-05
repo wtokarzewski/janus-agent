@@ -67,8 +67,8 @@ Three auth modes (mutually exclusive):
 - **Native OAuth (PKCE)** — Browser-based login for Anthropic + Codex with auto-refresh. Credential storage (`~/.janus/auth.json`, 0o600) — both OAuth tokens and API keys. Proactive refresh: 30-min interval checks for tokens expiring within 1 hour via `getExpiringProviders()`, auto-refreshes before failover is needed.
 - **Credential encryption** — AES-256-GCM encryption for `auth.json` at rest. Transparent encrypt/decrypt on read/write.
 - **Anthropic OAuth identity** — Injects required "You are Claude Code" system prompt + beta headers (`claude-code-20250219`, `oauth-2025-04-20`) for subscription OAuth tokens. Impersonated `user-agent: claude-cli/2.1.195`.
-- **Model catalog** — `claude-agent` alias map: bare aliases track the current generation (`opus`→`claude-opus-5`, `sonnet`→`claude-sonnet-5`, `haiku`→`claude-haiku-4-5-20251001`, `fable`→`claude-fable-5`), suffixed ones pin a release (`opus-5`/`opus-4-8`/`opus-4-7`/`sonnet-5`/`fable-5`). Default slot ships `claude-sonnet-5`. `anthropic` API-key provider takes full model IDs. `modelRejectsSamplingParams()` omits `temperature`/`top_p`/`top_k` for the models that reject them (Opus 5/4.8/4.7, Sonnet 5, Fable, Mythos).
-- **Setup wizard model lists** — Anthropic subscription menu offers sonnet 5 / opus 5 / haiku 4.5 / fable 5; Codex menu offers gpt-5.5 / 5.4 / 5.4-mini / 5.3-codex. API-key providers fetch the live list from the provider API; these lists are the offline fallback and the prompt default.
+- **Model catalog** — current models only, no historical entries. `claude-agent` alias map: `opus`→`claude-opus-5`, `sonnet`→`claude-sonnet-5`, `haiku`→`claude-haiku-4-5-20251001`, `fable`→`claude-fable-5`, plus explicit pins `opus-5`/`sonnet-5`/`fable-5`. Superseded releases stay reachable by full model ID. Default slot ships `claude-sonnet-5`. `anthropic` API-key provider takes full model IDs. `modelRejectsSamplingParams()` omits `temperature`/`top_p`/`top_k` for every model that rejects them (Opus 5/4.8/4.7, Sonnet 5, Fable, Mythos) — a compatibility guard, kept for superseded IDs too.
+- **Setup wizard model lists** — Anthropic subscription menu offers sonnet 5 / opus 5 / haiku 4.5 / fable 5; Codex menu offers GPT-5.6 Terra (default) / Sol / Luna plus gpt-5.5. Defaults sit on the balanced tier, not the flagship. API-key providers fetch the live list from the provider API; these lists are the offline fallback and the prompt default.
 - **Sampling-param gating** — `modelRejectsSamplingParams()` omits `temperature`/`top_p`/`top_k` for models that reject them with a 400 (Opus 4.7/4.8, Sonnet 5, Fable, Mythos); Opus 4.6 / Sonnet 4.6 and older still receive `temperature`.
 - **Extended thinking** — `llm.thinking.enabled` + `budgetTokens`. Thinking levels: off/minimal/low/medium/high.
 - **Prompt caching** — Static/dynamic system prompt split: stable content (identity, EGO, AGENTS, HEARTBEAT, JANUS, skills) cached via `cache_control: ephemeral`, dynamic content (session info, memory, learner, summary) sent uncached. Cache breakpoints on last user message and tool definitions. `fine-grained-tool-streaming` beta enabled.
@@ -315,7 +315,7 @@ Subagents use minimal mode. Cron/heartbeat use background mode.
 
 | Section | Key settings |
 |---------|-------------|
-| `llm` | providers (object), slots (default/background), maxTokens, temperature (default 0.3), thinking, reasoningEffort |
+| `llm` | providers (object), slots (default/background), maxTokens, temperature (default 0.3), thinking, reasoningEffort (none/low/medium/high/xhigh/max) |
 | `agent` | maxIterations (30), tokenBudget (750K), contextWindow (1M), summarizationThreshold (40), toolRetries, lanes, laneTimeoutMs (600000) |
 | `workspace` | dir, memoryDir, sessionsDir, skillsDir |
 | `tools` | execEnabled, execTimeout, execDenyPatterns[], maxFileSize |

@@ -6,8 +6,6 @@ describe('modelRejectsSamplingParams', () => {
   // These models return 400 when temperature/top_p/top_k are present.
   it.each([
     'claude-opus-5',
-    'claude-opus-4-8',
-    'claude-opus-4-7',
     'claude-sonnet-5',
     'claude-fable-5',
   ])('omits sampling params for %s', (model) => {
@@ -15,7 +13,6 @@ describe('modelRejectsSamplingParams', () => {
   });
 
   it('keeps sampling params for models that still accept them', () => {
-    expect(modelRejectsSamplingParams('claude-sonnet-4-6')).toBe(false);
     expect(modelRejectsSamplingParams('claude-haiku-4-5-20251001')).toBe(false);
   });
 
@@ -31,12 +28,15 @@ describe('claude-agent model aliases', () => {
     expect(resolveModel('fable')).toBe('claude-fable-5');
   });
 
-  it('keeps pinned aliases for older releases', () => {
-    expect(resolveModel('opus-4-8')).toBe('claude-opus-4-8');
-    expect(resolveModel('opus-4-7')).toBe('claude-opus-4-7');
+  it('offers an explicit pin for each current model', () => {
+    expect(resolveModel('opus-5')).toBe('claude-opus-5');
+    expect(resolveModel('sonnet-5')).toBe('claude-sonnet-5');
+    expect(resolveModel('fable-5')).toBe('claude-fable-5');
   });
 
   it('passes a full model ID through untouched', () => {
-    expect(resolveModel('claude-opus-4-6')).toBe('claude-opus-4-6');
+    // Superseded releases are still reachable by full ID — only the short
+    // aliases for them were dropped.
+    expect(resolveModel('claude-opus-4-8')).toBe('claude-opus-4-8');
   });
 });

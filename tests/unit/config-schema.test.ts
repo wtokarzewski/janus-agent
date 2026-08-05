@@ -3,6 +3,20 @@ import { JanusConfigSchema } from '../../src/config/schema.js';
 import { resolveLLM } from '../../src/config/config.js';
 
 describe('JanusConfigSchema', () => {
+  // GPT-5.6 exposes none/low/medium/high/xhigh/max; the schema must not gate
+  // the top and bottom of that range out of reach.
+  it.each(['none', 'low', 'medium', 'high', 'xhigh', 'max'])(
+    'accepts reasoningEffort "%s"',
+    (effort) => {
+      const config = JanusConfigSchema.parse({ llm: { reasoningEffort: effort } });
+      expect(config.llm.reasoningEffort).toBe(effort);
+    },
+  );
+
+  it('rejects an unknown reasoningEffort', () => {
+    expect(() => JanusConfigSchema.parse({ llm: { reasoningEffort: 'turbo' } })).toThrow();
+  });
+
   it('should produce all defaults from empty object', () => {
     const config = JanusConfigSchema.parse({});
 
@@ -20,12 +34,12 @@ describe('JanusConfigSchema', () => {
 
   it('should accept custom values', () => {
     const config = JanusConfigSchema.parse({
-      llm: { model: 'gpt-4o', maxTokens: 8192 },
+      llm: { model: 'gpt-5.6-terra', maxTokens: 8192 },
       agent: { tokenBudget: 500_000 },
       database: { enabled: false, path: '/tmp/test.db' },
     });
 
-    expect(config.llm.model).toBe('gpt-4o');
+    expect(config.llm.model).toBe('gpt-5.6-terra');
     expect(config.llm.maxTokens).toBe(8192);
     expect(config.agent.tokenBudget).toBe(500_000);
     expect(config.database.enabled).toBe(false);
@@ -47,7 +61,7 @@ describe('JanusConfigSchema', () => {
           openrouter: { priority: 1 },
         },
         slots: {
-          default: { anthropic: 'claude-sonnet-4-6', openrouter: 'anthropic/claude-sonnet-4-6' },
+          default: { anthropic: 'claude-sonnet-5', openrouter: 'anthropic/claude-sonnet-5' },
           background: null,
         },
       },
@@ -55,20 +69,20 @@ describe('JanusConfigSchema', () => {
     expect(config.llm.providers).toBeDefined();
     expect(config.llm.providers!.anthropic.priority).toBe(0);
     expect(config.llm.providers!.anthropic.auth).toBe('oauth');
-    expect(config.llm.slots!.default).toEqual({ anthropic: 'claude-sonnet-4-6', openrouter: 'anthropic/claude-sonnet-4-6' });
+    expect(config.llm.slots!.default).toEqual({ anthropic: 'claude-sonnet-5', openrouter: 'anthropic/claude-sonnet-5' });
     expect(config.llm.slots!.background).toBeNull();
   });
 
   it('should accept auth field with valid values', () => {
     const config = JanusConfigSchema.parse({
-      llm: { auth: 'oauth', provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      llm: { auth: 'oauth', provider: 'anthropic', model: 'claude-sonnet-5' },
     });
     expect(config.llm.auth).toBe('oauth');
   });
 
   it('should accept auth=cli for subscription providers', () => {
     const config = JanusConfigSchema.parse({
-      llm: { auth: 'cli', provider: 'claude-agent', model: 'claude-sonnet-4-6' },
+      llm: { auth: 'cli', provider: 'claude-agent', model: 'claude-sonnet-5' },
     });
     expect(config.llm.auth).toBe('cli');
   });
@@ -222,7 +236,7 @@ describe('resolveLLM', () => {
           openrouter: { priority: 1 },
         },
         slots: {
-          default: { anthropic: 'claude-sonnet-4-6', openrouter: 'anthropic/claude-sonnet-4-6' },
+          default: { anthropic: 'claude-sonnet-5', openrouter: 'anthropic/claude-sonnet-5' },
           background: { anthropic: 'claude-haiku-4-5-20251001' },
         },
       },
@@ -240,7 +254,7 @@ describe('resolveLLM', () => {
     const defaultSlot = resolved.slots.find(s => s.name === 'default')!;
     expect(defaultSlot.entries).toHaveLength(2);
     expect(defaultSlot.entries[0].provider).toBe('anthropic');
-    expect(defaultSlot.entries[0].model).toBe('claude-sonnet-4-6');
+    expect(defaultSlot.entries[0].model).toBe('claude-sonnet-5');
     expect(defaultSlot.entries[1].provider).toBe('openrouter');
 
     const bgSlot = resolved.slots.find(s => s.name === 'background')!;
@@ -252,7 +266,7 @@ describe('resolveLLM', () => {
     const raw = JanusConfigSchema.parse({
       llm: {
         providers: { anthropic: { priority: 0 } },
-        slots: { default: { anthropic: 'claude-sonnet-4-6' }, background: null },
+        slots: { default: { anthropic: 'claude-sonnet-5' }, background: null },
       },
     });
     const resolved = resolveLLM(raw);
@@ -262,7 +276,7 @@ describe('resolveLLM', () => {
 
   it('should resolve legacy flat config', () => {
     const raw = JanusConfigSchema.parse({
-      llm: { provider: 'anthropic', model: 'claude-sonnet-4-6', auth: 'oauth' },
+      llm: { provider: 'anthropic', model: 'claude-sonnet-5', auth: 'oauth' },
     });
     const resolved = resolveLLM(raw);
 
@@ -272,7 +286,7 @@ describe('resolveLLM', () => {
 
     expect(resolved.slots).toHaveLength(1);
     expect(resolved.slots[0].name).toBe('default');
-    expect(resolved.slots[0].entries[0].model).toBe('claude-sonnet-4-6');
+    expect(resolved.slots[0].entries[0].model).toBe('claude-sonnet-5');
   });
 
   it('should resolve empty config', () => {
@@ -290,7 +304,7 @@ describe('resolveLLM', () => {
           anthropic: { priority: 0 },
         },
         slots: {
-          default: { openrouter: 'anthropic/claude-sonnet-4-6', anthropic: 'claude-sonnet-4-6' },
+          default: { openrouter: 'anthropic/claude-sonnet-5', anthropic: 'claude-sonnet-5' },
         },
       },
     });
@@ -303,7 +317,7 @@ describe('resolveLLM', () => {
 
   it('should infer cli auth for subscription providers', () => {
     const raw = JanusConfigSchema.parse({
-      llm: { provider: 'claude-agent', model: 'claude-sonnet-4-6' },
+      llm: { provider: 'claude-agent', model: 'claude-sonnet-5' },
     });
     const resolved = resolveLLM(raw);
     expect(resolved.providers[0].auth).toBe('cli');

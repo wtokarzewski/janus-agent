@@ -206,7 +206,7 @@ async function setupApiKey(rl: ReadlineIO): Promise<ProviderSetupResult> {
   const providerMap: Record<string, { name: string; defaultModel: string }> = {
     '1': { name: 'openrouter', defaultModel: 'anthropic/claude-sonnet-5' },
     '2': { name: 'anthropic', defaultModel: 'claude-sonnet-5' },
-    '3': { name: 'openai', defaultModel: 'gpt-5.5' },
+    '3': { name: 'openai', defaultModel: 'gpt-5.6-terra' },
     '4': { name: 'deepseek', defaultModel: 'deepseek-chat' },
     '5': { name: 'groq', defaultModel: 'llama-3.3-70b-versatile' },
   };
@@ -338,13 +338,18 @@ async function setupCodex(rl: ReadlineIO): Promise<ProviderSetupResult> {
 
   // Codex CLI uses specific model names
   console.log('\n  Model?');
-  console.log('  1. gpt-5.5 (recommended)');
-  console.log('  2. gpt-5.4');
-  console.log('  3. gpt-5.4-mini');
-  console.log('  4. gpt-5.3-codex\n');
+  console.log('  1. gpt-5.6-terra (recommended — balanced)');
+  console.log('  2. gpt-5.6-sol (flagship, most expensive)');
+  console.log('  3. gpt-5.6-luna (fast, cheapest)');
+  console.log('  4. gpt-5.5\n');
 
   const modelChoice = await askChoice(rl, '  Select [1-4]: ', ['1', '2', '3', '4']);
-  const modelMap: Record<string, string> = { '1': 'gpt-5.5', '2': 'gpt-5.4', '3': 'gpt-5.4-mini', '4': 'gpt-5.3-codex' };
+  const modelMap: Record<string, string> = {
+    '1': 'gpt-5.6-terra',
+    '2': 'gpt-5.6-sol',
+    '3': 'gpt-5.6-luna',
+    '4': 'gpt-5.5',
+  };
   const model = modelMap[modelChoice];
 
   return { provider: 'codex', model };
@@ -392,20 +397,16 @@ async function setupCodexOAuth(rl: ReadlineIO): Promise<ProviderSetupResult> {
     // token stays empty, will fall back to curated list
   }
 
-  const model = await pickModelFromApi(rl, 'codex', token, false, 'gpt-5.5', accountId);
+  const model = await pickModelFromApi(rl, 'codex', token, false, 'gpt-5.6-terra', accountId);
   return { provider: 'codex', auth: 'oauth', model };
 }
 
 /** Curated fallback models for Codex OAuth when API fetch fails. */
 const CODEX_FALLBACK_MODELS: { id: string; name: string }[] = [
+  { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra (balanced)' },
+  { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol (flagship)' },
+  { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna (fast)' },
   { id: 'gpt-5.5', name: 'GPT-5.5' },
-  { id: 'gpt-5.4', name: 'GPT-5.4' },
-  { id: 'gpt-5.4-mini', name: 'GPT-5.4-Mini' },
-  { id: 'gpt-5.3-codex', name: 'GPT-5.3-Codex' },
-  { id: 'gpt-5.2-codex', name: 'GPT-5.2-Codex' },
-  { id: 'gpt-5.2', name: 'GPT-5.2' },
-  { id: 'gpt-5.1-codex-max', name: 'GPT-5.1-Codex-Max' },
-  { id: 'gpt-5.1-codex-mini', name: 'GPT-5.1-Codex-Mini' },
 ];
 
 /**
