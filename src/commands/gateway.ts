@@ -19,6 +19,8 @@ import { InviteTool } from '../tools/builtin/invite.js';
 import { deriveChannelAllowlist } from '../users/user-resolver.js';
 import { acquireInstanceLock, releaseInstanceLock } from '../utils/instance-lock.js';
 import { withTimeout } from '../utils/with-timeout.js';
+import { buildUpdateStamp } from '../utils/update-stamp.js';
+import { resolveUserTargets } from '../utils/notify-owner.js';
 import * as log from '../utils/logger.js';
 
 /** After abort, give teardown this long before force-exiting the process. */
@@ -181,18 +183,28 @@ export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void>
 
   // Post-update notification — if we just restarted after an update
   const updateMsg = consumeUpdateMarker(config.workspace.dir);
-  if (updateMsg && telegramEnabled && telegramAllowlist.length > 0) {
-    const targetChatId = telegramAllowlist[0];
+  if (updateMsg && telegramEnabled) {
+    // Read the build stamp here, not at update time: this process is the one
+    // actually running the new code.
+    const stamp = await buildUpdateStamp(config.workspace.dir);
+    // Every user gets it in their DM; group chats are left out of technical notices.
+    const userTargets = resolveUserTargets(config);
+    const recipients = userTargets.length > 0
+      ? userTargets
+      : telegramAllowlist.slice(0, 1).map(chatId => ({ channel: 'telegram', chatId }));
+
     // Small delay so channels have time to initialize
     setTimeout(() => {
-      app.bus.publishOutbound({
-        chatId: targetChatId,
-        channel: 'telegram',
-        content: `Updated and restarted successfully.\n\n${updateMsg}`,
-        timestamp: new Date(),
-      }, signal).catch(err => {
-        log.warn(`Gateway: failed to send update notification: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      for (const target of recipients) {
+        app.bus.publishOutbound({
+          chatId: target.chatId,
+          channel: target.channel,
+          content: `🔄 Janus zaktualizowany i zrestartowany\n${stamp}\n\n${updateMsg}`,
+          timestamp: new Date(),
+        }, signal).catch(err => {
+          log.warn(`Gateway: failed to send update notification: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
     }, 3000);
   }
 
