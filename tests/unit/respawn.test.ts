@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildRespawnCommand } from '../../src/utils/respawn.js';
+import { buildRespawnCommand, buildRespawnOptions } from '../../src/utils/respawn.js';
 
 describe('buildRespawnCommand', () => {
   it('keeps the node flags that started this process', () => {
@@ -41,5 +41,25 @@ describe('buildRespawnCommand', () => {
     });
 
     expect(cmd.args).toEqual(['--import', 'file:///app/loader.mjs', '/app/src/index.ts']);
+  });
+});
+
+describe('buildRespawnOptions', () => {
+  it('detaches from the console on Windows', () => {
+    // npm tears down its process tree when the parent exits, taking a child
+    // that shares the console with it — the replacement died the moment the
+    // old process left, after surviving its grace period.
+    const opts = buildRespawnOptions('win32');
+
+    expect(opts.detached).toBe(true);
+    expect(opts.stdio).toBe('ignore');
+    expect(opts.windowsHide).toBe(true);
+  });
+
+  it('keeps inherited output elsewhere', () => {
+    const opts = buildRespawnOptions('linux');
+
+    expect(opts.detached).toBe(true);
+    expect(opts.stdio).toBe('inherit');
   });
 });
