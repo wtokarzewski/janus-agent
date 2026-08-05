@@ -248,6 +248,33 @@ describe('ProviderRegistry — circuit breaker', () => {
     expect(response.content).toBe('fallback');
   });
 
+  it('fails over when the primary\'s OAuth refresh token has expired', async () => {
+    const registry = new ProviderRegistry();
+    registry.register({
+      name: 'alpha',
+      providerName: 'alpha',
+      provider: {
+        async chat(): Promise<ChatResponse> {
+          throw new Error('Token refresh failed (400): {"error": "invalid_grant", "error_description": "Refresh token expired"}');
+        },
+      },
+      model: 'm1',
+      purpose: [],
+      priority: 0,
+    });
+    registry.register({
+      name: 'beta',
+      providerName: 'beta',
+      provider: makeMockProvider({ content: 'fallback' }),
+      model: 'm2',
+      purpose: [],
+      priority: 1,
+    });
+
+    const response = await registry.chat(baseRequest);
+    expect(response.content).toBe('fallback');
+  });
+
   it('stops trying a provider once its breaker opens', async () => {
     const breaker = new ProviderCircuitBreaker({ enabled: true, failureThreshold: 2, cooldownMs: 300_000 });
     const registry = new ProviderRegistry(breaker);

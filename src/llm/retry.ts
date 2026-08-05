@@ -78,6 +78,46 @@ function parseRetryAfter(err: Error): number | null {
 }
 
 /**
+ * Payload doesn't fit the context window. Deliberately narrow: matching a bare
+ * "token" also matches "Token refresh failed", which is an auth problem and must
+ * not be treated as an overflow.
+ */
+const CONTEXT_LENGTH_PATTERNS = [
+  /too long/i,
+  /too many tokens/i,
+  /maximum context/i,
+  /context (?:length|window|limit)/i,
+  /input length/i,
+  /prompt length/i,
+  /input tokens/i,
+];
+
+export function isContextLengthError(err: Error): boolean {
+  return CONTEXT_LENGTH_PATTERNS.some(p => p.test(err.message));
+}
+
+/**
+ * Client-side errors that never self-heal, so retrying the same request is
+ * wasted time. Includes OAuth refresh failures: an expired refresh token needs a
+ * re-login, not a backoff.
+ */
+const NON_RETRYABLE_CLIENT_PATTERNS = [
+  /^4\d\d\s/,             // "400 Bad Request ..."
+  /"status":\s*4\d\d/,
+  /\(4\d\d\)/,            // our own wrappers, e.g. "Token refresh failed (400): ..."
+  /invalid_request/i,
+  /malformed/i,
+  /invalid_grant/i,
+  /invalid_api_key/i,
+  /authentication_error/i,
+  /refresh token expired/i,
+];
+
+export function isNonRetryableClientError(err: Error): boolean {
+  return NON_RETRYABLE_CLIENT_PATTERNS.some(p => p.test(err.message));
+}
+
+/**
  * Should a multi-provider registry fail over to the next provider?
  * True for transient errors (5xx, network, rate-limit).
  * False for client errors that would fail on any provider (401, 400, prompt-too-big).
@@ -88,6 +128,10 @@ export function isFailoverCandidate(err: Error): boolean {
 
   // Server errors — always failover
   if (status !== null && status >= 500) return true;
+
+  // The payload doesn't fit — it won't fit the next provider either, and it must
+  // not demote the provider that happened to receive it.
+  if (isContextLengthError(err)) return false;
 
   // Resource exhaustion / overload — failover to different provider (L5)
   if (msg.includes('resource_exhausted') || msg.includes('overloaded') || msg.includes('capacity')) return true;
@@ -101,8 +145,10 @@ export function isFailoverCandidate(err: Error): boolean {
 
   // Auth errors — DO failover. Credentials are per-provider (separate entries in
   // .janus/auth.json), so a rejected key or a failed OAuth refresh on one provider
-  // says nothing about the next one's credentials.
-  if (msg.includes('invalid_api_key') || msg.includes('authentication_error')) return true;
+  // says nothing about the next one's credentials. `invalid_grant` /
+  // "token refresh failed" is the shape an expired OAuth refresh token takes.
+  if (msg.includes('invalid_api_key') || msg.includes('authentication_error')
+    || msg.includes('invalid_grant') || msg.includes('token refresh failed')) return true;
 
   // Request format errors — DO failover, different providers accept different formats
   // (invalid_request from Anthropic may succeed on OpenAI and vice versa)
