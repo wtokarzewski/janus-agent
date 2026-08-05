@@ -7,8 +7,35 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Context management redesign** — one pre-call router (fits / truncate / compact / both) replaces the 7-mechanism, 12-threshold cascade that had accumulated 20+ patch PRs; transcript rotation keeps sessions bounded on disk, and a single tool-result cap ends the 100x disk-vs-memory mismatch (#212)
+- **Pinned skill state** — files listed in a skill's `pinned:` frontmatter survive summarization, so the agent stops forgetting long-running state (#208, #210, #211)
+- **Provider circuit breaker** — a provider failing repeatedly is skipped for a cooldown instead of being retried first on every message; `llm.circuitBreaker`, defaults 2 failures / 5 min (#234)
+- **`/provider`** — numbered menu of configured providers (role, model, which one is serving, which the breaker demoted); reply with a number to switch, `0` for automatic. Runtime pin: no restart, not written to config, overrides a demotion on purpose (#245)
+- **Update announcement** — after any successful update every configured user gets a DM with a build stamp (`v0.15.0 • 6e1ed1f • 2026-08-05 21:14`) and the commits that landed; manual `update` now writes the same marker `self_update` did (#245)
+- **Model drift check** — `update` compares configured models against each provider's live list and warns about retired ones (#242)
+- **New models** — Sonnet 5, Opus 4.8/4.7, Fable 5 (#229); Opus 5 and the GPT-5.6 family with Terra as the default, `reasoningEffort` widened to `none|low|medium|high|xhigh|max` (#237)
+- **File logging with daily rotation** — opt-in `.janus/logs/YYYY-MM-DD.log`, secrets masked, old files pruned (#218)
+- **Per-chat memory** — group chats keep their own memory and files (#220)
+- **Embedding cache** keyed by content hash — startup reindex no longer recomputes every chunk (#233)
+- **Config sync on update** — new config sections are added to `janus.json` automatically, including when already up to date (#219, #221, #222)
+- **Skill channel preferences** and the diet-tracker skill (#190, #191)
+
 ### Fixed
-- Anthropic 400 "final assistant content cannot end with trailing whitespace" on summarization (provider now trims trailing whitespace from the final assistant text block before sending; prefills like `## Goal\n` are now safe)
+- **Auth** — an expired OAuth refresh now fails over to the fallback provider instead of parking the agent on a dead credential (#236); refresh is single-flight per provider, so concurrent lanes stop invalidating each other's single-use tokens, and a genuinely dead credential DMs the owner instead of logging a warning nobody reads (#241); the OAuth callback socket is dropped so `setup` can exit (#240)
+- **Cron delivery** — root cause of the "no reminders" outage: lane watchdog, queue telemetry, HEARTBEAT.md re-sync without restart, per-user memory scope for DM-delivered jobs, gateway instance lock and a bounded shutdown (#224, #225, #226)
+- **Telegram** — a Bot API outage no longer blocks cron and heartbeat at startup (#232); no more message duplication during tool calls (#197)
+- **Windows** — `exec` reports a timeout without waiting for the OS to tear the process tree down, which used to hang the suite and make auto-update revert a good pull; the update path now distinguishes a real test failure from a runner that never finished, and reverts to the pre-pull commit rather than `HEAD~1` (#244, #228)
+- **Summarization** — tool results included in the input, retry chain removed, corrupt summaries discarded, trailing whitespace stripped from the final assistant message, XML-wrapped prompts (#187, #188, #192, #198, #200, #201, #203, #204, #207)
+- **Setup** — the fallback provider is verified too, not just the primary (#243)
+- **Agent loop** — breaks when every tool call in a round is a duplicate (#206); typing indicator no longer leaks after streaming (#202)
+- **Cron tool** — `chat_id` defaults structurally from the conversation, stale time anchors are relabelled, `runs` output explains ambiguous fields (#216)
+- Surrogate-safe truncation and orphan surrogate stripping at the provider boundary (#223)
+
+### Changed
+- `agent.contextWindow` example raised 128000 → 1000000 and the dead `agent.tokenBudget` removed — nothing had read it since the context redesign (#238)
+- Setup wizard model lists and defaults refreshed to the current generation; superseded short aliases dropped (#237)
+- `/provider` and `/model` moved behind the allowlist check — they used to run before it, so an unknown sender could change the model for every chat (#245)
 
 ## [0.14.0] - 2026-04-22
 
