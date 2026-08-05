@@ -340,13 +340,15 @@ async function setupCodex(rl: ReadlineIO): Promise<ProviderSetupResult> {
   console.log('\n  Model?');
   console.log('  1. gpt-5.6-terra (recommended — balanced)');
   console.log('  2. gpt-5.6-sol (flagship, most expensive)');
-  console.log('  3. gpt-5.6-luna (fast, cheapest)\n');
+  console.log('  3. gpt-5.6-luna (fast, cheapest)');
+  console.log('  4. gpt-5.5\n');
 
-  const modelChoice = await askChoice(rl, '  Select [1-3]: ', ['1', '2', '3']);
+  const modelChoice = await askChoice(rl, '  Select [1-4]: ', ['1', '2', '3', '4']);
   const modelMap: Record<string, string> = {
     '1': 'gpt-5.6-terra',
     '2': 'gpt-5.6-sol',
     '3': 'gpt-5.6-luna',
+    '4': 'gpt-5.5',
   };
   const model = modelMap[modelChoice];
 
@@ -404,6 +406,7 @@ const CODEX_FALLBACK_MODELS: { id: string; name: string }[] = [
   { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra (balanced)' },
   { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol (flagship)' },
   { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna (fast)' },
+  { id: 'gpt-5.5', name: 'GPT-5.5' },
 ];
 
 /**
