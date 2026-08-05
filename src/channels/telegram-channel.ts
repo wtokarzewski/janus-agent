@@ -6,6 +6,7 @@ import type { JanusConfig } from '../config/schema.js';
 import type { AgentLoop } from '../agent/agent-loop.js';
 import type { SubagentRegistry } from '../agent/subagent-registry.js';
 import { resolveUser, autoIdentifyUser, deriveChannelAllowlist } from '../users/user-resolver.js';
+import { handleProviderCommand, type PinnableRegistry } from './provider-command.js';
 import type { InviteStore } from '../invites/invite-store.js';
 import { saveConfig } from '../config/config.js';
 import { ensureUserDir, ensureChatDir } from '../users/user-resolver.js';
@@ -55,7 +56,7 @@ export class TelegramChannel {
     return this.bot;
   }
 
-  async start(bus: MessageBus, config: JanusConfig, signal: AbortSignal, externalBot?: Bot, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry; inviteStore?: InviteStore; database?: Database }): Promise<void> {
+  async start(bus: MessageBus, config: JanusConfig, signal: AbortSignal, externalBot?: Bot, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry; inviteStore?: InviteStore; database?: Database; llm?: PinnableRegistry }): Promise<void> {
     const tg = config.telegram;
 
     if (!externalBot && !tg.token) {
@@ -224,27 +225,6 @@ export class TelegramChannel {
         return;
       }
 
-      // /model [name] — show or change current LLM model (I3)
-      const modelMatch = ctx.message?.text?.trim().match(/^\/model(?:\s+(.+))?$/);
-      if (modelMatch) {
-        const newModel = modelMatch[1]?.trim();
-        if (newModel) {
-          const primary = config.resolved.providers[0];
-          if (primary) {
-            await saveConfig({ llm: { slots: { default: { [primary.name]: newModel } } } });
-          } else {
-            await saveConfig({ llm: { model: newModel } });
-          }
-          await ctx.reply(`Model changed to: ${newModel}\nRestart to apply.`);
-        } else {
-          const { getSlotModel } = await import('../config/config.js');
-          const slot = getSlotModel(config.resolved, 'default');
-          const display = slot ? `${slot.model} (${slot.provider})` : 'not configured';
-          await ctx.reply(`Current model: ${display}`);
-        }
-        return;
-      }
-
       // /stop — cancel running agent + subagents
       if (ctx.message?.text?.trim() === '/stop') {
         const result = opts?.agent?.stop();
@@ -322,6 +302,43 @@ export class TelegramChannel {
         log.debug(`Telegram: denying message from ${author} (chat ${baseChatId}, deny-by-default, no allowlist configured)`);
         return;
       }
+
+      // Operator commands live behind the allowlist: they change behaviour for
+      // every chat on this instance, so a stranger messaging the bot must not
+      // reach them. Any configured user may use them.
+      // /provider [0-N|name|auto] — show or switch the active LLM provider.
+      // One registry per gateway process, so this switches for every chat.
+      const providerMatch = ctx.message?.text?.trim().match(/^\/provider(?:\s+(.+))?$/i);
+      if (providerMatch) {
+        if (!opts?.llm) {
+          await ctx.reply('Provider switching is unavailable in this process.');
+          return;
+        }
+        await ctx.reply(handleProviderCommand(opts.llm, providerMatch[1]));
+        return;
+      }
+
+      // /model [name] — show or change current LLM model (I3)
+      const modelMatch = ctx.message?.text?.trim().match(/^\/model(?:\s+(.+))?$/);
+      if (modelMatch) {
+        const newModel = modelMatch[1]?.trim();
+        if (newModel) {
+          const primary = config.resolved.providers[0];
+          if (primary) {
+            await saveConfig({ llm: { slots: { default: { [primary.name]: newModel } } } });
+          } else {
+            await saveConfig({ llm: { model: newModel } });
+          }
+          await ctx.reply(`Model changed to: ${newModel}\nRestart to apply.`);
+        } else {
+          const { getSlotModel } = await import('../config/config.js');
+          const slot = getSlotModel(config.resolved, 'default');
+          const display = slot ? `${slot.model} (${slot.provider})` : 'not configured';
+          await ctx.reply(`Current model: ${display}`);
+        }
+        return;
+      }
+
 
       // Group mention policy — in 'mention' mode, only respond when bot is @mentioned
       const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';

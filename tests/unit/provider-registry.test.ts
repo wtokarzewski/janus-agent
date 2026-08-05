@@ -416,3 +416,71 @@ describe('ProviderRegistry — orphan surrogate sanitization (defense-in-depth)'
     expect(captured!.messages[0].content).toBe('clean 😀 text');
   });
 });
+
+describe('ProviderRegistry — manual provider pin', () => {
+  function twoProviders(breaker?: ProviderCircuitBreaker) {
+    const registry = new ProviderRegistry(breaker);
+    registry.register({
+      name: 'alpha', providerName: 'alpha',
+      provider: makeMockProvider({ content: 'from alpha' }), model: 'm1', purpose: [], priority: 0,
+    });
+    registry.register({
+      name: 'beta', providerName: 'beta',
+      provider: makeMockProvider({ content: 'from beta' }), model: 'm2', purpose: [], priority: 1,
+    });
+    return registry;
+  }
+
+  it('serves from the pinned provider instead of the highest priority one', async () => {
+    const registry = twoProviders();
+
+    expect(registry.pin('beta')).toBe(true);
+
+    expect((await registry.chat(baseRequest)).content).toBe('from beta');
+  });
+
+  it('keeps the others as fallback behind the pin', async () => {
+    const registry = new ProviderRegistry();
+    registry.register({
+      name: 'alpha', providerName: 'alpha',
+      provider: makeMockProvider({ content: 'from alpha' }), model: 'm1', purpose: [], priority: 0,
+    });
+    registry.register({
+      name: 'beta', providerName: 'beta',
+      provider: { async chat(): Promise<ChatResponse> { throw new Error('503 Service Unavailable'); } },
+      model: 'm2', purpose: [], priority: 1,
+    });
+    registry.pin('beta');
+
+    // A manual pin is a preference, not a single point of failure.
+    expect((await registry.chat(baseRequest)).content).toBe('from alpha');
+  });
+
+  it('overrides a circuit-breaker demotion — the operator asked for it', async () => {
+    const breaker = new ProviderCircuitBreaker({ enabled: true, failureThreshold: 1, cooldownMs: 300_000 });
+    const registry = twoProviders(breaker);
+    breaker.recordFailure('beta');
+    expect(breaker.isOpen('beta')).toBe(true);
+
+    registry.pin('beta');
+
+    expect((await registry.chat(baseRequest)).content).toBe('from beta');
+  });
+
+  it('refuses to pin a provider that is not registered', () => {
+    const registry = twoProviders();
+
+    expect(registry.pin('gamma')).toBe(false);
+    expect(registry.getPinned()).toBeUndefined();
+  });
+
+  it('returns to priority order when unpinned', async () => {
+    const registry = twoProviders();
+    registry.pin('beta');
+
+    registry.unpin();
+
+    expect(registry.getPinned()).toBeUndefined();
+    expect((await registry.chat(baseRequest)).content).toBe('from alpha');
+  });
+});

@@ -193,6 +193,14 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
   // 5. Post-update housekeeping (shared with the up-to-date path above)
   await finalizeUpdate(cwd);
 
+  // Leave the same marker self_update writes, so a manual update is announced
+  // on the next gateway start exactly like an automatic one.
+  try {
+    writeFileSync(resolve(cwd, '.janus', '.update-complete'), logOutput.trim(), 'utf-8');
+  } catch (err) {
+    console.log(chalk.gray(`  (could not write update marker: ${err instanceof Error ? err.message : String(err)})`));
+  }
+
   console.log();
   console.log(chalk.green('Update complete. Restart Janus to use the new version.'));
 }

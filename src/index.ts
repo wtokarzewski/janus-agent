@@ -110,7 +110,7 @@ program
     }
 
     const cli = new CLIChannel(config.workspace.dir);
-    await cli.start(app.bus, signal, { agent: app.agent, subagentRegistry: app.subagentRegistry });
+    await cli.start(app.bus, signal, { agent: app.agent, subagentRegistry: app.subagentRegistry, llm: app.llm });
 
     await app.agent.flushAllSessions();
     ac.abort();

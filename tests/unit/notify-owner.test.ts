@@ -39,3 +39,31 @@ describe('resolveOwnerTargets', () => {
     expect(resolveOwnerTargets({ ownerIds: ['wojtek'], users: [] })).toEqual([]);
   });
 });
+
+describe('resolveUserTargets', () => {
+  it('reaches every configured user in their DM', async () => {
+    const { resolveUserTargets } = await import('../../src/utils/notify-owner.js');
+
+    const targets = resolveUserTargets({
+      users: [
+        user('wojtek', [{ channel: 'telegram', channelUserId: '111' }]),
+        user('monika', [{ channel: 'telegram', channelUserId: '222' }]),
+      ],
+    });
+
+    expect(targets).toEqual([
+      { channel: 'telegram', chatId: '111' },
+      { channel: 'telegram', chatId: '222' },
+    ]);
+  });
+
+  it('skips a user with no addressable identity', async () => {
+    const { resolveUserTargets } = await import('../../src/utils/notify-owner.js');
+
+    const targets = resolveUserTargets({
+      users: [user('wojtek', [{ channel: 'telegram', channelUsername: 'wojtek' }])],
+    });
+
+    expect(targets).toEqual([]);
+  });
+});

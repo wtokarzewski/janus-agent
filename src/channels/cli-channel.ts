@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import chalk from 'chalk';
 import type { MessageBus } from '../bus/message-bus.js';
+import { handleProviderCommand, type PinnableRegistry } from './provider-command.js';
 import type { InboundMessage, OutboundMessage } from '../bus/types.js';
 import type { AgentLoop } from '../agent/agent-loop.js';
 import type { SubagentRegistry } from '../agent/subagent-registry.js';
@@ -25,7 +26,7 @@ export class CLIChannel {
     this.historyFile = resolve(workspaceDir, '.janus', 'history');
   }
 
-  async start(bus: MessageBus, signal: AbortSignal, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry }): Promise<void> {
+  async start(bus: MessageBus, signal: AbortSignal, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry; llm?: PinnableRegistry }): Promise<void> {
     // Load persistent history
     const history = await loadHistory(this.historyFile);
 
@@ -110,6 +111,7 @@ export class CLIChannel {
         console.log(`  ${chalk.green('/help')}     Show this help`);
         console.log(`  ${chalk.green('/stop')}     Stop the running task`);
         console.log(`  ${chalk.green('/model')}    Show/change model (e.g. /model claude-sonnet-5)`);
+        console.log(`  ${chalk.green('/provider')} Show/switch LLM provider (/provider 0 = automatic)`);
         console.log(`  ${chalk.green('/config')}   Reconfigure LLM provider`);
         console.log(`  ${chalk.green('exit')}      Quit (also: quit, /exit, /quit, :q, Ctrl+C)`);
         console.log('');
@@ -118,6 +120,16 @@ export class CLIChannel {
         console.log('');
         console.log(chalk.gray('Type any message to chat with Janus.'));
         console.log('');
+        this.rl?.prompt();
+        return;
+      }
+
+      // /provider [0-N|name|auto] — show or switch the active LLM provider
+      const providerMatch = content.match(/^\/provider(?:\s+(.+))?$/i);
+      if (providerMatch) {
+        console.log(opts?.llm
+          ? handleProviderCommand(opts.llm, providerMatch[1])
+          : 'Provider switching is unavailable in this process.');
         this.rl?.prompt();
         return;
       }
