@@ -134,7 +134,11 @@ const ContextSchema = z.object({
 
 const AgentSchema = z.object({
   summarizationThreshold: z.number().default(40),
-  tokenBudget: z.number().default(750_000),
+  /**
+   * Model context window in tokens. The single knob that drives compaction and
+   * transcript rotation — `resolveBudget()` derives everything else from it.
+   * (The old `tokenBudget` field is gone: nothing read it after Phase 15.)
+   */
   contextWindow: z.number().default(1_000_000),
   toolRetries: z.number().default(2),
   onLLMError: z.enum(['stop', 'retry']).default('retry'),
