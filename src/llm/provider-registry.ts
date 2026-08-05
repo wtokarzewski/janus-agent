@@ -52,9 +52,48 @@ function sanitizeRequestMessages(messages: LLMMessage[]): LLMMessage[] {
  */
 export class ProviderRegistry implements LLMProvider {
   private entries: ProviderEntry[] = [];
+  /** Operator-chosen provider, tried before the priority order. Process-local. */
+  private pinned?: string;
 
   /** Without a breaker the registry re-walks the full priority ladder on every call. */
   constructor(private readonly breaker?: ProviderCircuitBreaker) {}
+
+  /**
+   * Send traffic to `providerName` first, regardless of priority or breaker
+   * state — an operator asking for a provider outranks both. The rest of the
+   * ladder stays behind it, so a pin is a preference, not a single point of
+   * failure. Returns false if no entry serves that provider.
+   */
+  pin(providerName: string): boolean {
+    if (!this.entries.some(e => e.providerName === providerName)) return false;
+    this.pinned = providerName;
+    log.info(`Provider pinned to "${providerName}" (until unpinned or restart)`);
+    return true;
+  }
+
+  /** Back to priority order. */
+  unpin(): void {
+    if (this.pinned) log.info(`Provider pin on "${this.pinned}" released`);
+    this.pinned = undefined;
+  }
+
+  getPinned(): string | undefined {
+    return this.pinned;
+  }
+
+  /** Health of each registered provider, for status commands. */
+  status(): { providerName: string; model: string; priority: number; pinned: boolean; demoted: boolean }[] {
+    const seen = new Set<string>();
+    return this.entries
+      .filter(e => !seen.has(e.providerName) && seen.add(e.providerName))
+      .map(e => ({
+        providerName: e.providerName,
+        model: e.model,
+        priority: e.priority,
+        pinned: e.providerName === this.pinned,
+        demoted: this.breaker?.isOpen(e.providerName) ?? false,
+      }));
+  }
 
   register(entry: ProviderEntry): void {
     this.entries.push(entry);
@@ -164,7 +203,15 @@ export class ProviderRegistry implements LLMProvider {
   private getCandidates(purpose?: string): ProviderEntry[] {
     const byPurpose = this.matchPurpose(purpose);
     // Health filtering comes last, so it never widens the purpose match.
-    return this.breaker ? this.breaker.filter(byPurpose) : byPurpose;
+    const healthy = this.breaker ? this.breaker.filter(byPurpose) : byPurpose;
+
+    if (!this.pinned) return healthy;
+    // The pin is taken from the purpose-matched set, not the healthy one: an
+    // operator overriding a demotion is exactly why the command exists.
+    const pinnedEntries = byPurpose.filter(e => e.providerName === this.pinned);
+    if (pinnedEntries.length === 0) return healthy;
+
+    return [...pinnedEntries, ...healthy.filter(e => e.providerName !== this.pinned)];
   }
 
   private matchPurpose(purpose?: string): ProviderEntry[] {

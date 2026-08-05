@@ -37,6 +37,19 @@ export function resolveOwnerTargets(config: { ownerIds: string[]; users: OwnerUs
 }
 
 /**
+ * Every configured user's DM — for announcements the whole household should
+ * see, like "the agent just restarted on a new version". Group chats are
+ * deliberately excluded: a technical notice belongs to people, not rooms.
+ */
+export function resolveUserTargets(config: { users: OwnerUser[] }): OwnerTarget[] {
+  return config.users.flatMap(u =>
+    u.identities
+      .filter(i => !!i.channelUserId)
+      .map(i => ({ channel: i.channel, chatId: i.channelUserId! })),
+  );
+}
+
+/**
  * Push an operational alert to the owner's DM. Best effort: a failure here
  * must never take down the caller, which is usually a background timer.
  */
