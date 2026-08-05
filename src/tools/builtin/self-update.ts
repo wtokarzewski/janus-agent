@@ -4,10 +4,15 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Tool } from '../types.js';
 import * as log from '../../utils/logger.js';
+import { classifyTestRun } from '../../utils/test-run-outcome.js';
 
 const IS_WIN = process.platform === 'win32';
 const execAsync = promisify(execFile);
 const GIT_TIMEOUT = 30_000;
+// Windows + cold cache + antivirus can push the full suite well past two minutes.
+const TEST_TIMEOUT = 600_000;
+// execFile buffers all output in memory; vitest easily exceeds Node's 1 MiB default.
+const MAX_OUTPUT = 32 * 1024 * 1024;
 export interface SelfUpdateOpts {
   workspaceDir: string;
   onBeforeRestart?: () => Promise<void>;
@@ -101,7 +106,10 @@ export class SelfUpdateTool implements Tool {
 
   private async updateGit(skipTests: boolean): Promise<string> {
     try {
-      // 1. Fetch + pull
+      // 1. Fetch + pull — remember where we were: a pull can bring many commits,
+      // so "HEAD~1" would leave the workspace on a half-reverted state.
+      const { stdout: headBefore } = await this.git(['rev-parse', 'HEAD']);
+      const previousHead = headBefore.trim();
       const { stdout: pullOutput } = await this.git(['pull', '--ff-only']);
       if (pullOutput.includes('Already up to date')) {
         return 'Already up to date. Nothing to do.';
@@ -115,13 +123,20 @@ export class SelfUpdateTool implements Tool {
       if (!skipTests) {
         log.info('self_update: running tests...');
         try {
-          await this.npm(['test'], 120_000);
+          await this.npm(['test'], TEST_TIMEOUT);
         } catch (err) {
-          // Tests failed — revert
-          log.error(`self_update: tests failed, reverting: ${err instanceof Error ? err.message : String(err)}`);
-          await this.git(['reset', '--hard', 'HEAD~1']).catch(() => {});
+          const message = err instanceof Error ? err.message : String(err);
+          if (classifyTestRun(err) === 'inconclusive') {
+            // Timed out or the runner never started — no verdict on the new
+            // code, so keep it rather than throwing away a good update.
+            log.warn(`self_update: could not run tests: ${message}`);
+            return `Update pulled and installed, but the test suite did not run (${message}). `
+              + 'Nothing was reverted — run "npm test" on the host, then restart Janus.';
+          }
+          log.error(`self_update: tests failed, reverting to ${previousHead}: ${message}`);
+          await this.git(['reset', '--hard', previousHead]).catch(() => {});
           await this.npm(['install', '--no-audit', '--no-fund']).catch(() => {});
-          return `Error: Tests failed after update. Reverted to previous version.\n${err instanceof Error ? err.message : String(err)}`;
+          return `Error: Tests failed after update. Reverted to ${previousHead.slice(0, 8)}.\n${message}`;
         }
       }
 
@@ -256,10 +271,10 @@ export class SelfUpdateTool implements Tool {
   }
 
   private git(args: string[]): Promise<{ stdout: string; stderr: string }> {
-    return execAsync('git', args, { cwd: this.workspaceDir, timeout: GIT_TIMEOUT, shell: IS_WIN });
+    return execAsync('git', args, { cwd: this.workspaceDir, timeout: GIT_TIMEOUT, shell: IS_WIN, maxBuffer: MAX_OUTPUT });
   }
 
   private npm(args: string[], timeout = GIT_TIMEOUT): Promise<{ stdout: string; stderr: string }> {
-    return execAsync('npm', args, { cwd: this.workspaceDir, timeout, shell: IS_WIN });
+    return execAsync('npm', args, { cwd: this.workspaceDir, timeout, shell: IS_WIN, maxBuffer: MAX_OUTPUT });
   }
 }

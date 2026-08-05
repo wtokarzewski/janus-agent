@@ -10,18 +10,22 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import chalk from 'chalk';
 import { getTimezone } from '../utils/date.js';
+import { classifyTestRun } from '../utils/test-run-outcome.js';
 
 const execAsync = promisify(execFile);
 const IS_WIN = process.platform === 'win32';
 const TIMEOUT = 30_000;
-const TEST_TIMEOUT = 120_000;
+// Windows + cold cache + antivirus can take several minutes for the full suite.
+const TEST_TIMEOUT = 600_000;
+// execFile buffers all output in memory; vitest easily exceeds Node's 1 MiB default.
+const MAX_OUTPUT = 32 * 1024 * 1024;
 
 function git(args: string[], cwd: string) {
-  return execAsync('git', args, { cwd, timeout: TIMEOUT, shell: IS_WIN });
+  return execAsync('git', args, { cwd, timeout: TIMEOUT, shell: IS_WIN, maxBuffer: MAX_OUTPUT });
 }
 
 function npm(args: string[], cwd: string, timeout = TIMEOUT) {
-  return execAsync('npm', args, { cwd, timeout, shell: IS_WIN });
+  return execAsync('npm', args, { cwd, timeout, shell: IS_WIN, maxBuffer: MAX_OUTPUT });
 }
 
 async function ensureWorkspace(cwd: string): Promise<void> {
@@ -146,7 +150,9 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
   console.log(logOutput.trim());
   console.log();
 
-  // 2. Pull
+  // 2. Pull — remember where we were, a pull can bring many commits and
+  // "HEAD~1" would only undo the last one.
+  const { stdout: previousHead } = await git(['rev-parse', 'HEAD'], cwd);
   console.log(chalk.blue('Pulling changes...'));
   const { stdout: pullOutput } = await git(['pull', '--ff-only'], cwd);
   console.log(pullOutput.trim());
@@ -168,10 +174,18 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
       const summary = lines.slice(-5).join('\n');
       console.log(summary);
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (classifyTestRun(err) === 'inconclusive') {
+        // Timed out, buffer overflow, runner missing — that says nothing about
+        // the new code, so keep it and let a human decide.
+        console.error(chalk.yellow(`Could not run the test suite: ${message}`));
+        console.error(chalk.yellow('Update kept — run "npm test" yourself to check it, or re-run update with --skip-tests.'));
+        process.exit(1);
+      }
       console.error(chalk.red('Tests failed after update. Reverting...'));
-      await git(['reset', '--hard', 'HEAD~1'], cwd).catch(() => {});
+      await git(['reset', '--hard', previousHead.trim()], cwd).catch(() => {});
       await npm(['install', '--no-audit', '--no-fund'], cwd).catch(() => {});
-      console.error(chalk.red('Reverted to previous version.'));
+      console.error(chalk.red(`Reverted to ${previousHead.trim().slice(0, 8)}.`));
       process.exit(1);
     }
   }

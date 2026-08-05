@@ -7,7 +7,8 @@ import type { TokenStore, OAuthTokens } from './types.js';
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const AUTH_URL = 'https://auth.openai.com/oauth/authorize';
 const TOKEN_URL = 'https://auth.openai.com/oauth/token';
-const REDIRECT_URI = 'http://localhost:1455/auth/callback';
+const CALLBACK_PORT = 1455;
+const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/auth/callback`;
 const SCOPE = 'openid profile email offline_access';
 
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000; // 5 minutes
@@ -55,7 +56,7 @@ export async function codexLogin(store: TokenStore): Promise<void> {
   exec(`${openCmd} "${authUrl}"`);
 
   console.log(`\n  Opening browser for OpenAI login...\n  URL: ${authUrl}\n`);
-  console.log('  Waiting for callback on localhost:1455...\n');
+  console.log(`  Waiting for callback on localhost:${CALLBACK_PORT}...\n`);
 
   const codeValue = await code;
   const tokens = await exchangeCode(codeValue, verifier);
@@ -76,7 +77,7 @@ function shutdown(server: Server): void {
   server.closeAllConnections();
 }
 
-export function startCallbackServer(expectedState: string): { code: Promise<string>; server: Server } {
+export function startCallbackServer(expectedState: string, port = CALLBACK_PORT): { code: Promise<string>; server: Server } {
   let resolveCode: (code: string) => void;
   let rejectCode: (err: Error) => void;
   const code = new Promise<string>((resolve, reject) => {
@@ -130,7 +131,7 @@ export function startCallbackServer(expectedState: string): { code: Promise<stri
     resolveCode(returnedCode);
   });
 
-  server.listen(1455, '127.0.0.1');
+  server.listen(port, '127.0.0.1');
 
   return { code, server };
 }
