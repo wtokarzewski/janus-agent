@@ -75,7 +75,7 @@ describe('Setup Wizard', () => {
       llm: {
         providers: { openrouter: { priority: 0 } },
         slots: {
-          default: { openrouter: 'anthropic/claude-sonnet-4-5-20250929' },
+          default: { openrouter: 'anthropic/claude-sonnet-5' },
           background: null,
         },
       },
@@ -167,7 +167,7 @@ describe('Setup Wizard', () => {
       llm: {
         providers: { openai: { priority: 0 } },
         slots: {
-          default: { openai: 'gpt-4o' },
+          default: { openai: 'gpt-5.5' },
           background: null,
         },
       },
@@ -195,7 +195,7 @@ describe('Setup Wizard', () => {
       llm: {
         providers: { openrouter: { priority: 0 } },
         slots: {
-          default: { openrouter: 'anthropic/claude-sonnet-4-5-20250929' },
+          default: { openrouter: 'anthropic/claude-sonnet-5' },
           background: null,
         },
       },
@@ -230,7 +230,7 @@ describe('Setup Wizard', () => {
         llm: {
           providers: { 'claude-agent': { priority: 0 } },
           slots: {
-            default: { 'claude-agent': 'claude-sonnet-4-6' },
+            default: { 'claude-agent': 'claude-sonnet-5' },
             background: null,
           },
         },

@@ -4,7 +4,7 @@
       "anthropic": { "priority": 0 }
     },
     "slots": {
-      "default": { "anthropic": "claude-sonnet-4-6" },
+      "default": { "anthropic": "claude-sonnet-5" },
       "background": null
     },
     "maxTokens": 4096,

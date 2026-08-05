@@ -168,7 +168,7 @@ async function detectExistingPrimary(): Promise<ProviderSetupResult | null> {
     if (config.llm.provider) {
       return {
         provider: config.llm.provider,
-        model: config.llm.model ?? 'claude-sonnet-4-6',
+        model: config.llm.model ?? 'claude-sonnet-5',
         ...(config.llm.apiKey ? { apiKey: config.llm.apiKey } : {}),
       };
     }
@@ -204,9 +204,9 @@ async function setupApiKey(rl: ReadlineIO): Promise<ProviderSetupResult> {
   const providerChoice = await askChoice(rl, '  Select [1-5]: ', ['1', '2', '3', '4', '5']);
 
   const providerMap: Record<string, { name: string; defaultModel: string }> = {
-    '1': { name: 'openrouter', defaultModel: 'anthropic/claude-sonnet-4-5-20250929' },
-    '2': { name: 'anthropic', defaultModel: 'claude-sonnet-4-5-20250929' },
-    '3': { name: 'openai', defaultModel: 'gpt-4o' },
+    '1': { name: 'openrouter', defaultModel: 'anthropic/claude-sonnet-5' },
+    '2': { name: 'anthropic', defaultModel: 'claude-sonnet-5' },
+    '3': { name: 'openai', defaultModel: 'gpt-5.5' },
     '4': { name: 'deepseek', defaultModel: 'deepseek-chat' },
     '5': { name: 'groq', defaultModel: 'llama-3.3-70b-versatile' },
   };
@@ -302,10 +302,16 @@ async function setupClaudeAgent(rl: ReadlineIO): Promise<ProviderSetupResult> {
   console.log('\n  Model?');
   console.log('  1. sonnet (recommended)');
   console.log('  2. opus');
-  console.log('  3. haiku\n');
+  console.log('  3. haiku');
+  console.log('  4. fable\n');
 
-  const modelChoice = await askChoice(rl, '  Select [1-3]: ', ['1', '2', '3']);
-  const modelMap: Record<string, string> = { '1': 'claude-sonnet-4-6', '2': 'claude-opus-4-6', '3': 'claude-haiku-4-5-20251001' };
+  const modelChoice = await askChoice(rl, '  Select [1-4]: ', ['1', '2', '3', '4']);
+  const modelMap: Record<string, string> = {
+    '1': 'claude-sonnet-5',
+    '2': 'claude-opus-5',
+    '3': 'claude-haiku-4-5-20251001',
+    '4': 'claude-fable-5',
+  };
   const model = modelMap[modelChoice];
 
   return { provider: 'claude-agent', model };
@@ -332,13 +338,13 @@ async function setupCodex(rl: ReadlineIO): Promise<ProviderSetupResult> {
 
   // Codex CLI uses specific model names
   console.log('\n  Model?');
-  console.log('  1. gpt-5.4 (recommended)');
-  console.log('  2. gpt-5.4-mini');
-  console.log('  3. gpt-5.3-codex');
-  console.log('  4. gpt-5.2\n');
+  console.log('  1. gpt-5.5 (recommended)');
+  console.log('  2. gpt-5.4');
+  console.log('  3. gpt-5.4-mini');
+  console.log('  4. gpt-5.3-codex\n');
 
   const modelChoice = await askChoice(rl, '  Select [1-4]: ', ['1', '2', '3', '4']);
-  const modelMap: Record<string, string> = { '1': 'gpt-5.4', '2': 'gpt-5.4-mini', '3': 'gpt-5.3-codex', '4': 'gpt-5.2' };
+  const modelMap: Record<string, string> = { '1': 'gpt-5.5', '2': 'gpt-5.4', '3': 'gpt-5.4-mini', '4': 'gpt-5.3-codex' };
   const model = modelMap[modelChoice];
 
   return { provider: 'codex', model };
@@ -361,7 +367,7 @@ async function setupAnthropicOAuth(rl: ReadlineIO): Promise<ProviderSetupResult>
     token = '';
   }
 
-  const model = await pickModelFromApi(rl, 'anthropic', token, true, 'claude-sonnet-4-6');
+  const model = await pickModelFromApi(rl, 'anthropic', token, true, 'claude-sonnet-5');
   return { provider: 'anthropic', auth: 'oauth', model };
 }
 
@@ -386,12 +392,13 @@ async function setupCodexOAuth(rl: ReadlineIO): Promise<ProviderSetupResult> {
     // token stays empty, will fall back to curated list
   }
 
-  const model = await pickModelFromApi(rl, 'codex', token, false, 'gpt-5.4', accountId);
+  const model = await pickModelFromApi(rl, 'codex', token, false, 'gpt-5.5', accountId);
   return { provider: 'codex', auth: 'oauth', model };
 }
 
 /** Curated fallback models for Codex OAuth when API fetch fails. */
 const CODEX_FALLBACK_MODELS: { id: string; name: string }[] = [
+  { id: 'gpt-5.5', name: 'GPT-5.5' },
   { id: 'gpt-5.4', name: 'GPT-5.4' },
   { id: 'gpt-5.4-mini', name: 'GPT-5.4-Mini' },
   { id: 'gpt-5.3-codex', name: 'GPT-5.3-Codex' },
