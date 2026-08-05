@@ -42,13 +42,24 @@ describe('ExecTool', () => {
     expect(result).toContain('blocked by safety rules');
   });
 
-  // 30s budget: on Windows, spawning cmd + ping and tearing the tree down via
-  // taskkill can take well over 10s on a slow machine.
   it('times out and kills process group', async () => {
     const tool = makeTool({ timeout: 500 });
     const cmd = process.platform === 'win32' ? 'ping -n 60 127.0.0.1' : 'sleep 60';
     const result = await tool.execute({ command: cmd });
     expect(result).toContain('timed out');
+  }, 30_000);
+
+  // Reporting the timeout must not depend on the OS finishing the teardown.
+  // On Windows a surviving grandchild holds the inherited stdout pipe, so
+  // 'close' never arrives and the call used to hang until the caller gave up.
+  it.skipIf(process.platform === 'win32')('reports the timeout even when the process ignores the kill', async () => {
+    const tool = makeTool({ timeout: 500 });
+    const started = Date.now();
+
+    const result = await tool.execute({ command: "trap '' TERM; sleep 60" });
+
+    expect(result).toContain('timed out');
+    expect(Date.now() - started).toBeLessThan(1500);
   }, 30_000);
 
   it('returns no output marker for silent commands', async () => {
