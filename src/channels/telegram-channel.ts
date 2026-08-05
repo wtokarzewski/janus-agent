@@ -6,6 +6,8 @@ import type { JanusConfig } from '../config/schema.js';
 import type { AgentLoop } from '../agent/agent-loop.js';
 import type { SubagentRegistry } from '../agent/subagent-registry.js';
 import { resolveUser, autoIdentifyUser, deriveChannelAllowlist } from '../users/user-resolver.js';
+import { isOwner } from '../users/is-owner.js';
+import { handleProviderCommand, type PinnableRegistry } from './provider-command.js';
 import type { InviteStore } from '../invites/invite-store.js';
 import { saveConfig } from '../config/config.js';
 import { ensureUserDir, ensureChatDir } from '../users/user-resolver.js';
@@ -55,7 +57,7 @@ export class TelegramChannel {
     return this.bot;
   }
 
-  async start(bus: MessageBus, config: JanusConfig, signal: AbortSignal, externalBot?: Bot, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry; inviteStore?: InviteStore; database?: Database }): Promise<void> {
+  async start(bus: MessageBus, config: JanusConfig, signal: AbortSignal, externalBot?: Bot, opts?: { agent?: AgentLoop; subagentRegistry?: SubagentRegistry; inviteStore?: InviteStore; database?: Database; llm?: PinnableRegistry }): Promise<void> {
     const tg = config.telegram;
 
     if (!externalBot && !tg.token) {
@@ -224,9 +226,33 @@ export class TelegramChannel {
         return;
       }
 
+      // Operator commands change behaviour for every chat on this instance,
+      // so they are owner-only — they used to run before the allowlist check.
+      const senderId = resolveUser('telegram', String(ctx.from?.id ?? ''), ctx.from?.username, config)?.userId;
+      const senderIsOwner = isOwner(senderId, config);
+
+      // /provider [0-N|name|auto] — show or switch the active LLM provider
+      const providerMatch = ctx.message?.text?.trim().match(/^\/provider(?:\s+(.+))?$/i);
+      if (providerMatch) {
+        if (!senderIsOwner) {
+          await ctx.reply('Only the owner can switch providers.');
+          return;
+        }
+        if (!opts?.llm) {
+          await ctx.reply('Provider switching is unavailable in this process.');
+          return;
+        }
+        await ctx.reply(handleProviderCommand(opts.llm, providerMatch[1]));
+        return;
+      }
+
       // /model [name] — show or change current LLM model (I3)
       const modelMatch = ctx.message?.text?.trim().match(/^\/model(?:\s+(.+))?$/);
       if (modelMatch) {
+        if (modelMatch[1]?.trim() && !senderIsOwner) {
+          await ctx.reply('Only the owner can change the model.');
+          return;
+        }
         const newModel = modelMatch[1]?.trim();
         if (newModel) {
           const primary = config.resolved.providers[0];
