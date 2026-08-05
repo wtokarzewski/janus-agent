@@ -1,7 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { formatUpdateStamp } from '../../src/utils/update-stamp.js';
+import { setTimezone } from '../../src/utils/date.js';
 
 describe('formatUpdateStamp', () => {
+  // The stamp renders in the configured zone, so pin one — CI runs in UTC.
+  beforeAll(() => setTimezone('Europe/Warsaw'));
+
   it('combines version, short hash and commit time', () => {
     const stamp = formatUpdateStamp('0.15.0', { hash: '6e1ed1f', committedAt: '2026-08-05T21:14:03+02:00' });
 
