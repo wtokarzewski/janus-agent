@@ -19,7 +19,7 @@ import { InviteTool } from '../tools/builtin/invite.js';
 import { deriveChannelAllowlist } from '../users/user-resolver.js';
 import { acquireInstanceLock, releaseInstanceLock } from '../utils/instance-lock.js';
 import { withTimeout } from '../utils/with-timeout.js';
-import { buildUpdateStamp } from '../utils/update-stamp.js';
+import { buildUpdateStamp, formatCommitList } from '../utils/update-stamp.js';
 import { resolveUserTargets } from '../utils/notify-owner.js';
 import * as log from '../utils/logger.js';
 
@@ -187,6 +187,7 @@ export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void>
     // Read the build stamp here, not at update time: this process is the one
     // actually running the new code.
     const stamp = await buildUpdateStamp(config.workspace.dir);
+    const commits = formatCommitList(updateMsg);
     // Every user gets it in their DM; group chats are left out of technical notices.
     const userTargets = resolveUserTargets(config);
     const recipients = userTargets.length > 0
@@ -199,7 +200,7 @@ export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void>
         app.bus.publishOutbound({
           chatId: target.chatId,
           channel: target.channel,
-          content: `🔄 Janus zaktualizowany i zrestartowany\n${stamp}\n\n${updateMsg}`,
+          content: `🔄 Janus zaktualizowany i zrestartowany\n${stamp}${commits ? `\n\n${commits}` : ''}`,
           timestamp: new Date(),
         }, signal).catch(err => {
           log.warn(`Gateway: failed to send update notification: ${err instanceof Error ? err.message : String(err)}`);
