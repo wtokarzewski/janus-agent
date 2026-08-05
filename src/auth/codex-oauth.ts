@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { generateCodeVerifier, generateCodeChallenge } from './pkce.js';
+import { singleFlight } from './refresh-lock.js';
 import type { TokenStore, OAuthTokens } from './types.js';
 
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
@@ -163,36 +164,45 @@ async function exchangeCode(code: string, verifier: string): Promise<OAuthTokens
 }
 
 export async function codexRefresh(store: TokenStore): Promise<OAuthTokens> {
-  const existing = store.load('codex');
-  if (!existing?.refresh_token) throw new Error('No Codex refresh token');
+  return singleFlight('codex', async () => {
+    const existing = store.load('codex');
+    if (!existing?.refresh_token) throw new Error('No Codex refresh token');
 
-  const body = new URLSearchParams({
-    grant_type: 'refresh_token',
-    client_id: CLIENT_ID,
-    refresh_token: existing.refresh_token,
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      refresh_token: existing.refresh_token,
+    });
+
+    const res = await fetch(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      // Another process sharing this auth.json may have rotated the token
+      // while we were queued — adopt its result rather than reporting a dead
+      // credential.
+      const current = store.load('codex');
+      if (current?.refresh_token && current.refresh_token !== existing.refresh_token) {
+        return current;
+      }
+      throw new Error(`Token refresh failed (${res.status}): ${text}`);
+    }
+
+    const data = await res.json() as { access_token: string; refresh_token: string; expires_in: number };
+    const tokens: OAuthTokens = {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at: Date.now() + data.expires_in * 1000,
+    };
+    const accountId = getAccountId(tokens.access_token);
+    const result = { ...tokens, account_id: accountId };
+    store.save('codex', result);
+    return result;
   });
-
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Token refresh failed (${res.status}): ${text}`);
-  }
-
-  const data = await res.json() as { access_token: string; refresh_token: string; expires_in: number };
-  const tokens: OAuthTokens = {
-    access_token: data.access_token,
-    refresh_token: data.refresh_token,
-    expires_at: Date.now() + data.expires_in * 1000,
-  };
-  const accountId = getAccountId(tokens.access_token);
-  const result = { ...tokens, account_id: accountId };
-  store.save('codex', result);
-  return result;
 }
 
 export async function getCodexToken(store: TokenStore): Promise<{ token: string; accountId?: string }> {

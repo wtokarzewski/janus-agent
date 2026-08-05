@@ -159,7 +159,7 @@ npm test           # Run all tests (vitest)
 npm run typecheck   # TypeScript type checking
 ```
 
-801 tests across 74 test files: unit (agent-resolver, anthropic-oauth, async-queue, browser-tool, circuit-breaker, codex-oauth, codex-oauth-callback, config-schema, error-classification, model-catalog, context-builder, cron-service, cron-tool, error-classification, exec-tool, gate-routing, heartbeat-parser, heartbeat-resync, instance-lock, invite, lane-watchdog, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sanitize, sdk-utils, self-update-tool, session-lock, setup, shell, skill-loading, stop-command, streaming, system-message, telegram-channel, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search, version-utils, voice-transcribe, web-tools) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
+813 tests across 76 test files: unit (agent-resolver, anthropic-oauth, async-queue, browser-tool, circuit-breaker, codex-oauth, codex-oauth-callback, config-schema, notify-owner, oauth-refresh-lock, error-classification, model-catalog, context-builder, cron-service, cron-tool, error-classification, exec-tool, gate-routing, heartbeat-parser, heartbeat-resync, instance-lock, invite, lane-watchdog, learner, mcp-server, memory-index, pattern-gate, pkce, provider-registry, sanitize, sdk-utils, self-update-tool, session-lock, setup, shell, skill-loading, stop-command, streaming, system-message, telegram-channel, token-counting, token-store, tool-registry, user-resolver, validate-path, vector-search, version-utils, voice-transcribe, web-tools) + integration (agent-loop with mock LLM). CI runs on push/PR via GitHub Actions.
 
 ## Conventions
 
