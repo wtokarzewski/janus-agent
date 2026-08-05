@@ -34,13 +34,13 @@ describe('token debug logger', () => {
         completionTokens: 1250,
         cacheReadTokens: 41000,
         cacheWriteTokens: 7200,
-      }, 'anthropic', 'claude-sonnet-4-6');
+      }, 'anthropic', 'claude-sonnet-5');
 
       expect(consoleSpy).toHaveBeenCalledTimes(1);
       const output = consoleSpy.mock.calls[0][0] as string;
       expect(output).toContain('[TOKEN]');
       expect(output).toContain('chat');
-      expect(output).toContain('anthropic claude-sonnet-4-6');
+      expect(output).toContain('anthropic claude-sonnet-5');
       expect(output).toContain('in:48200');
       expect(output).toContain('out:1250');
       expect(output).toContain('cache_read:41000');
@@ -53,7 +53,7 @@ describe('token debug logger', () => {
         completionTokens: 500,
         cacheReadTokens: 41000,
         cacheWriteTokens: 7200,
-      }, 'anthropic', 'claude-sonnet-4-6');
+      }, 'anthropic', 'claude-sonnet-5');
 
       const output = consoleSpy.mock.calls[0][0] as string;
       // hitRate = 41000 / (0 + 41000 + 7200) * 100 = 85%
@@ -64,7 +64,7 @@ describe('token debug logger', () => {
       logTokenUsage('chat', {
         promptTokens: 5000,
         completionTokens: 500,
-      }, 'anthropic', 'claude-sonnet-4-6');
+      }, 'anthropic', 'claude-sonnet-5');
 
       const output = consoleSpy.mock.calls[0][0] as string;
       expect(output).toContain('hit:0%');

@@ -167,7 +167,7 @@ export function tokenDebugEnabled(): boolean {
  * Log per-LLM-call token breakdown.
  *
  * Format:
- * [TOKEN] chat | anthropic claude-sonnet-4-6 | in:48200 out:1250 | cache_read:41000 cache_write:7200 | hit:85%
+ * [TOKEN] chat | anthropic claude-sonnet-5 | in:48200 out:1250 | cache_read:41000 cache_write:7200 | hit:85%
  *
  * The usage parameter type is inlined to avoid circular dependency with llm/types.
  */

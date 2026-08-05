@@ -109,7 +109,7 @@ export class CLIChannel {
         console.log(chalk.bold('Commands:'));
         console.log(`  ${chalk.green('/help')}     Show this help`);
         console.log(`  ${chalk.green('/stop')}     Stop the running task`);
-        console.log(`  ${chalk.green('/model')}    Show/change model (e.g. /model claude-sonnet-4-5)`);
+        console.log(`  ${chalk.green('/model')}    Show/change model (e.g. /model claude-sonnet-5)`);
         console.log(`  ${chalk.green('/config')}   Reconfigure LLM provider`);
         console.log(`  ${chalk.green('exit')}      Quit (also: quit, /exit, /quit, :q, Ctrl+C)`);
         console.log('');

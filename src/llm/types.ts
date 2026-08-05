@@ -51,7 +51,7 @@ export interface ChatRequest {
   temperature?: number;
   maxTokens?: number;
   thinking?: { type: 'enabled'; budgetTokens: number };
-  reasoningEffort?: 'low' | 'medium' | 'high';
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   /** Split system prompt for Anthropic prompt caching: static part (cached) + dynamic part (uncached). */
   systemParts?: { staticPart: string; dynamicPart: string };
 }

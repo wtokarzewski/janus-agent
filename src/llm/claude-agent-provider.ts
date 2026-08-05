@@ -25,18 +25,18 @@ async function getQuery() {
   return queryFn;
 }
 
+/** Bare aliases track the current generation; suffixed ones pin a release. */
 const MODEL_ALIASES: Record<string, string> = {
-  opus: 'claude-opus-4-8',
+  opus: 'claude-opus-5',
   sonnet: 'claude-sonnet-5',
   haiku: 'claude-haiku-4-5-20251001',
   fable: 'claude-fable-5',
-  'opus-4-7': 'claude-opus-4-7',
-  'opus-4-8': 'claude-opus-4-8',
+  'opus-5': 'claude-opus-5',
   'sonnet-5': 'claude-sonnet-5',
   'fable-5': 'claude-fable-5',
 };
 
-function resolveModel(name: string): string {
+export function resolveModel(name: string): string {
   return MODEL_ALIASES[name] ?? name;
 }
 
