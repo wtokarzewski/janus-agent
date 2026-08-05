@@ -64,7 +64,18 @@ export async function codexLogin(store: TokenStore): Promise<void> {
   console.log('  Login successful!');
 }
 
-function startCallbackServer(expectedState: string): { code: Promise<string>; server: Server } {
+/**
+ * `close()` stops new connections but leaves the browser's idle keep-alive
+ * socket open, and an open socket keeps the Node event loop alive — the setup
+ * wizard looked like it hung after "Verifying connection...". Drop the sockets
+ * too so the process can exit once login is done.
+ */
+function shutdown(server: Server): void {
+  server.close();
+  server.closeAllConnections();
+}
+
+export function startCallbackServer(expectedState: string): { code: Promise<string>; server: Server } {
   let resolveCode: (code: string) => void;
   let rejectCode: (err: Error) => void;
   const code = new Promise<string>((resolve, reject) => {
@@ -85,32 +96,36 @@ function startCallbackServer(expectedState: string): { code: Promise<string>; se
     const error = url.searchParams.get('error');
 
     if (error) {
+      res.setHeader('Connection', 'close');
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<html><body><h2>Login failed</h2><p>You can close this window.</p></body></html>');
-      server.close();
+      shutdown(server);
       rejectCode(new Error(`OAuth error: ${error}`));
       return;
     }
 
     if (returnedState !== expectedState) {
+      res.setHeader('Connection', 'close');
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<html><body><h2>State mismatch</h2><p>Possible CSRF attack. Try again.</p></body></html>');
-      server.close();
+      shutdown(server);
       rejectCode(new Error('State mismatch'));
       return;
     }
 
     if (!returnedCode) {
+      res.setHeader('Connection', 'close');
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<html><body><h2>No code received</h2></body></html>');
-      server.close();
+      shutdown(server);
       rejectCode(new Error('No authorization code received'));
       return;
     }
 
+    res.setHeader('Connection', 'close');
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end('<html><body><h2>Login successful!</h2><p>You can close this window and return to the terminal.</p></body></html>');
-    server.close();
+    shutdown(server);
     resolveCode(returnedCode);
   });
 
