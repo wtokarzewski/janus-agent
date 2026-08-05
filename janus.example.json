@@ -32,8 +32,7 @@
 
   "agent": {
     "summarizationThreshold": 20,
-    "tokenBudget": 100000,
-    "contextWindow": 128000,
+    "contextWindow": 1000000,
     "toolRetries": 2,
     "onLLMError": "retry",
     "onToolError": "continue",
