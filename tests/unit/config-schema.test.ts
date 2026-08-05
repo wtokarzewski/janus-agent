@@ -2,6 +2,18 @@ import { describe, it, expect } from 'vitest';
 import { JanusConfigSchema } from '../../src/config/schema.js';
 import { resolveLLM } from '../../src/config/config.js';
 
+describe('shipped example config', () => {
+  // The example is what most janus.json files are seeded from, so a stale
+  // contextWindow there silently caps everyone at a fraction of the model.
+  it('gives the agent the full context window of a current model', async () => {
+    const { readFileSync } = await import('node:fs');
+    const raw = JSON.parse(readFileSync(new URL('../../janus.example.json', import.meta.url), 'utf-8'));
+    const config = JanusConfigSchema.parse(raw);
+
+    expect(config.agent.contextWindow).toBe(1_000_000);
+  });
+});
+
 describe('JanusConfigSchema', () => {
   // GPT-5.6 exposes none/low/medium/high/xhigh/max; the schema must not gate
   // the top and bottom of that range out of reach.
@@ -35,13 +47,13 @@ describe('JanusConfigSchema', () => {
   it('should accept custom values', () => {
     const config = JanusConfigSchema.parse({
       llm: { model: 'gpt-5.6-terra', maxTokens: 8192 },
-      agent: { tokenBudget: 500_000 },
+      agent: { contextWindow: 500_000 },
       database: { enabled: false, path: '/tmp/test.db' },
     });
 
     expect(config.llm.model).toBe('gpt-5.6-terra');
     expect(config.llm.maxTokens).toBe(8192);
-    expect(config.agent.tokenBudget).toBe(500_000);
+    expect(config.agent.contextWindow).toBe(500_000);
     expect(config.database.enabled).toBe(false);
     expect(config.database.path).toBe('/tmp/test.db');
   });
@@ -100,7 +112,7 @@ describe('JanusConfigSchema', () => {
 
   it('should reject invalid types', () => {
     expect(() => JanusConfigSchema.parse({
-      agent: { tokenBudget: 'not a number' },
+      agent: { contextWindow: 'not a number' },
     })).toThrow();
   });
 
