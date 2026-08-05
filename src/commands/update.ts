@@ -193,11 +193,84 @@ async function finalizeUpdate(cwd: string): Promise<void> {
   await ensureStateUncertaintySection(cwd);
   await ensureTimezone();
   syncNewConfigSections(cwd);
+  await reportModelDrift();
   try {
     const { ensureGws } = await import('./onboard.js');
     await ensureGws();
   } catch {
     // Non-critical — skip silently
+  }
+}
+
+/** Credentials for a provider's model-listing call, or null if we have none. */
+async function listingToken(provider: string, auth?: string): Promise<{ token: string; isOAuth: boolean; accountId?: string } | null> {
+  const { loadApiKey, FileTokenStore } = await import('../auth/token-store.js');
+
+  if (auth === 'oauth') {
+    const store = new FileTokenStore();
+    if (provider === 'anthropic') {
+      const { getAnthropicToken } = await import('../auth/anthropic-oauth.js');
+      return { token: await getAnthropicToken(store), isOAuth: true };
+    }
+    if (provider === 'codex') {
+      const { getCodexToken } = await import('../auth/codex-oauth.js');
+      const { token, accountId } = await getCodexToken(store);
+      return { token, isOAuth: true, accountId };
+    }
+    return null;
+  }
+
+  const key = loadApiKey(provider);
+  return key ? { token: key, isOAuth: false } : null;
+}
+
+/**
+ * Warn when a configured model is no longer served. Providers retire models on
+ * their own schedule and the first symptom is otherwise a 404 mid-conversation.
+ * Purely advisory — nothing is rewritten, and a provider we cannot query
+ * (subscription tokens have no listing endpoint) is skipped in silence.
+ */
+async function reportModelDrift(): Promise<void> {
+  try {
+    const { loadConfig } = await import('../config/config.js');
+    const { fetchAnthropicModels, fetchOpenAIModels } = await import('../llm/model-listing.js');
+    const { findModelDrift } = await import('../llm/model-drift.js');
+
+    const { resolved } = await loadConfig();
+    const drift = [];
+
+    for (const provider of resolved.providers) {
+      const configured = resolved.slots
+        .flatMap(s => s.entries)
+        .filter(e => e.provider === provider.name)
+        .map(e => e.model);
+      if (configured.length === 0) continue;
+
+      let available: string[] = [];
+      try {
+        const creds = await listingToken(provider.name, provider.auth);
+        if (!creds) continue;
+        const models = provider.name === 'anthropic' || provider.name === 'openrouter'
+          ? await fetchAnthropicModels(creds.token, creds.isOAuth)
+          : await fetchOpenAIModels(creds.token, creds.accountId);
+        available = models.map(m => m.id);
+      } catch {
+        continue; // can't ask this provider — say nothing rather than guess
+      }
+
+      drift.push(...findModelDrift({ provider: provider.name, configured, available }));
+    }
+
+    if (drift.length === 0) return;
+
+    console.log(chalk.yellow('\n  Models configured but no longer offered by the provider:'));
+    for (const d of drift) {
+      const hint = d.suggestion ? ` — newest available: ${d.suggestion}` : '';
+      console.log(chalk.yellow(`    ${d.provider}: ${d.model}${hint}`));
+    }
+    console.log(chalk.gray('  Update janus.json (llm.slots) or run "npm start -- setup" to pick a current model.\n'));
+  } catch {
+    // Advisory step — never fail an update over it
   }
 }
 
