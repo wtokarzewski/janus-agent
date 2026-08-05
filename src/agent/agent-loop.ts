@@ -5,6 +5,7 @@ import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
 import type { LLMMessage, ToolCall, ToolContentBlock, UserContentBlock } from '../llm/types.js';
 import { userContentText } from '../llm/types.js';
 import type { ProviderRegistry } from '../llm/provider-registry.js';
+import { isContextLengthError, isNonRetryableClientError } from '../llm/retry.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import type { RequestContext } from '../tools/types.js';
 import type { SessionManager } from '../session/session-manager.js';
@@ -892,7 +893,7 @@ export class AgentLoop {
         logTokenUsage(lane ?? 'chat', response.usage, response.provider, response.model);
       } catch (err) {
         const errorText = err instanceof Error ? err.message : String(err);
-        const isContextError = /token|context|length|too long/i.test(errorText);
+        const isContextError = isContextLengthError(err instanceof Error ? err : new Error(errorText));
         const isTimeout = /timeout|timed out|ETIMEDOUT|ECONNRESET/i.test(errorText);
 
         // Timeout with high context usage → hard-clear old tool results and retry
@@ -923,8 +924,8 @@ export class AgentLoop {
 
         log.error(`LLM error: ${errorText}`);
 
-        // Don't retry client errors (400) — they never self-heal
-        const isClientError = /^4\d\d\s|"status":\s*4\d\d|invalid_request|malformed/i.test(errorText);
+        // Don't retry client errors (400, dead credentials) — they never self-heal
+        const isClientError = isNonRetryableClientError(err instanceof Error ? err : new Error(errorText));
 
         if (this.deps.config.agent.onLLMError === 'retry' && !isClientError && llmRetries < 5) {
           llmRetries++;
