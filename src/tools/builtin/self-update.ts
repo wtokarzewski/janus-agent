@@ -149,8 +149,15 @@ export class SelfUpdateTool implements Tool {
         });
       }
 
-      // Write marker so the new process can notify the user
-      const summary = pullOutput.trim();
+      // Write marker so the new process can notify the user. Subjects only —
+      // the pull output is a diffstat nobody reads in a chat window.
+      let summary = pullOutput.trim();
+      try {
+        const { stdout } = await this.git(['log', '--format=%s', `${previousHead}..HEAD`]);
+        if (stdout.trim()) summary = stdout.trim();
+      } catch {
+        // Keep the pull output as a fallback.
+      }
       const updateMarker = resolve(this.workspaceDir, '.janus', '.update-complete');
       try {
         writeFileSync(updateMarker, summary, 'utf-8');
