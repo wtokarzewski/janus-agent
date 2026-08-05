@@ -70,7 +70,7 @@ const LLMSchema = z.object({
   maxTokens: z.number().default(4096),
   temperature: z.number().default(0.3),
   toolTemperature: z.number().optional(),
-  reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
+  reasoningEffort: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
   thinking: ThinkingSchema.optional(),
   circuitBreaker: CircuitBreakerSchema.optional().transform(
     v => v ?? { enabled: true, failureThreshold: 2, cooldownMs: 300_000 },
@@ -103,7 +103,7 @@ export interface ResolvedLLM {
   maxTokens: number;
   temperature: number;
   toolTemperature?: number;
-  reasoningEffort?: 'low' | 'medium' | 'high';
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   thinking?: { enabled: boolean; budgetTokens: number; level?: 'off' | 'minimal' | 'low' | 'medium' | 'high' };
 }
 

@@ -49,6 +49,7 @@ export function trimLastAssistantWhitespace(messages: Anthropic.MessageParam[]):
 export function modelRejectsSamplingParams(model: string): boolean {
   const id = model.replace(/^anthropic\//, '');
   return (
+    id.startsWith('claude-opus-5') ||
     id.startsWith('claude-opus-4-7') ||
     id.startsWith('claude-opus-4-8') ||
     id.startsWith('claude-sonnet-5') ||

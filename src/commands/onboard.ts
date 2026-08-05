@@ -28,7 +28,7 @@ const EXAMPLES_DIR = resolve(__dirname, '..', '..', 'examples');
 
 const DEFAULT_CONFIG = JSON.stringify({
   llm: {
-    model: "anthropic/claude-sonnet-4-5-20250929",
+    model: "anthropic/claude-sonnet-5",
     maxTokens: 4096,
     temperature: 0.7,
   },
