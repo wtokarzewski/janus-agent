@@ -45,6 +45,8 @@ import { MCPClient, createMCPProxyTool } from './mcp/client.js';
 import { initGateAudit } from './gates/gate-audit.js';
 import * as log from './utils/logger.js';
 import { setTimezone } from './utils/date.js';
+import { notifyOwners } from './utils/notify-owner.js';
+import { isNonRetryableClientError } from './llm/retry.js';
 
 export interface AppDeps {
   config: JanusConfig;
@@ -261,6 +263,8 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   // Proactive OAuth token refresh (OD-C): check every 30 min, refresh tokens expiring within 1 hour
   const TOKEN_REFRESH_INTERVAL = 30 * 60_000;
   const refreshStore = new FileTokenStore();
+  /** One alert per provider per process — the sweep runs every 30 min. */
+  const deadCredentialsReported = new Set<string>();
   const tokenRefreshTimer = setInterval(async () => {
     const expiring = getExpiringProviders(3_600_000);
     for (const provider of expiring) {
@@ -275,7 +279,19 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
           log.info(`Proactive OAuth refresh: ${provider} token refreshed`);
         }
       } catch (err) {
-        log.warn(`Proactive OAuth refresh failed for ${provider}: ${err instanceof Error ? err.message : err}`);
+        const error = err instanceof Error ? err : new Error(String(err));
+        if (!isNonRetryableClientError(error)) {
+          log.warn(`Proactive OAuth refresh failed for ${provider}: ${error.message}`);
+          continue;
+        }
+        // Dead credential (expired/consumed refresh token): no amount of
+        // retrying fixes it, and a warn line every 30 min goes unread until
+        // someone notices the agent has been on the fallback for days.
+        if (!deadCredentialsReported.has(provider)) {
+          deadCredentialsReported.add(provider);
+          log.error(`OAuth credentials for "${provider}" are no longer valid — run "npm start -- setup" to log in again. (${error.message})`);
+          notifyOwners(bus, config, `⚠️ Logowanie do "${provider}" wygasło — Janus działa na zapasowym providerze. Uruchom \`npm start -- setup\`, żeby się przelogować.`);
+        }
       }
     }
   }, TOKEN_REFRESH_INTERVAL);

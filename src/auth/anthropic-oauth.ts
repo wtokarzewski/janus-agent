@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { generateCodeVerifier, generateCodeChallenge } from './pkce.js';
+import { singleFlight } from './refresh-lock.js';
 import type { TokenStore, OAuthTokens } from './types.js';
 
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
@@ -82,32 +83,41 @@ async function exchangeCode(code: string, state: string, verifier: string): Prom
 }
 
 export async function anthropicRefresh(store: TokenStore): Promise<OAuthTokens> {
-  const existing = store.load('anthropic');
-  if (!existing?.refresh_token) throw new Error('No Anthropic refresh token');
+  return singleFlight('anthropic', async () => {
+    const existing = store.load('anthropic');
+    if (!existing?.refresh_token) throw new Error('No Anthropic refresh token');
 
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'refresh_token',
-      client_id: CLIENT_ID,
-      refresh_token: existing.refresh_token,
-    }),
+    const res = await fetch(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        client_id: CLIENT_ID,
+        refresh_token: existing.refresh_token,
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      // A second gateway sharing this auth.json may have rotated the token
+      // while we were queued — its result is valid, adopt it instead of
+      // reporting a dead credential.
+      const current = store.load('anthropic');
+      if (current?.refresh_token && current.refresh_token !== existing.refresh_token) {
+        return current;
+      }
+      throw new Error(`Token refresh failed (${res.status}): ${text}`);
+    }
+
+    const data = await res.json() as { access_token: string; refresh_token: string; expires_in: number };
+    const tokens: OAuthTokens = {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at: Date.now() + data.expires_in * 1000,
+    };
+    store.save('anthropic', tokens);
+    return tokens;
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Token refresh failed (${res.status}): ${text}`);
-  }
-
-  const data = await res.json() as { access_token: string; refresh_token: string; expires_in: number };
-  const tokens: OAuthTokens = {
-    access_token: data.access_token,
-    refresh_token: data.refresh_token,
-    expires_at: Date.now() + data.expires_in * 1000,
-  };
-  store.save('anthropic', tokens);
-  return tokens;
 }
 
 export async function getAnthropicToken(store: TokenStore): Promise<string> {
