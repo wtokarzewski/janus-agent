@@ -196,7 +196,8 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
   // Leave the same marker self_update writes, so a manual update is announced
   // on the next gateway start exactly like an automatic one.
   try {
-    writeFileSync(resolve(cwd, '.janus', '.update-complete'), logOutput.trim(), 'utf-8');
+    const { stdout: subjects } = await git(['log', '--format=%s', `${previousHead.trim()}..HEAD`], cwd);
+    writeFileSync(resolve(cwd, '.janus', '.update-complete'), subjects.trim() || logOutput.trim(), 'utf-8');
   } catch (err) {
     console.log(chalk.gray(`  (could not write update marker: ${err instanceof Error ? err.message : String(err)})`));
   }
