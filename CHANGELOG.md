@@ -7,6 +7,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-05
+
 ### Added
 - **Context management redesign** — one pre-call router (fits / truncate / compact / both) replaces the 7-mechanism, 12-threshold cascade that had accumulated 20+ patch PRs; transcript rotation keeps sessions bounded on disk, and a single tool-result cap ends the 100x disk-vs-memory mismatch (#212)
 - **Pinned skill state** — files listed in a skill's `pinned:` frontmatter survive summarization, so the agent stops forgetting long-running state (#208, #210, #211)
