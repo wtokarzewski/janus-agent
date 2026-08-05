@@ -3,7 +3,7 @@
 ## Current State (Phase 15 complete + reliability hardening)
 
 - **Version:** 0.14.1
-- **Codebase:** ~17,500 LOC TypeScript, 744 tests across 68 files, CI
+- **Codebase:** ~17,500 LOC TypeScript, 769 tests across 71 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
 - **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
@@ -218,6 +218,13 @@ See [FEATURES.md](../FEATURES.md) for the full verified feature list.
 - HEARTBEAT.md re-sync without restart (`heartbeat.resyncIntervalMs`), removed sections disable their jobs
 - Cron/heartbeat memory scope: DM-delivered runs flush to `users/{id}/memory/`, groups stay per-chat
 - Gateway instance lock (`.janus/gateway.pid`) + shutdown force-exit backstop (15s)
+
+### Reliability: provider circuit breaker (#232-234)
+- Bounded Telegram init (`telegram.initTimeoutMs`) so a Bot API outage can't block cron startup (#232)
+- Embedding cache keyed by content hash — startup reindex no longer recomputes every chunk (#233)
+- Provider circuit breaker (#234): after `llm.circuitBreaker.failureThreshold` failover-eligible failures a provider is skipped for `cooldownMs`; before this, an upstream incident cost the full retry ladder on every message
+- Health keyed by `ProviderEntry.providerName`, so default + background slots sharing an upstream are demoted together; filter never returns an empty candidate list
+- Auth errors (`authentication_error`/`invalid_api_key`) now fail over — credentials are per-provider
 
 **Remaining:**
 - Tool policy enforcement (domain filters, content rating) — schema exists, enforcement stubbed
