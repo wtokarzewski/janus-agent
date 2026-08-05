@@ -99,8 +99,10 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
 
     const timezone = await setupTimezone(rl);
 
+    let fallback: ProviderSetupResult | null = null;
+
     if (fallbackChoice === '1') {
-      const fallback = await setupFallbackProvider(rl, primary);
+      fallback = await setupFallbackProvider(rl, primary);
       await saveConfig({
         llm: {
           providers: {
@@ -134,8 +136,10 @@ export async function runSetup(opts?: SetupOptions, io?: ReadlineIO): Promise<vo
 
     console.log(chalk.green('\n  ✓ Configuration saved to janus.json\n'));
 
-    // Verify the provider actually works
+    // Verify both — the fallback exists for the moment the primary fails, so it
+    // is the last provider that should go untested.
     await verifyProvider(primary);
+    if (fallback) await verifyProvider(fallback);
   } finally {
     if (!io) rl.close();
   }

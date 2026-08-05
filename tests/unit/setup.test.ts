@@ -257,3 +257,33 @@ describe('Setup Wizard', () => {
     await runSetup({ reconfigure: true }, io);
   });
 });
+
+describe('Setup Wizard — fallback verification', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('verifies the fallback provider, not just the primary', async () => {
+    const { createProvider } = await import('../../src/llm/openai-compatible-provider.js');
+    const io = createMockIO([
+      '1',            // API Key mode
+      '1',            // OpenRouter (primary)
+      'sk-primary',
+      '',             // default model
+      '1',            // yes, add a fallback
+      '1',            // confirm timezone
+      '5',            // fallback type: API Key
+      '3',            // OpenAI
+      'sk-fallback',
+      '',             // default model
+    ]);
+
+    await runSetup(undefined, io);
+
+    // A fallback exists precisely for the moment the primary fails — leaving it
+    // untested is the one path that must not be a surprise.
+    const verified = (createProvider as unknown as { mock: { calls: { provider: string }[][] } }).mock.calls
+      .map(call => call[0].provider);
+    expect(verified).toEqual(['openrouter', 'openai']);
+  });
+});
