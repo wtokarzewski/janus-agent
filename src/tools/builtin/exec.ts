@@ -98,24 +98,24 @@ export class ExecTool implements ContextualTool {
       let stdout = '';
       let stderr = '';
       let killed = false;
+      let settled = false;
 
       child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
       child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
-      const timer = setTimeout(() => {
-        killed = true;
-        if (child.pid) killProcessTree(child.pid, { graceMs: 2000 });
-        // Ensure zombie reaping: unref child so Node doesn't wait, but OS reaps (CR-BG)
-        child.unref();
-      }, this.timeoutMs);
-
-      child.on('close', () => {
+      /** Report once, with whatever output arrived before this point. */
+      const finish = () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
 
         let output = '';
         if (stdout) output += stdout;
         if (stderr) output += (output ? '\n' : '') + stderr;
-        if (killed && !output) output = `Command timed out after ${this.timeoutMs}ms`;
+        if (killed) {
+          const note = `Command timed out after ${this.timeoutMs}ms`;
+          output = output ? `${output}\n${note}` : note;
+        }
 
         // Truncate
         if (output.length > this.maxOutput) {
@@ -123,9 +123,25 @@ export class ExecTool implements ContextualTool {
         }
 
         resolveP(output || '(no output)');
-      });
+      };
+
+      const timer = setTimeout(() => {
+        killed = true;
+        if (child.pid) killProcessTree(child.pid, { graceMs: 2000 });
+        // Ensure zombie reaping: unref child so Node doesn't wait, but OS reaps (CR-BG)
+        child.unref();
+        // Report now rather than waiting for 'close'. Teardown is best effort:
+        // a process that ignores SIGTERM waits for the SIGKILL grace period, and
+        // on Windows a grandchild that survives taskkill keeps the inherited
+        // stdout pipe open, so 'close' may never arrive at all.
+        finish();
+      }, this.timeoutMs);
+
+      child.on('close', finish);
 
       child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         resolveP(`Error: ${err.message}`);
       });
