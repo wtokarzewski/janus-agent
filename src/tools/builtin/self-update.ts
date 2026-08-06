@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import type { Tool } from '../types.js';
 import * as log from '../../utils/logger.js';
 import { classifyTestRun } from '../../utils/test-run-outcome.js';
-import { respawnSelf } from '../../utils/respawn.js';
+import { respawnSelf, spawnUpdateWorker } from '../../utils/respawn.js';
 
 const IS_WIN = process.platform === 'win32';
 const execAsync = promisify(execFile);
@@ -110,6 +110,11 @@ export class SelfUpdateTool implements Tool {
   }
 
   private async updateGit(skipTests: boolean): Promise<string> {
+    // Default path: hand the work to an independent worker. A process that is
+    // about to exit cannot reliably start anything — that is what kept killing
+    // the restart — so it only starts the worker and gets out of the way.
+    if (this.restartMode === 'respawn') return this.handOffUpdate();
+
     try {
       // 1. Fetch + pull — remember where we were: a pull can bring many commits,
       // so "HEAD~1" would leave the workspace on a half-reverted state.
@@ -185,6 +190,39 @@ export class SelfUpdateTool implements Tool {
       }
 
       return `Updated successfully.\n${summary}\nRestarting...`;
+    } catch (err) {
+      return `Error during update: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  /**
+   * Start the update worker, confirm it is alive, then leave. If it fails to
+   * start we stay on the current version: an outdated Janus beats no Janus.
+   */
+  private async handOffUpdate(): Promise<string> {
+    try {
+      await this.git(['fetch', '--quiet']);
+      const { stdout: countStr } = await this.git(['rev-list', 'HEAD..origin/main', '--count']);
+      if (parseInt(countStr.trim(), 10) === 0) return 'Already up to date. Nothing to do.';
+
+      const { stdout: subjects } = await this.git(['log', '--format=%s', 'HEAD..origin/main', '-5']);
+
+      log.info('self_update: flushing sessions before handing over...');
+      if (this.onBeforeRestart) {
+        await this.onBeforeRestart().catch(err => {
+          log.warn(`self_update: pre-handover flush failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+
+      const started = await spawnUpdateWorker();
+      if (!started) {
+        return 'Error: could not start the updater. Nothing was changed — Janus is still running the current version.';
+      }
+
+      log.info('self_update: updater running, exiting so it can swap the code');
+      setTimeout(() => process.exit(0), 500);
+
+      return `Updating now — Janus will restart on its own and report when it is back.\n${subjects.trim()}`;
     } catch (err) {
       return `Error during update: ${err instanceof Error ? err.message : String(err)}`;
     }
