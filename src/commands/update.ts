@@ -111,7 +111,15 @@ async function migrateFromHome(cwd: string): Promise<void> {
   }
 }
 
-export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<void> {
+/**
+ * `throwOnFailure` is for the update worker: it must keep control after a bad
+ * update so it can still bring the gateway back, which process.exit() prevents.
+ */
+export async function runUpdate(opts: { skipTests?: boolean; throwOnFailure?: boolean } = {}): Promise<void> {
+  const fail = (message: string): never => {
+    if (opts.throwOnFailure) throw new Error(message);
+    process.exit(1);
+  };
   const cwd = process.cwd();
 
   // Docker check
@@ -180,13 +188,13 @@ export async function runUpdate(opts: { skipTests?: boolean } = {}): Promise<voi
         // the new code, so keep it and let a human decide.
         console.error(chalk.yellow(`Could not run the test suite: ${message}`));
         console.error(chalk.yellow('Update kept — run "npm test" yourself to check it, or re-run update with --skip-tests.'));
-        process.exit(1);
+        return fail(`test suite did not run: ${message}`);
       }
       console.error(chalk.red('Tests failed after update. Reverting...'));
       await git(['reset', '--hard', previousHead.trim()], cwd).catch(() => {});
       await npm(['install', '--no-audit', '--no-fund'], cwd).catch(() => {});
       console.error(chalk.red(`Reverted to ${previousHead.trim().slice(0, 8)}.`));
-      process.exit(1);
+      return fail(`tests failed after update, reverted to ${previousHead.trim().slice(0, 8)}`);
     }
   }
 

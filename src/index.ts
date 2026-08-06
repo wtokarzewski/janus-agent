@@ -150,6 +150,14 @@ program
   });
 
 program
+  .command('update-worker', { hidden: true })
+  .description('Internal: apply an update while the gateway is stopped, then start it')
+  .action(async () => {
+    const { runUpdateWorker } = await import('./commands/update-worker.js');
+    await runUpdateWorker();
+  });
+
+program
   .command('update')
   .description('Pull latest changes, install deps, run tests')
   .option('--skip-tests', 'Skip running tests after update')
