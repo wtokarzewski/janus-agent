@@ -10,7 +10,7 @@
 
 import { spawn } from 'node:child_process';
 import * as log from './logger.js';
-import { encodeRestartArgv } from './restart-argv.js';
+import { encodeRestartArgv, encodeWorkerMode } from './restart-argv.js';
 
 /** Flags that describe *this* invocation and cannot be replayed as a restart. */
 const NOT_REPLAYABLE = ['--eval', '-e', '--print', '-p'];
@@ -80,6 +80,17 @@ export function spawnUpdateWorker(graceMs = 3000): Promise<boolean> {
   const { command, args } = buildWorkerCommand(process, ['update-worker']);
   const { key, value } = encodeRestartArgv(process.argv.slice(2));
   return spawnDetachedAndConfirm(command, args, graceMs, 'update worker', { [key]: value });
+}
+
+/** Same handover, without touching the code — for `/restart` from chat. */
+export function spawnRestartWorker(graceMs = 3000): Promise<boolean> {
+  const { command, args } = buildWorkerCommand(process, ['update-worker']);
+  const argv = encodeRestartArgv(process.argv.slice(2));
+  const mode = encodeWorkerMode('restart');
+  return spawnDetachedAndConfirm(command, args, graceMs, 'restart worker', {
+    [argv.key]: argv.value,
+    [mode.key]: mode.value,
+  });
 }
 
 /**

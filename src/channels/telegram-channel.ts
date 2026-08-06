@@ -8,6 +8,8 @@ import type { SubagentRegistry } from '../agent/subagent-registry.js';
 import { resolveUser, autoIdentifyUser, deriveChannelAllowlist } from '../users/user-resolver.js';
 import { handleProviderCommand, type PinnableRegistry } from './provider-command.js';
 import { formatTelegramHelp } from './telegram-help.js';
+import { parseLifecycleCommand } from './lifecycle-command.js';
+import { spawnRestartWorker } from '../utils/respawn.js';
 import type { InviteStore } from '../invites/invite-store.js';
 import { saveConfig } from '../config/config.js';
 import { ensureUserDir, ensureChatDir } from '../users/user-resolver.js';
@@ -307,6 +309,34 @@ export class TelegramChannel {
       // Operator commands live behind the allowlist: they change behaviour for
       // every chat on this instance, so a stranger messaging the bot must not
       // reach them. Any configured user may use them.
+      // /restart, /shutdown now — take Janus down (and bring it back) from chat
+      const lifecycle = parseLifecycleCommand(ctx.message?.text ?? '');
+      if (lifecycle) {
+        if (lifecycle.action === 'shutdown-unconfirmed') {
+          await ctx.reply('To wyłączy Janusa dla wszystkich i podnieść go można tylko z serwera. Jeśli na pewno: /shutdown now');
+          return;
+        }
+
+        const restarting = lifecycle.action === 'restart';
+        await ctx.reply(restarting ? 'Restartuję się — wrócę za chwilę.' : 'Wyłączam się. Do zobaczenia.');
+
+        // Flush first: whatever happens next, the conversation must survive it.
+        await opts?.agent?.flushAllSessions().catch(err => {
+          log.warn(`Telegram: flush before ${lifecycle.action} failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+
+        if (restarting) {
+          const started = await spawnRestartWorker();
+          if (!started) {
+            await ctx.reply('Nie udało się uruchomić procesu restartującego — zostaję na bieżącej instancji.');
+            return;
+          }
+        }
+
+        setTimeout(() => process.exit(0), 500);
+        return;
+      }
+
       // /help — the built-in commands (the CLI has had this from the start)
       if (ctx.message?.text?.trim().toLowerCase() === '/help') {
         await ctx.reply(formatTelegramHelp());

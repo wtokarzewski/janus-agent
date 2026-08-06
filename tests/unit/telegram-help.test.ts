@@ -14,7 +14,7 @@ describe('formatTelegramHelp', () => {
   it('documents the commands the channel actually handles', () => {
     const names = TELEGRAM_COMMANDS.map(c => c.name);
 
-    expect(names).toEqual(['/help', '/provider', '/model', '/stop', '/whoami']);
+    expect(names).toEqual(['/help', '/provider', '/model', '/stop', '/restart', '/shutdown now', '/whoami']);
   });
 
   it('says the rest is a normal conversation', () => {
