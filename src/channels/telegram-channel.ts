@@ -7,6 +7,7 @@ import type { AgentLoop } from '../agent/agent-loop.js';
 import type { SubagentRegistry } from '../agent/subagent-registry.js';
 import { resolveUser, autoIdentifyUser, deriveChannelAllowlist } from '../users/user-resolver.js';
 import { handleProviderCommand, type PinnableRegistry } from './provider-command.js';
+import { formatTelegramHelp } from './telegram-help.js';
 import type { InviteStore } from '../invites/invite-store.js';
 import { saveConfig } from '../config/config.js';
 import { ensureUserDir, ensureChatDir } from '../users/user-resolver.js';
@@ -306,6 +307,12 @@ export class TelegramChannel {
       // Operator commands live behind the allowlist: they change behaviour for
       // every chat on this instance, so a stranger messaging the bot must not
       // reach them. Any configured user may use them.
+      // /help — the built-in commands (the CLI has had this from the start)
+      if (ctx.message?.text?.trim().toLowerCase() === '/help') {
+        await ctx.reply(formatTelegramHelp());
+        return;
+      }
+
       // /provider [0-N|name|auto] — show or switch the active LLM provider.
       // One registry per gateway process, so this switches for every chat.
       const providerMatch = ctx.message?.text?.trim().match(/^\/provider(?:\s+(.+))?$/i);

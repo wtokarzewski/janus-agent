@@ -20,6 +20,7 @@ import { deriveChannelAllowlist } from '../users/user-resolver.js';
 import { acquireInstanceLock, releaseInstanceLock } from '../utils/instance-lock.js';
 import { withTimeout } from '../utils/with-timeout.js';
 import { buildUpdateStamp, formatCommitList } from '../utils/update-stamp.js';
+import { autoUpdateDisabled } from '../utils/auto-update-switch.js';
 import { resolveUserTargets } from '../utils/notify-owner.js';
 import * as log from '../utils/logger.js';
 
@@ -170,7 +171,9 @@ export async function runGateway(opts?: { tokenDebug?: boolean }): Promise<void>
   }
 
   // Register auto-update check cron (if enabled in config)
-  if (app.cronService && config.autoUpdate.enabled) {
+  if (app.cronService && config.autoUpdate.enabled && autoUpdateDisabled(process.env)) {
+    log.warn('Gateway: auto-update check skipped — JANUS_NO_AUTO_UPDATE is set. Updates from chat still work.');
+  } else if (app.cronService && config.autoUpdate.enabled) {
     app.cronService.upsertByName({
       name: 'self_update:check',
       scheduleKind: 'cron',
