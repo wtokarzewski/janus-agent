@@ -10,6 +10,7 @@
 
 import { spawn } from 'node:child_process';
 import * as log from './logger.js';
+import { encodeRestartArgv } from './restart-argv.js';
 
 /** Flags that describe *this* invocation and cannot be replayed as a restart. */
 const NOT_REPLAYABLE = ['--eval', '-e', '--print', '-p'];
@@ -40,6 +41,22 @@ export interface ProcessSnapshot {
 }
 
 export function buildRespawnCommand(proc: ProcessSnapshot): { command: string; args: string[] } {
+  return { command: proc.execPath, args: [...replayableFlags(proc), ...proc.argv.slice(1)] };
+}
+
+/**
+ * Same runtime, same entry script, different subcommand — for starting a
+ * sibling process (the update worker) rather than a copy of this one.
+ */
+export function buildWorkerCommand(proc: ProcessSnapshot, workerArgs: string[]): { command: string; args: string[] } {
+  const entry = proc.argv[1];
+  return {
+    command: proc.execPath,
+    args: [...replayableFlags(proc), ...(entry ? [entry] : []), ...workerArgs],
+  };
+}
+
+function replayableFlags(proc: ProcessSnapshot): string[] {
   const flags: string[] = [];
   for (let i = 0; i < proc.execArgv.length; i++) {
     const flag = proc.execArgv[i];
@@ -50,8 +67,19 @@ export function buildRespawnCommand(proc: ProcessSnapshot): { command: string; a
     if (NOT_REPLAYABLE.some(f => flag.startsWith(`${f}=`))) continue;
     flags.push(flag);
   }
+  return flags;
+}
 
-  return { command: proc.execPath, args: [...flags, ...proc.argv.slice(1)] };
+/**
+ * Hand the update over to a detached worker: spawn it, give it a moment to
+ * prove it started, and only then let the caller exit. Unlike a self-respawn
+ * this child is not the successor — it is an independent process that will
+ * start the successor once the code is swapped, so it cannot die with us.
+ */
+export function spawnUpdateWorker(graceMs = 3000): Promise<boolean> {
+  const { command, args } = buildWorkerCommand(process, ['update-worker']);
+  const { key, value } = encodeRestartArgv(process.argv.slice(2));
+  return spawnDetachedAndConfirm(command, args, graceMs, 'update worker', { [key]: value });
 }
 
 /**
@@ -61,7 +89,16 @@ export function buildRespawnCommand(proc: ProcessSnapshot): { command: string; a
  */
 export function respawnSelf(graceMs = 3000): Promise<boolean> {
   const { command, args } = buildRespawnCommand(process);
+  return spawnDetachedAndConfirm(command, args, graceMs, 'replacement');
+}
 
+function spawnDetachedAndConfirm(
+  command: string,
+  args: string[],
+  graceMs: number,
+  what: string,
+  extraEnv?: Record<string, string>,
+): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     const done = (ok: boolean) => {
@@ -73,16 +110,16 @@ export function respawnSelf(graceMs = 3000): Promise<boolean> {
     try {
       const child = spawn(command, args, {
         cwd: process.cwd(),
-        env: process.env,
+        env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
         ...buildRespawnOptions(process.platform),
       });
 
       child.on('error', (err) => {
-        log.error(`self_update: respawn failed to start: ${err.message}`);
+        log.error(`self_update: ${what} failed to start: ${err.message}`);
         done(false);
       });
       child.on('exit', (code, signal) => {
-        log.error(`self_update: respawned process died immediately (code=${code}, signal=${signal})`);
+        log.error(`self_update: ${what} died immediately (code=${code}, signal=${signal})`);
         done(false);
       });
 
@@ -93,7 +130,7 @@ export function respawnSelf(graceMs = 3000): Promise<boolean> {
         done(true);
       }, graceMs).unref();
     } catch (err) {
-      log.error(`self_update: respawn failed: ${err instanceof Error ? err.message : String(err)}`);
+      log.error(`self_update: ${what} failed: ${err instanceof Error ? err.message : String(err)}`);
       done(false);
     }
   });

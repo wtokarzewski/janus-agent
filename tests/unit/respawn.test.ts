@@ -63,3 +63,20 @@ describe('buildRespawnOptions', () => {
     expect(opts.stdio).toBe('inherit');
   });
 });
+
+describe('buildWorkerCommand', () => {
+  it('keeps the runtime flags and entry script, swapping the subcommand', async () => {
+    const { buildWorkerCommand } = await import('../../src/utils/respawn.js');
+
+    const cmd = buildWorkerCommand({
+      execPath: '/usr/bin/node',
+      execArgv: ['--import', 'file:///app/node_modules/tsx/dist/loader.mjs'],
+      argv: ['/usr/bin/node', '/app/src/index.ts', 'gateway', '--token-debug'],
+    }, ['update-worker']);
+
+    expect(cmd).toEqual({
+      command: '/usr/bin/node',
+      args: ['--import', 'file:///app/node_modules/tsx/dist/loader.mjs', '/app/src/index.ts', 'update-worker'],
+    });
+  });
+});
