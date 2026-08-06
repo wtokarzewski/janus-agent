@@ -26,3 +26,16 @@ export function restartArgvFromEnv(env: Record<string, string | undefined>): str
   }
   return ['gateway'];
 }
+
+/** What the worker was started for. */
+export type WorkerMode = 'update' | 'restart';
+
+const MODE_KEY = 'JANUS_WORKER_MODE';
+
+export function encodeWorkerMode(mode: WorkerMode): { key: string; value: string } {
+  return { key: MODE_KEY, value: mode };
+}
+
+export function workerModeFromEnv(env: Record<string, string | undefined>): WorkerMode {
+  return env[MODE_KEY] === 'restart' ? 'restart' : 'update';
+}
