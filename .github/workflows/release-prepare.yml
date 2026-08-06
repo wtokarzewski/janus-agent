@@ -1,0 +1,80 @@
+# Stage 1 of a release: open a pull request with the version bump.
+#
+# The previous single-job workflow pushed the bump straight to main, which the
+# "Protect main" ruleset rejects for everyone including github-actions[bot], so
+# every release failed at the last step. Releases now go through a PR like any
+# other change; release-publish.yml takes over once it merges.
+name: Release (prepare)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npx vitest run --no-file-parallelism
+
+      - name: Check CHANGELOG has Unreleased content
+        run: |
+          if ! grep -q '## \[Unreleased\]' CHANGELOG.md; then
+            echo "ERROR: CHANGELOG.md missing [Unreleased] section"
+            exit 1
+          fi
+
+      - name: Bump version
+        id: bump
+        run: |
+          npm version ${{ inputs.bump_type }} --no-git-tag-version
+          echo "new=$(node -e "console.log(require('./package.json').version)")" >> "$GITHUB_OUTPUT"
+
+      - name: Date the CHANGELOG section
+        run: |
+          sed -i "s/## \[Unreleased\]/## [Unreleased]\n\n## [${{ steps.bump.outputs.new }}] - $(date +%Y-%m-%d)/" CHANGELOG.md
+
+      - name: Open the release pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${{ steps.bump.outputs.new }}
+          BRANCH="chore/release-v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add package.json package-lock.json CHANGELOG.md
+          git commit -m "chore: release v${VERSION}"
+          git push origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore: release v${VERSION}" \
+            --body "Version bump and CHANGELOG date for v${VERSION}, prepared by the release workflow.
+
+          Merging this publishes the release: the tag, the tarball and the GitHub release are created by \`release-publish.yml\` once \`package.json\` lands on main."
