@@ -15,7 +15,7 @@ import { spawn } from 'node:child_process';
 import * as log from '../utils/logger.js';
 import { waitForGatewayExit } from '../utils/gateway-exit.js';
 import { buildRespawnCommand, buildRespawnOptions } from '../utils/respawn.js';
-import { restartArgvFromEnv } from '../utils/restart-argv.js';
+import { restartArgvFromEnv, workerModeFromEnv } from '../utils/restart-argv.js';
 
 /** How long to let the old gateway finish flushing before touching its files. */
 const GATEWAY_EXIT_TIMEOUT_MS = 60_000;
@@ -29,6 +29,14 @@ export async function runUpdateWorker(opts: { workspaceDir?: string } = {}): Pro
     // Updating underneath a live gateway risks half-loaded modules; the running
     // instance is healthier than a broken one, so leave it alone.
     log.error('update-worker: gateway is still running after 60s — aborting the update, nothing was changed.');
+    return;
+  }
+
+  const mode = workerModeFromEnv(process.env);
+  if (mode === 'restart') {
+    // A plain restart from chat: same handover, no code changes.
+    log.info('update-worker: restart requested — skipping the update');
+    startGateway();
     return;
   }
 

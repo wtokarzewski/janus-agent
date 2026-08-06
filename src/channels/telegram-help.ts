@@ -16,6 +16,8 @@ export const TELEGRAM_COMMANDS: TelegramCommand[] = [
   { name: '/provider', description: 'pokaż lub przełącz providera LLM (0 = automatyczny)' },
   { name: '/model', description: 'pokaż lub zmień model (wymaga restartu)' },
   { name: '/stop', description: 'przerwij to, co Janus właśnie robi' },
+  { name: '/restart', description: 'zrestartuj Janusa (wraca sam)' },
+  { name: '/shutdown now', description: 'wyłącz Janusa — podnieść można go tylko z serwera' },
   { name: '/whoami', description: 'twoje ID czatu i użytkownika — do konfiguracji' },
 ];
 

@@ -21,3 +21,20 @@ describe('restart argv round-trip', () => {
     expect(restartArgvFromEnv({ JANUS_RESTART_ARGV: '[1,2]' })).toEqual(['gateway']);
   });
 });
+
+describe('worker mode', () => {
+  it('updates by default', async () => {
+    const { workerModeFromEnv } = await import('../../src/utils/restart-argv.js');
+    expect(workerModeFromEnv({})).toBe('update');
+  });
+
+  it('restarts without updating when asked', async () => {
+    const { workerModeFromEnv } = await import('../../src/utils/restart-argv.js');
+    expect(workerModeFromEnv({ JANUS_WORKER_MODE: 'restart' })).toBe('restart');
+  });
+
+  it('falls back to updating on an unknown mode', async () => {
+    const { workerModeFromEnv } = await import('../../src/utils/restart-argv.js');
+    expect(workerModeFromEnv({ JANUS_WORKER_MODE: 'nonsense' })).toBe('update');
+  });
+});
