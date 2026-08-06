@@ -10,6 +10,7 @@ import { handleProviderCommand, type PinnableRegistry } from './provider-command
 import { formatTelegramHelp } from './telegram-help.js';
 import { parseLifecycleCommand } from './lifecycle-command.js';
 import { spawnRestartWorker } from '../utils/respawn.js';
+import { releaseInstanceLock } from '../utils/instance-lock.js';
 import type { InviteStore } from '../invites/invite-store.js';
 import { saveConfig } from '../config/config.js';
 import { ensureUserDir, ensureChatDir } from '../users/user-resolver.js';
@@ -333,6 +334,9 @@ export class TelegramChannel {
           }
         }
 
+        // Hand the lock back before going: leaving it behind makes the next
+        // start log a stale-lock takeover for no reason.
+        await releaseInstanceLock(config.workspace.dir).catch(() => {});
         setTimeout(() => process.exit(0), 500);
         return;
       }
