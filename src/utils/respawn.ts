@@ -10,6 +10,7 @@
 
 import { spawn } from 'node:child_process';
 import * as log from './logger.js';
+import { encodeRestartArgv } from './restart-argv.js';
 
 /** Flags that describe *this* invocation and cannot be replayed as a restart. */
 const NOT_REPLAYABLE = ['--eval', '-e', '--print', '-p'];
@@ -77,7 +78,8 @@ function replayableFlags(proc: ProcessSnapshot): string[] {
  */
 export function spawnUpdateWorker(graceMs = 3000): Promise<boolean> {
   const { command, args } = buildWorkerCommand(process, ['update-worker']);
-  return spawnDetachedAndConfirm(command, args, graceMs, 'update worker');
+  const { key, value } = encodeRestartArgv(process.argv.slice(2));
+  return spawnDetachedAndConfirm(command, args, graceMs, 'update worker', { [key]: value });
 }
 
 /**
@@ -95,6 +97,7 @@ function spawnDetachedAndConfirm(
   args: string[],
   graceMs: number,
   what: string,
+  extraEnv?: Record<string, string>,
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
@@ -107,7 +110,7 @@ function spawnDetachedAndConfirm(
     try {
       const child = spawn(command, args, {
         cwd: process.cwd(),
-        env: process.env,
+        env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
         ...buildRespawnOptions(process.platform),
       });
 

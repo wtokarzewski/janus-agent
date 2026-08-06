@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process';
 import * as log from '../utils/logger.js';
 import { waitForGatewayExit } from '../utils/gateway-exit.js';
 import { buildRespawnCommand, buildRespawnOptions } from '../utils/respawn.js';
+import { restartArgvFromEnv } from '../utils/restart-argv.js';
 
 /** How long to let the old gateway finish flushing before touching its files. */
 const GATEWAY_EXIT_TIMEOUT_MS = 60_000;
@@ -44,14 +45,17 @@ export async function runUpdateWorker(opts: { workspaceDir?: string } = {}): Pro
 
 /** Start a gateway and let it outlive this worker. */
 function startGateway(): void {
+  // Replay how the gateway was actually started — `gateway --token-debug` must
+  // come back with its flags, not as a bare default.
+  const gatewayArgv = restartArgvFromEnv(process.env);
   const { command, args } = buildRespawnCommand({
     execPath: process.execPath,
     execArgv: process.execArgv,
-    // argv[1] is this same entry script; replace the worker subcommand.
-    argv: [process.execPath, process.argv[1], 'gateway'],
+    // argv[1] is this same entry script; the worker subcommand is replaced.
+    argv: [process.execPath, process.argv[1], ...gatewayArgv],
   });
 
-  log.info('update-worker: starting the gateway');
+  log.info(`update-worker: starting the gateway (${gatewayArgv.join(' ')})`);
   const child = spawn(command, args, {
     cwd: process.cwd(),
     env: process.env,
