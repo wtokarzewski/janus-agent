@@ -6,6 +6,7 @@ import type { Tool } from '../types.js';
 import * as log from '../../utils/logger.js';
 import { classifyTestRun } from '../../utils/test-run-outcome.js';
 import { respawnSelf, spawnUpdateWorker } from '../../utils/respawn.js';
+import { releaseInstanceLock } from '../../utils/instance-lock.js';
 
 const IS_WIN = process.platform === 'win32';
 const execAsync = promisify(execFile);
@@ -176,6 +177,7 @@ export class SelfUpdateTool implements Tool {
 
       if (this.restartMode === 'exit') {
         log.info('self_update: exiting for the service manager to restart (autoUpdate.restartMode="exit")');
+        await releaseInstanceLock(this.workspaceDir).catch(() => {});
         setTimeout(() => process.exit(0), 500);
       } else {
         log.info('self_update: respawning...');
@@ -220,6 +222,9 @@ export class SelfUpdateTool implements Tool {
       }
 
       log.info('self_update: updater running, exiting so it can swap the code');
+      // Release the lock so the worker sees a clean exit rather than a stale
+      // holder, and the new gateway starts without a takeover warning.
+      await releaseInstanceLock(this.workspaceDir).catch(() => {});
       setTimeout(() => process.exit(0), 500);
 
       return `Updating now — Janus will restart on its own and report when it is back.\n${subjects.trim()}`;
@@ -298,6 +303,7 @@ export class SelfUpdateTool implements Tool {
 
       if (this.restartMode === 'exit') {
         log.info('self_update: exiting for the service manager to restart (autoUpdate.restartMode="exit")');
+        await releaseInstanceLock(this.workspaceDir).catch(() => {});
         setTimeout(() => process.exit(0), 500);
       } else {
         log.info('self_update: respawning...');
