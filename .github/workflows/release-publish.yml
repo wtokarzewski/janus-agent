@@ -1,0 +1,88 @@
+# Stage 2 of a release: tag and publish once the bump is on main.
+#
+# Runs on every push that touches package.json and does nothing unless that
+# version has no tag yet, so ordinary dependency changes are ignored.
+name: Release (publish)
+
+on:
+  push:
+    branches: [main]
+    paths: ['package.json']
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Is this version already released?
+        id: check
+        run: |
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "v${VERSION} is already tagged — nothing to do."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v5
+        if: steps.check.outputs.publish == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+        if: steps.check.outputs.publish == 'true'
+
+      - name: Extract release notes
+        if: steps.check.outputs.publish == 'true'
+        run: |
+          VERSION=${{ steps.check.outputs.version }}
+          sed -n "/^## \[$VERSION\]/,/^## \[/{/^## \[/!p}" CHANGELOG.md > /tmp/release-notes.md
+
+      - name: Build release tarball
+        if: steps.check.outputs.publish == 'true'
+        run: |
+          PREFIX="janus-v${{ steps.check.outputs.version }}"
+          tar czf "/tmp/${PREFIX}.tar.gz" \
+            --transform "s,^,${PREFIX}/," \
+            --exclude='node_modules' \
+            --exclude='tests' \
+            --exclude='docs' \
+            --exclude='.github' \
+            --exclude='.git' \
+            --exclude='.janus' \
+            --exclude='.claude' \
+            --exclude='scripts' \
+            --exclude='Dockerfile' \
+            --exclude='docker-compose.yml' \
+            --exclude='.dockerignore' \
+            --exclude='CODING.md' \
+            --exclude='CLAUDE.md' \
+            src/ skills/ \
+            package.json package-lock.json tsconfig.json \
+            CHANGELOG.md README.md FEATURES.md AGENTS.md \
+            janus.example.json
+
+      - name: Tag and create the GitHub Release
+        if: steps.check.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${{ steps.check.outputs.version }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes-file /tmp/release-notes.md \
+            "/tmp/janus-v${VERSION}.tar.gz"
