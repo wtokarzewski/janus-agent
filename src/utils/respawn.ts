@@ -14,6 +14,25 @@ import * as log from './logger.js';
 /** Flags that describe *this* invocation and cannot be replayed as a restart. */
 const NOT_REPLAYABLE = ['--eval', '-e', '--print', '-p'];
 
+/**
+ * Spawn options for the replacement process.
+ *
+ * On Windows the child must leave the console behind: the chain is
+ * PowerShell → npm → node → child, and npm tears down its process tree when
+ * the parent exits, so a child sharing that console dies with it — which is
+ * exactly what happened after the grace period reported success. Detaching it
+ * costs the inherited stdout, which the file log already covers.
+ */
+export function buildRespawnOptions(platform: NodeJS.Platform): {
+  detached: boolean;
+  stdio: 'ignore' | 'inherit';
+  windowsHide?: boolean;
+} {
+  return platform === 'win32'
+    ? { detached: true, stdio: 'ignore', windowsHide: true }
+    : { detached: true, stdio: 'inherit' };
+}
+
 export interface ProcessSnapshot {
   execPath: string;
   execArgv: string[];
@@ -54,9 +73,8 @@ export function respawnSelf(graceMs = 3000): Promise<boolean> {
     try {
       const child = spawn(command, args, {
         cwd: process.cwd(),
-        detached: process.platform !== 'win32',
-        stdio: 'inherit',
         env: process.env,
+        ...buildRespawnOptions(process.platform),
       });
 
       child.on('error', (err) => {

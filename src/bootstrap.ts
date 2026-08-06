@@ -258,6 +258,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   tools.register(new SelfUpdateTool({
     workspaceDir: config.workspace.dir,
     onBeforeRestart: () => agent.flushAllSessions(),
+    restartMode: config.autoUpdate.restartMode,
   }));
 
   // Proactive OAuth token refresh (OD-C): check every 30 min, refresh tokens expiring within 1 hour

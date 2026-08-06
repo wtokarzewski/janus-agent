@@ -195,6 +195,14 @@ const HeartbeatSchema = z.object({
 const AutoUpdateSchema = z.object({
   enabled: z.boolean().default(false),
   schedule: z.string().default('0 9 * * 1'),
+  /**
+   * How `self_update` hands over after installing.
+   * `respawn` starts a replacement itself (default, works without any external
+   * supervision). `exit` just stops the process — correct when Janus runs under
+   * a service manager (systemd, NSSM, Docker restart policy), which restarts it
+   * far more reliably than a dying process can start its own successor.
+   */
+  restartMode: z.enum(['respawn', 'exit']).default('respawn'),
 });
 
 const TelegramSchema = z.object({

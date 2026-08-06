@@ -17,6 +17,8 @@ const MAX_OUTPUT = 32 * 1024 * 1024;
 export interface SelfUpdateOpts {
   workspaceDir: string;
   onBeforeRestart?: () => Promise<void>;
+  /** `exit` leaves the restart to a service manager. See AutoUpdateSchema. */
+  restartMode?: 'respawn' | 'exit';
 }
 
 /**
@@ -60,10 +62,12 @@ export class SelfUpdateTool implements Tool {
 
   private workspaceDir: string;
   private onBeforeRestart?: () => Promise<void>;
+  private restartMode: 'respawn' | 'exit';
 
   constructor(opts: SelfUpdateOpts) {
     this.workspaceDir = opts.workspaceDir;
     this.onBeforeRestart = opts.onBeforeRestart;
+    this.restartMode = opts.restartMode ?? 'respawn';
   }
 
   async execute(args: Record<string, unknown>): Promise<string> {
@@ -165,15 +169,20 @@ export class SelfUpdateTool implements Tool {
         log.warn(`self_update: failed to write update marker: ${err instanceof Error ? err.message : String(err)}`);
       }
 
-      log.info('self_update: respawning...');
-      // Hand over to a fresh process; stay alive on the old code if it dies,
-      // because nothing else would bring Janus back up.
-      setTimeout(() => {
-        void respawnSelf().then((started) => {
-          if (started) process.exit(0);
-          log.error('self_update: staying on the running (now outdated) process — restart Janus by hand.');
-        });
-      }, 500);
+      if (this.restartMode === 'exit') {
+        log.info('self_update: exiting for the service manager to restart (autoUpdate.restartMode="exit")');
+        setTimeout(() => process.exit(0), 500);
+      } else {
+        log.info('self_update: respawning...');
+        // Hand over to a fresh process; stay alive on the old code if it dies,
+        // because nothing else would bring Janus back up.
+        setTimeout(() => {
+          void respawnSelf().then((started) => {
+            if (started) process.exit(0);
+            log.error('self_update: staying on the running (now outdated) process — restart Janus by hand.');
+          });
+        }, 500);
+      }
 
       return `Updated successfully.\n${summary}\nRestarting...`;
     } catch (err) {
@@ -249,15 +258,20 @@ export class SelfUpdateTool implements Tool {
         });
       }
 
-      log.info('self_update: respawning...');
-      // Hand over to a fresh process; stay alive on the old code if it dies,
-      // because nothing else would bring Janus back up.
-      setTimeout(() => {
-        void respawnSelf().then((started) => {
-          if (started) process.exit(0);
-          log.error('self_update: staying on the running (now outdated) process — restart Janus by hand.');
-        });
-      }, 500);
+      if (this.restartMode === 'exit') {
+        log.info('self_update: exiting for the service manager to restart (autoUpdate.restartMode="exit")');
+        setTimeout(() => process.exit(0), 500);
+      } else {
+        log.info('self_update: respawning...');
+        // Hand over to a fresh process; stay alive on the old code if it dies,
+        // because nothing else would bring Janus back up.
+        setTimeout(() => {
+          void respawnSelf().then((started) => {
+            if (started) process.exit(0);
+            log.error('self_update: staying on the running (now outdated) process — restart Janus by hand.');
+          });
+        }, 500);
+      }
 
       return `Updated from v${CURRENT_VERSION} to v${release.version}. Restarting...`;
     } catch (err) {
