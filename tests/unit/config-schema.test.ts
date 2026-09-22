@@ -46,12 +46,12 @@ describe('JanusConfigSchema', () => {
 
   it('should accept custom values', () => {
     const config = JanusConfigSchema.parse({
-      llm: { model: 'gpt-5.6-terra', maxTokens: 8192 },
+      llm: { model: 'gpt-6-sol', maxTokens: 8192 },
       agent: { contextWindow: 500_000 },
       database: { enabled: false, path: '/tmp/test.db' },
     });
 
-    expect(config.llm.model).toBe('gpt-5.6-terra');
+    expect(config.llm.model).toBe('gpt-6-sol');
     expect(config.llm.maxTokens).toBe(8192);
     expect(config.agent.contextWindow).toBe(500_000);
     expect(config.database.enabled).toBe(false);

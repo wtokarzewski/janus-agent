@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import type { LLMProvider, ChatRequest, ChatResponse, ToolCall, StreamCallback, LLMMessage } from './types.js';
-import { AnthropicProvider } from './anthropic-provider.js';
+import { AnthropicProvider, CLAUDE_CLI_USER_AGENT } from './anthropic-provider.js';
 import * as log from '../utils/logger.js';
 
 /** Convert multimodal content blocks to OpenAI-compatible format. */
@@ -287,7 +287,7 @@ export async function createProvider(opts: {
       apiBase: opts.apiBase,
       defaultHeaders: {
         'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
-        'user-agent': 'claude-cli/2.1.195',
+        'user-agent': CLAUDE_CLI_USER_AGENT,
         'x-app': 'cli',
       },
       tokenStore: opts.tokenStore,
