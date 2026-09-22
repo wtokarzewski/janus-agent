@@ -7,6 +7,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **New models** — Opus 5.5 and Fable 5.1 (`opus`/`fable` aliases now point at them, pins `opus-5-5`/`fable-5-1`); the GPT-6 family replaces GPT-5.6 in the Codex menu and fallback list, with Sol as the default (Astra flagship, Luna cheapest). `@openai/codex-sdk` 0.104 → 0.155, since GPT-6 Astra needs Codex CLI 0.153+
+
+### Changed
+- Subscription (OAuth) requests identify as `claude-cli/2.1.280` (was 2.1.195), now kept in one constant
+
 ## [0.15.0] - 2026-08-05
 
 ### Added

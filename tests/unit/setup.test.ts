@@ -167,7 +167,7 @@ describe('Setup Wizard', () => {
       llm: {
         providers: { openai: { priority: 0 } },
         slots: {
-          default: { openai: 'gpt-5.6-terra' },
+          default: { openai: 'gpt-6-sol' },
           background: null,
         },
       },
