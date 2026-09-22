@@ -6,7 +6,7 @@ function registry(entries?: { providerName: string; model: string; priority: num
     pinned: undefined as string | undefined,
     entries: entries ?? [
       { providerName: 'anthropic', model: 'claude-sonnet-5', priority: 0, demoted: false },
-      { providerName: 'codex', model: 'gpt-5.6-terra', priority: 1, demoted: false },
+      { providerName: 'codex', model: 'gpt-6-sol', priority: 1, demoted: false },
     ],
   };
   return {
@@ -27,7 +27,7 @@ describe('handleProviderCommand', () => {
     const reply = handleProviderCommand(registry(), undefined);
 
     expect(reply).toContain('1. anthropic — claude-sonnet-5 — default (current)');
-    expect(reply).toContain('2. codex — gpt-5.6-terra — fallback');
+    expect(reply).toContain('2. codex — gpt-6-sol — fallback');
   });
 
   it('switches by the number from that list', () => {
@@ -37,7 +37,7 @@ describe('handleProviderCommand', () => {
 
     expect(reg.getPinned()).toBe('codex');
     expect(reply).toContain('codex');
-    expect(reply).toContain('2. codex — gpt-5.6-terra — fallback (current, pinned)');
+    expect(reply).toContain('2. codex — gpt-6-sol — fallback (current, pinned)');
   });
 
   it('still accepts the provider name', () => {
@@ -87,11 +87,11 @@ describe('handleProviderCommand', () => {
     // With the primary demoted, traffic really is on the fallback — say so.
     const reply = handleProviderCommand(registry([
       { providerName: 'anthropic', model: 'claude-sonnet-5', priority: 0, demoted: true },
-      { providerName: 'codex', model: 'gpt-5.6-terra', priority: 1 },
+      { providerName: 'codex', model: 'gpt-6-sol', priority: 1 },
     ]), undefined);
 
     expect(reply).toContain('1. anthropic — claude-sonnet-5 — default (cooling down after failures)');
-    expect(reply).toContain('2. codex — gpt-5.6-terra — fallback (current)');
+    expect(reply).toContain('2. codex — gpt-6-sol — fallback (current)');
   });
 
   it('says a switch is not written to config', () => {

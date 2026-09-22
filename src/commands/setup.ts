@@ -210,7 +210,7 @@ async function setupApiKey(rl: ReadlineIO): Promise<ProviderSetupResult> {
   const providerMap: Record<string, { name: string; defaultModel: string }> = {
     '1': { name: 'openrouter', defaultModel: 'anthropic/claude-sonnet-5' },
     '2': { name: 'anthropic', defaultModel: 'claude-sonnet-5' },
-    '3': { name: 'openai', defaultModel: 'gpt-5.6-terra' },
+    '3': { name: 'openai', defaultModel: 'gpt-6-sol' },
     '4': { name: 'deepseek', defaultModel: 'deepseek-chat' },
     '5': { name: 'groq', defaultModel: 'llama-3.3-70b-versatile' },
   };
@@ -304,17 +304,17 @@ async function setupClaudeAgent(rl: ReadlineIO): Promise<ProviderSetupResult> {
 
   // CLI subscription uses short names
   console.log('\n  Model?');
-  console.log('  1. sonnet (recommended)');
-  console.log('  2. opus');
-  console.log('  3. haiku');
-  console.log('  4. fable\n');
+  console.log('  1. sonnet 5 (recommended)');
+  console.log('  2. opus 5.5');
+  console.log('  3. haiku 4.5');
+  console.log('  4. fable 5.1\n');
 
   const modelChoice = await askChoice(rl, '  Select [1-4]: ', ['1', '2', '3', '4']);
   const modelMap: Record<string, string> = {
     '1': 'claude-sonnet-5',
-    '2': 'claude-opus-5',
+    '2': 'claude-opus-5-5',
     '3': 'claude-haiku-4-5-20251001',
-    '4': 'claude-fable-5',
+    '4': 'claude-fable-5-1',
   };
   const model = modelMap[modelChoice];
 
@@ -342,17 +342,15 @@ async function setupCodex(rl: ReadlineIO): Promise<ProviderSetupResult> {
 
   // Codex CLI uses specific model names
   console.log('\n  Model?');
-  console.log('  1. gpt-5.6-terra (recommended — balanced)');
-  console.log('  2. gpt-5.6-sol (flagship, most expensive)');
-  console.log('  3. gpt-5.6-luna (fast, cheapest)');
-  console.log('  4. gpt-5.5\n');
+  console.log('  1. gpt-6-sol (recommended — coding and agentic work)');
+  console.log('  2. gpt-6-astra (flagship, most expensive)');
+  console.log('  3. gpt-6-luna (fast, cheapest)\n');
 
-  const modelChoice = await askChoice(rl, '  Select [1-4]: ', ['1', '2', '3', '4']);
+  const modelChoice = await askChoice(rl, '  Select [1-3]: ', ['1', '2', '3']);
   const modelMap: Record<string, string> = {
-    '1': 'gpt-5.6-terra',
-    '2': 'gpt-5.6-sol',
-    '3': 'gpt-5.6-luna',
-    '4': 'gpt-5.5',
+    '1': 'gpt-6-sol',
+    '2': 'gpt-6-astra',
+    '3': 'gpt-6-luna',
   };
   const model = modelMap[modelChoice];
 
@@ -401,16 +399,15 @@ async function setupCodexOAuth(rl: ReadlineIO): Promise<ProviderSetupResult> {
     // token stays empty, will fall back to curated list
   }
 
-  const model = await pickModelFromApi(rl, 'codex', token, false, 'gpt-5.6-terra', accountId);
+  const model = await pickModelFromApi(rl, 'codex', token, false, 'gpt-6-sol', accountId);
   return { provider: 'codex', auth: 'oauth', model };
 }
 
 /** Curated fallback models for Codex OAuth when API fetch fails. */
 const CODEX_FALLBACK_MODELS: { id: string; name: string }[] = [
-  { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra (balanced)' },
-  { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol (flagship)' },
-  { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna (fast)' },
-  { id: 'gpt-5.5', name: 'GPT-5.5' },
+  { id: 'gpt-6-sol', name: 'GPT-6 Sol (coding and agentic work)' },
+  { id: 'gpt-6-astra', name: 'GPT-6 Astra (flagship)' },
+  { id: 'gpt-6-luna', name: 'GPT-6 Luna (fast)' },
 ];
 
 /**

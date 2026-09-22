@@ -5,6 +5,12 @@ import { getAnthropicToken } from '../auth/anthropic-oauth.js';
 import * as log from '../utils/logger.js';
 
 /**
+ * Client identity sent with subscription (OAuth) requests. Must track a
+ * current Claude Code release — bump it together with new model support.
+ */
+export const CLAUDE_CLI_USER_AGENT = 'claude-cli/2.1.280';
+
+/**
  * Apply prompt cache marker to last tool definition.
  * Single marker conserves Anthropic's 4-breakpoint budget
  * (system + tool + penultimate msg + last msg).
@@ -42,8 +48,8 @@ export function trimLastAssistantWhitespace(messages: Anthropic.MessageParam[]):
 /**
  * Sampling params (`temperature`, `top_p`, `top_k`) are removed on the newest
  * Claude models and return a 400 if sent. Matches the model families that reject
- * them: Opus 4.7/4.8, Sonnet 5, Fable 5, Mythos. Structural prefix check so future
- * point releases in these families are covered without another edit.
+ * them: Opus 4.7/4.8, Opus 5/5.5, Sonnet 5, Fable 5/5.1, Mythos. Structural prefix
+ * check so future point releases in these families are covered without another edit.
  * Opus 4.6 / Sonnet 4.6 and older still accept `temperature`.
  */
 export function modelRejectsSamplingParams(model: string): boolean {
@@ -108,7 +114,7 @@ export class AnthropicProvider implements LLMProvider {
       authToken: token,
       defaultHeaders: {
         'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14',
-        'user-agent': 'claude-cli/2.1.195',
+        'user-agent': CLAUDE_CLI_USER_AGENT,
         'x-app': 'cli',
       },
       maxRetries: 3,
