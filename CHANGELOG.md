@@ -14,6 +14,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - Subscription (OAuth) requests identify as `claude-cli/2.1.280` (was 2.1.195), now kept in one constant
 
+### Fixed
+- **Heartbeat schedule parsing** — `parseHeartbeatMd` now accepts an optional case-insensitive `cron ` prefix (e.g. `schedule: cron 0 7 * * *`); several users' weekly/daily tasks were written that way, following AGENTS.md's own wording ("cron expression"), and silently never ran. Unrecognized schedule formats now log at warn instead of debug, so a typo doesn't disappear silently again.
+- **stock-watcher data source** — replaced Google Finance scraping with the Yahoo Finance chart API: Google 302-redirects EU/PL IPs to a consent page, and the scraper was parsing that page into fake or empty quotes. `summarize_performance.py` now prints a stderr WARNING and exits non-zero when fetches fail, instead of failing silently; see `skills/stock-watcher/KNOWN_ISSUES.md`.
+
 ## [0.15.0] - 2026-08-05
 
 ### Added

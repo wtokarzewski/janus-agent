@@ -1,89 +1,38 @@
 #!/usr/bin/env python3
 """
 Summarize performance of all stocks in the watchlist.
-Uses Google Finance for data.
+Uses Yahoo Finance chart API for data (no consent wall, no API key needed).
 Usage: python3 summarize_performance.py --user <userId>
 """
 import argparse
 import os
 import sys
-import re
 import time
-import requests
-from bs4 import BeautifulSoup
-from config import watchlist_paths, GOOGLE_FINANCE_URL, validate_ticker
+from config import watchlist_paths, validate_ticker, fetch_yahoo_quote
 
-REQUEST_TIMEOUT = 10
-RATE_LIMIT_SECONDS = 1
+RATE_LIMIT_SECONDS = 0.3
 
 
-def guess_google_url(ticker: str) -> str:
-    """Build Google Finance URL for a ticker."""
-    if ":" in ticker:
-        symbol, exchange = ticker.split(":", 1)
-        return f"{GOOGLE_FINANCE_URL}/{symbol}:{exchange}"
-    return f"{GOOGLE_FINANCE_URL}/{ticker}:NASDAQ"
+def summarize_performance(watchlist_file: str) -> tuple[int, int]:
+    """Summarize performance of all stocks in watchlist.
 
-
-def fetch_stock_data(ticker: str) -> dict | None:
-    """Fetch stock data from Google Finance."""
-    url = guess_google_url(ticker)
-
-    try:
-        response = requests.get(url, timeout=REQUEST_TIMEOUT)
-        response.encoding = "utf-8"
-
-        if response.status_code != 200:
-            return None
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # Extract price and change from Google Finance page
-        price = None
-        change = None
-
-        # Google Finance uses specific data attributes and classes
-        # Look for price in the main price display
-        price_el = soup.find("div", class_="YMlKec fxKbKc")
-        if price_el:
-            price = price_el.get_text().strip()
-
-        # Look for change percentage
-        change_el = soup.find("div", class_="JwB6zf")
-        if change_el:
-            change = change_el.get_text().strip()
-
-        # Fallback: parse percentages from text
-        if not change:
-            text = soup.get_text()
-            pcts = re.findall(r"[-+]?\d+\.?\d*%", text)
-            if pcts:
-                change = pcts[0]
-
-        return {
-            "ticker": ticker,
-            "url": url,
-            "price": price,
-            "change": change,
-        }
-
-    except (requests.RequestException, ValueError) as e:
-        print(f"Error fetching {ticker}: {e}", file=sys.stderr)
-        return None
-
-
-def summarize_performance(watchlist_file: str) -> None:
-    """Summarize performance of all stocks in watchlist."""
+    Returns:
+        (attempted, failed) counts of valid tickers whose fetch was attempted,
+        and how many of those failed.
+    """
     if not os.path.exists(watchlist_file):
         print("Watchlist is empty.")
-        return
+        return 0, 0
 
     with open(watchlist_file, "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f if line.strip()]
 
     if not lines:
         print("Watchlist is empty.")
-        return
+        return 0, 0
+
+    attempted = 0
+    failed = 0
 
     for line in lines:
         parts = line.split("|")
@@ -97,18 +46,25 @@ def summarize_performance(watchlist_file: str) -> None:
         except ValueError:
             print(f"{ticker} ({name}): invalid ticker, skipping")
             continue
-        data = fetch_stock_data(ticker)
 
-        if data and (data["price"] or data["change"]):
-            price_str = data["price"] or "N/A"
-            change_str = data["change"] or "N/A"
+        attempted += 1
+        data = fetch_yahoo_quote(ticker)
+
+        if data:
+            currency = data["currency"] or ""
+            price_str = f"{data['price']:.2f} {currency}".strip()
+            if data["change_pct"] is not None:
+                change_str = f"{data['change_pct']:+.2f}%"
+            else:
+                change_str = "N/A"
             print(f"{ticker} ({name}): {price_str} ({change_str})")
-        elif data:
-            print(f"{ticker} ({name}): no data available")
         else:
+            failed += 1
             print(f"{ticker} ({name}): fetch failed")
 
         time.sleep(RATE_LIMIT_SECONDS)
+
+    return attempted, failed
 
 
 if __name__ == "__main__":
@@ -118,7 +74,17 @@ if __name__ == "__main__":
 
     try:
         _watchlist_dir, watchlist_file = watchlist_paths(args.user)
-        summarize_performance(watchlist_file)
+        attempted, failed = summarize_performance(watchlist_file)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if failed > 0:
+        print(
+            f"WARNING: {failed}/{attempted} tickers failed to fetch — the quote source "
+            "may be down; do not report prices for them.",
+            file=sys.stderr,
+        )
+
+    if attempted > 0 and failed == attempted:
         sys.exit(1)
