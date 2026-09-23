@@ -46,7 +46,10 @@ export class CLIChannel {
     // Register as outbound handler — dispatcher runs in index.ts
     bus.registerHandler('cli', async (msg: OutboundMessage) => {
       try {
-        if (msg.type === 'chunk') {
+        if (msg.type === 'reaction') {
+          // Reactions have no terminal equivalent — never print the bare emoji
+          return;
+        } else if (msg.type === 'chunk') {
           process.stdout.write(msg.content);
         } else if (msg.type === 'stream_end') {
           process.stdout.write('\n\n');
