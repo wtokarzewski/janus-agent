@@ -483,10 +483,15 @@ export class AgentLoop {
     const systemParts = { staticPart, dynamicPart };
     const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose, msg.lane, systemParts, pinnedPaths ?? new Set<string>());
 
-    // 6. Save final assistant message
-    await this.deps.sessions.append(sessionKey, [
-      { role: 'assistant', content: iterResult.content },
-    ]);
+    // 6. Save final assistant message — unless the turn produced no text (e.g. a
+    // reply made only with a reaction). An empty assistant message mid-history is
+    // rejected by Anthropic with 400; the history then ends with the tool result
+    // and the next user message follows it directly.
+    if (iterResult.content.trim()) {
+      await this.deps.sessions.append(sessionKey, [
+        { role: 'assistant', content: iterResult.content },
+      ]);
+    }
 
     // 6b. Record execution for learner (fire and forget)
     if (this.deps.learner) {
@@ -830,6 +835,8 @@ export class AgentLoop {
         for (const s of steering) {
           const steerMsg: LLMMessage = { role: 'user', content: s.content };
           messages.push(steerMsg);
+          // The latest message is what "this message" means from now on (e.g. the react tool's default target)
+          if (reqCtx && s.channelMessageId !== undefined) reqCtx.channelMessageId = s.channelMessageId;
           await this.deps.sessions.append(sessionKey, [steerMsg]);
           log.info(`Steering injected: "${s.content.slice(0, 80)}"`);
         }
