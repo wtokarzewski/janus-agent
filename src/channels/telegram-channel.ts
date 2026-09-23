@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Bot, InputFile } from 'grammy';
+import type { User } from 'grammy/types';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage } from '../bus/types.js';
 import type { JanusConfig } from '../config/schema.js';
@@ -32,6 +33,9 @@ const START_RETRY_DELAY_MS = 5000;
  * Telegram Channel — receives and sends messages via Telegram Bot API.
  * Uses grammy (official-ish, TypeScript-native, long polling).
  */
+/** Sender fields kept with a stored message, so a reaction can tell whose message it was. */
+type MessageAuthor = Pick<User, 'id' | 'first_name' | 'username'>;
+
 interface StreamState {
   messageId: number; // 0 = pending (initial send failed, chunks buffered)
   text: string;
@@ -458,7 +462,7 @@ export class TelegramChannel {
         routingMeta: topicId ? { topicId } : undefined,
         channelMessageId: ctx.message.message_id,
       };
-      this.remember(chatId, ctx.message.message_id, ctx.message.text, false);
+      this.remember(chatId, ctx.message.message_id, ctx.message.text, false, ctx.from);
 
       // If the agent is already processing this chat, buffer as steering message
       if (bus.isProcessing(chatId)) {
@@ -492,7 +496,8 @@ export class TelegramChannel {
       const emoji = added.map(r => 'emoji' in r ? r.emoji : '').filter(Boolean).join('');
       if (!emoji) return;
       const baseChatId = String(reaction.chat.id);
-      const route = resolveReactionRoute(this.messageStore, baseChatId, reaction.message_id, emoji);
+      const reactorId = reaction.user ? String(reaction.user.id) : undefined;
+      const route = resolveReactionRoute(this.messageStore, baseChatId, reaction.message_id, emoji, reactorId);
       const chatId = route.chatId;
       const author = reaction.user?.username || String(reaction.user?.id || 'unknown');
 
@@ -662,7 +667,7 @@ export class TelegramChannel {
         routingMeta: topicId ? { topicId } : undefined,
         channelMessageId: ctx.message.message_id,
       };
-      this.remember(chatId, ctx.message.message_id, `[Voice] ${transcript}`, false);
+      this.remember(chatId, ctx.message.message_id, `[Voice] ${transcript}`, false, ctx.from);
 
       if (bus.isProcessing(chatId)) {
         bus.pushSteering(inbound);
@@ -785,7 +790,7 @@ export class TelegramChannel {
         routingMeta: topicId ? { topicId } : undefined,
         channelMessageId: ctx.message.message_id,
       };
-      this.remember(chatId, ctx.message.message_id, caption || '[Photo]', false);
+      this.remember(chatId, ctx.message.message_id, caption || '[Photo]', false, ctx.from);
 
       if (bus.isProcessing(chatId)) {
         bus.pushSteering(inbound);
@@ -869,10 +874,16 @@ export class TelegramChannel {
   }
 
   /** Remember a message under its base chat; `chatId` may carry a `/topic` suffix. */
-  private remember(chatId: string, messageId: number, text: string, fromBot: boolean): void {
+  private remember(chatId: string, messageId: number, text: string, fromBot: boolean, author?: MessageAuthor): void {
     if (!messageId || !text) return;
     const { chatId: baseChatId, topicId } = parseTelegramChatId(chatId);
-    this.messageStore.record(baseChatId, messageId, { text, fromBot, ...(topicId ? { topicId } : {}) });
+    this.messageStore.record(baseChatId, messageId, {
+      text,
+      fromBot,
+      ...(topicId ? { topicId } : {}),
+      ...(author ? { authorId: String(author.id) } : {}),
+      ...(author && (author.first_name || author.username) ? { authorName: author.first_name || author.username } : {}),
+    });
   }
 
   /**

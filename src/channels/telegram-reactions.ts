@@ -2,13 +2,18 @@ import type { ReactionTypeEmoji } from 'grammy/types';
 import type { StoredMessage, TelegramMessageStore } from './telegram-message-store.js';
 
 /**
- * Inbound content for a reaction. Phrased from the agent's point of view:
- * the bot's own message is "your message", the user's is "my message".
+ * Inbound content for a reaction, phrased from the reactor's point of view: the
+ * bot's own message is "your message", the reactor's own is "my message", and
+ * anyone else's (in a group) is "a message from <name>".
  */
-export function formatReactionContent(emoji: string, target: StoredMessage | undefined): string {
+export function formatReactionContent(emoji: string, target: StoredMessage | undefined, reactorId?: string): string {
   if (!target) return `[Reaction ${emoji} to an earlier message (text unavailable)]`;
-  const whose = target.fromBot ? 'your' : 'my';
-  return `[Reaction ${emoji} to ${whose} message: "${target.text}"]`;
+  const whose = target.fromBot
+    ? 'your message'
+    : target.authorId === reactorId
+      ? 'my message'
+      : `a message from ${target.authorName ?? 'another user'}`;
+  return `[Reaction ${emoji} to ${whose}: "${target.text}"]`;
 }
 
 /**
@@ -20,9 +25,10 @@ export function resolveReactionRoute(
   baseChatId: string,
   messageId: number,
   emoji: string,
+  reactorId?: string,
 ): { chatId: string; content: string; topicId?: number } {
   const target = store.get(baseChatId, messageId);
-  const content = formatReactionContent(emoji, target);
+  const content = formatReactionContent(emoji, target, reactorId);
   if (target?.topicId) {
     return { chatId: `${baseChatId}/${target.topicId}`, content, topicId: target.topicId };
   }

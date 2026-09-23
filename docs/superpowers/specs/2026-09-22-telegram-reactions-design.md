@@ -39,6 +39,8 @@ interface StoredMessage {
   text: string;        // first 300 chars, whitespace-collapsed
   fromBot: boolean;
   topicId?: number;    // forum topic the message lives in
+  authorId?: string;   // sender's Telegram user ID — user messages only
+  authorName?: string; // sender's first name, else username
 }
 record(chatId: string, messageId: number, entry: StoredMessage): void
 get(chatId: string, messageId: number): StoredMessage | undefined
@@ -50,20 +52,21 @@ Insertion-ordered `Map` per chat; oldest entry evicted past the cap; re-recordin
 - Outbound plain message — every chunk's `sent.message_id` with that chunk's text.
 - Outbound stream — initial `sendMessage` records the ID; `handleStreamEnd` re-records it with the final text.
 - Cron / heartbeat deliveries go through the same outbound paths, so reminders are covered with no extra code.
-- Inbound text, photo caption, voice transcript — `ctx.message.message_id` with `fromBot: false`.
+- Inbound text, photo caption, voice transcript — `ctx.message.message_id` with `fromBot: false` and the sender (`authorId`, `authorName`).
 
 ### 2. User reaction → agent
 
 The `message_reaction` handler looks the target up and builds the content with a pure, exported function:
 
 ```ts
-formatReactionContent(emoji: string, target: StoredMessage | undefined): string
+formatReactionContent(emoji: string, target: StoredMessage | undefined, reactorId?: string): string
 // → [Reaction 👍 to your message: "Przypomnieć o dentyście o 17?"]
-// → [Reaction 👍 to my message: "…"]            (user reacted to their own message)
+// → [Reaction 👍 to my message: "…"]            (reactor reacted to their own message)
+// → [Reaction 👍 to a message from Ola: "…"]    (group: reacted to someone else's message)
 // → [Reaction 👍 to an earlier message (text unavailable)]
 ```
 
-"your" is from the agent's point of view (`fromBot: true`). When the target is known and has a `topicId`, the inbound `chatId` becomes `{base}/{topicId}`, so a reaction in a forum topic reaches the topic's session instead of the group's. The inbound message also carries `channelMessageId` = the reacted-to message ID, so a `react` in reply targets that message.
+"your" is from the agent's point of view (`fromBot: true`). "my" requires the stored `authorId` to equal the reactor's user ID; any other author — or an unknown reactor — is named (`a message from <authorName>`, else `another user`). *Amended 2026-09-23: the first version said "my message" for every non-bot message, which in a group attributed B's message to A when A reacted to it.* When the target is known and has a `topicId`, the inbound `chatId` becomes `{base}/{topicId}`, so a reaction in a forum topic reaches the topic's session instead of the group's. The inbound message also carries `channelMessageId` = the reacted-to message ID, so a `react` in reply targets that message.
 
 Everything else in the handler (allowlist, user resolution, scope, steering buffer) is unchanged. Removals and custom emoji stay ignored.
 

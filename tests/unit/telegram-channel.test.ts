@@ -43,6 +43,7 @@ describe('TelegramChannel streaming internals', () => {
     handleChunk(bot: unknown, chatId: string, content: string): Promise<void>;
     flushStream(bot: unknown, chatId: string): Promise<void>;
     handleStreamEnd(bot: unknown, chatId: string): Promise<void>;
+    remember(chatId: string, messageId: number, text: string, fromBot: boolean, author?: { id: number; first_name: string; username?: string }): void;
   };
 
   function fakeBot(firstId = 7) {
@@ -107,5 +108,13 @@ describe('TelegramChannel streaming internals', () => {
     await ch.handleStreamEnd(bot, '123');
 
     expect(bot.calls).toEqual(['flush-done', 'edit:Final']);
+  });
+
+  it('remembers the author of an inbound message under the base chat', () => {
+    const ch = channel();
+    ch.remember('-100777/42', 3, 'hello', false, { id: 1001, first_name: 'Ala', username: 'ala_test' });
+    expect(ch.messageStore.get('-100777', 3)).toEqual({
+      text: 'hello', fromBot: false, topicId: 42, authorId: '1001', authorName: 'Ala',
+    });
   });
 });

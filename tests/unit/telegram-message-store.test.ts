@@ -58,4 +58,10 @@ describe('TelegramMessageStore', () => {
     store.record('-100', 5, { text: 't', fromBot: true, topicId: 42 });
     expect(store.get('-100', 5)?.topicId).toBe(42);
   });
+
+  it('keeps the author of a user message', () => {
+    const store = new TelegramMessageStore();
+    store.record('-100', 6, { text: 'hi', fromBot: false, authorId: '1001', authorName: 'Ala' });
+    expect(store.get('-100', 6)).toEqual({ text: 'hi', fromBot: false, authorId: '1001', authorName: 'Ala' });
+  });
 });

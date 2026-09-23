@@ -8,6 +8,10 @@ export interface StoredMessage {
   text: string;
   fromBot: boolean;
   topicId?: number;
+  /** Telegram user ID of the sender — set for user messages, unset for the bot's own. */
+  authorId?: string;
+  /** Sender's display name (first name, else username) — for "a message from …". */
+  authorName?: string;
 }
 
 export const STORE_MAX_PER_CHAT = 200;
