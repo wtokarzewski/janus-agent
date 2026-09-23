@@ -18,6 +18,8 @@ import type { Database } from '../db/database.js';
 import { upsertKnownChat } from '../db/known-chats.js';
 import { transcribeVoice } from './voice-transcribe.js';
 import { synthesizeVoice } from './voice-synthesize.js';
+import { TelegramMessageStore } from './telegram-message-store.js';
+import { resolveReactionRoute, applyReaction } from './telegram-reactions.js';
 import * as log from '../utils/logger.js';
 
 const MAX_TELEGRAM_MSG = 4096;
@@ -54,6 +56,8 @@ export class TelegramChannel {
   private rateLimitUntil = new Map<string, number>();
   /** Dedup: track recently sent message hashes to prevent duplicates (S6). */
   private sentHashes = new Map<string, number>();
+  /** Recent messages per chat — lets a reaction name the message it refers to. */
+  private messageStore = new TelegramMessageStore();
 
   /** Get the bot instance (available after start). */
   getBot(): Bot | undefined {
@@ -106,6 +110,16 @@ export class TelegramChannel {
 
       if (msg.type === 'typing_stop') {
         this.stopTyping(msg.chatId);
+        return;
+      }
+
+      if (msg.type === 'reaction') {
+        if (msg.reactTo === undefined || !msg.content) return;
+        try {
+          await applyReaction(bot.api, tgChatId, msg.reactTo, msg.content);
+        } catch (err) {
+          log.warn(`Telegram: reaction ${msg.content} on ${msg.chatId}/${msg.reactTo} failed: ${err instanceof Error ? err.message : err}`);
+        }
         return;
       }
 
@@ -181,7 +195,8 @@ export class TelegramChannel {
       const chunks = chunkMessage(cleaned, MAX_TELEGRAM_MSG);
       for (const chunk of chunks) {
         try {
-          await bot.api.sendMessage(tgChatId, chunk, topicOpts);
+          const sent = await bot.api.sendMessage(tgChatId, chunk, topicOpts);
+          this.remember(msg.chatId, sent.message_id, chunk, true);
         } catch (err) {
           log.error(`Telegram: failed to send message to ${msg.chatId}: ${err instanceof Error ? err.message : err}`);
           // Retry once after 429 cooldown
@@ -189,7 +204,8 @@ export class TelegramChannel {
           if (retryAfter) {
             await delay(retryAfter * 1000);
             try {
-              await bot.api.sendMessage(tgChatId, chunk, topicOpts);
+              const sent = await bot.api.sendMessage(tgChatId, chunk, topicOpts);
+              this.remember(msg.chatId, sent.message_id, chunk, true);
             } catch (retryErr) {
               log.error(`Telegram: retry also failed for ${msg.chatId}: ${retryErr instanceof Error ? retryErr.message : retryErr}`);
             }
@@ -438,7 +454,9 @@ export class TelegramChannel {
         topicId,
         replyContext,
         routingMeta: topicId ? { topicId } : undefined,
+        channelMessageId: ctx.message.message_id,
       };
+      this.remember(chatId, ctx.message.message_id, ctx.message.text, false);
 
       // If the agent is already processing this chat, buffer as steering message
       if (bus.isProcessing(chatId)) {
@@ -459,7 +477,8 @@ export class TelegramChannel {
       }
     });
 
-    // Emoji reactions — convert to inbound message so agent can respond
+    // Emoji reactions — delivered only to group admins (Telegram rule; private chats always).
+    // The update has no text, so the buffer supplies which message was reacted to.
     bot.on('message_reaction', async (ctx) => {
       const reaction = ctx.messageReaction;
       if (!reaction) return;
@@ -471,7 +490,8 @@ export class TelegramChannel {
       const emoji = added.map(r => 'emoji' in r ? r.emoji : '').filter(Boolean).join('');
       if (!emoji) return;
       const baseChatId = String(reaction.chat.id);
-      const chatId = baseChatId;
+      const route = resolveReactionRoute(this.messageStore, baseChatId, reaction.message_id, emoji);
+      const chatId = route.chatId;
       const author = reaction.user?.username || String(reaction.user?.id || 'unknown');
 
       log.info(`Telegram: reaction ${emoji} from ${author} (chat ${chatId})`);
@@ -499,7 +519,9 @@ export class TelegramChannel {
         id: randomUUID(),
         channel: 'telegram',
         chatId,
-        content: `[Reaction: ${emoji}]`,
+        content: route.content,
+        channelMessageId: reaction.message_id,
+        ...(route.topicId ? { topicId: route.topicId, routingMeta: { topicId: route.topicId } } : {}),
         author,
         timestamp: new Date(),
         user: resolved ? {
@@ -636,7 +658,9 @@ export class TelegramChannel {
         topicId,
         replyContext,
         routingMeta: topicId ? { topicId } : undefined,
+        channelMessageId: ctx.message.message_id,
       };
+      this.remember(chatId, ctx.message.message_id, `[Voice] ${transcript}`, false);
 
       if (bus.isProcessing(chatId)) {
         bus.pushSteering(inbound);
@@ -757,7 +781,9 @@ export class TelegramChannel {
         topicId,
         replyContext,
         routingMeta: topicId ? { topicId } : undefined,
+        channelMessageId: ctx.message.message_id,
       };
+      this.remember(chatId, ctx.message.message_id, caption || '[Photo]', false);
 
       if (bus.isProcessing(chatId)) {
         bus.pushSteering(inbound);
@@ -838,6 +864,13 @@ export class TelegramChannel {
   private clearAllTyping(): void {
     for (const timer of this.typingTimers.values()) clearInterval(timer);
     this.typingTimers.clear();
+  }
+
+  /** Remember a message under its base chat; `chatId` may carry a `/topic` suffix. */
+  private remember(chatId: string, messageId: number, text: string, fromBot: boolean): void {
+    if (!messageId || !text) return;
+    const { chatId: baseChatId, topicId } = parseTelegramChatId(chatId);
+    this.messageStore.record(baseChatId, messageId, { text, fromBot, ...(topicId ? { topicId } : {}) });
   }
 
   /**
@@ -943,7 +976,8 @@ export class TelegramChannel {
     const finalText = cleanMarkdownUrls(state.text);
     try {
       if (state.messageId === 0) {
-        await bot.api.sendMessage(tgChatId, finalText, state.topicOpts ?? {});
+        const sent = await bot.api.sendMessage(tgChatId, finalText, state.topicOpts ?? {});
+        state.messageId = sent.message_id;
       } else {
         await bot.api.editMessageText(tgChatId, state.messageId, finalText);
       }
@@ -955,7 +989,8 @@ export class TelegramChannel {
         await delay(retryAfter * 1000);
         try {
           if (state.messageId === 0) {
-            await bot.api.sendMessage(tgChatId, finalText, state.topicOpts ?? {});
+            const sent = await bot.api.sendMessage(tgChatId, finalText, state.topicOpts ?? {});
+            state.messageId = sent.message_id;
           } else {
             await bot.api.editMessageText(tgChatId, state.messageId, finalText);
           }
@@ -965,6 +1000,7 @@ export class TelegramChannel {
       }
     }
 
+    this.remember(chatId, state.messageId, finalText, true);
     this.streamStates.delete(chatId);
     this.rateLimitUntil.delete(chatId);
     this.stopTyping(chatId);
