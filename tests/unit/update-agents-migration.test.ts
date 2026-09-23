@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ensureStateUncertaintySection } from '../../src/commands/update.js';
+import { ensureStateUncertaintySection, ensureReactionsSection } from '../../src/commands/update.js';
 
 describe('ensureStateUncertaintySection', () => {
   let cwd: string;
@@ -50,5 +50,32 @@ describe('ensureStateUncertaintySection', () => {
     // sanity check that no shell commands are used; the cwd is a real temp dir
     writeFileSync(join(cwd, 'AGENTS.md'), '# x\n');
     await expect(ensureStateUncertaintySection(cwd)).resolves.not.toThrow();
+  });
+});
+
+describe('ensureReactionsSection', () => {
+  let cwd: string;
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'update-agents-'));
+  });
+
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it('appends the section once', async () => {
+    writeFileSync(join(cwd, 'AGENTS.md'), '# AGENTS.md\n\n## State uncertainty\n\nx\n');
+    await ensureReactionsSection(cwd);
+    await ensureReactionsSection(cwd);
+    const content = readFileSync(join(cwd, 'AGENTS.md'), 'utf-8');
+    expect(content.match(/## Reactions/g)).toHaveLength(1);
+    expect(content).toContain('`react`');
+    expect(content).toContain('## State uncertainty'); // existing content kept
+  });
+
+  it('skips silently when AGENTS.md does not exist', async () => {
+    await ensureReactionsSection(cwd);
+    expect(existsSync(join(cwd, 'AGENTS.md'))).toBe(false);
   });
 });
