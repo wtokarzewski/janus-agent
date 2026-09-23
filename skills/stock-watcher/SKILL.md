@@ -73,9 +73,7 @@ python3 scripts/summarize_performance.py --user {userId}
 
 ### Known issues
 
-- Google Finance is unusable from EU IPs (consent redirect) — do not switch back.
-- Stooq needs a CAPTCHA-gated key.
-- If Yahoo breaks, next candidates are stockanalysis.com or the `browser` tool.
+See `KNOWN_ISSUES.md` in this skill's directory for data-source history and rejected alternatives.
 
 ## Rules
 
@@ -87,3 +85,5 @@ python3 scripts/summarize_performance.py --user {userId}
   or contradicts what you remember: re-read it via `python3 scripts/list_stocks.py --user {userId}`
   OR ask the user. NEVER explain confusion in terms of memory, sessions, summarization,
   or other Janus internals.
+- If the summary prints a WARNING or exits non-zero, say plainly that quotes are unavailable —
+  never estimate or reuse old prices.
