@@ -75,4 +75,38 @@ describe('parseHeartbeatMd', () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0].chatId).toBe('-9876543');
   });
+
+  it('should parse schedule with "cron" prefix', () => {
+    const tasks = parseHeartbeatMd(`## Weekly Diet\n- schedule: cron 0 18 * * 0\n- task: Weekly diet summary`);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].name).toBe('Weekly Diet');
+    expect(tasks[0].scheduleKind).toBe('cron');
+    expect(tasks[0].scheduleValue).toBe('0 18 * * 0');
+  });
+
+  it('should parse schedule with uppercase "CRON" prefix', () => {
+    const tasks = parseHeartbeatMd(`## Weekday Check\n- schedule: CRON 0 9 * * 1-5\n- task: Weekday check-in`);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].scheduleKind).toBe('cron');
+    expect(tasks[0].scheduleValue).toBe('0 9 * * 1-5');
+  });
+
+  it('should parse schedule with mixed case "CrOn" prefix', () => {
+    const tasks = parseHeartbeatMd(`## Mixed Case\n- schedule: CrOn 30 14 * * *\n- task: Mid-afternoon check`);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].scheduleKind).toBe('cron');
+    expect(tasks[0].scheduleValue).toBe('30 14 * * *');
+  });
+
+  it('should skip unrecognized schedule format', () => {
+    const tasks = parseHeartbeatMd(`## Bad Schedule\n- schedule: weekly\n- task: This should be skipped`);
+    expect(tasks).toHaveLength(0);
+  });
+
+  it('should parse bare cron expression without prefix', () => {
+    const tasks = parseHeartbeatMd(`## Bare Cron\n- schedule: 0 9 * * 1\n- task: Weekly task`);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].scheduleKind).toBe('cron');
+    expect(tasks[0].scheduleValue).toBe('0 9 * * 1');
+  });
 });

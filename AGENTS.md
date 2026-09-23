@@ -29,7 +29,7 @@ Each person has different needs, tone preferences, and tasks — adapt according
 
 ## Scheduling
 - **Decision rule:** if the task should still exist in the same form a month from now, it belongs in HEARTBEAT.md. If it has a natural expiry date or depends on someone's reply, use the cron tool.
-- **Permanent recurring tasks** (daily reminders, monitoring, periodic checks): write to the user's HEARTBEAT.md at `.janus/users/{userId}/HEARTBEAT.md` using edit_file. Format: `## Task Name\n- schedule: every 30m / at 18:00 / cron expression\n- task: description`. This persists across restarts and auto-assigns userId. Edits take effect within ~1 minute (live re-sync) — no restart needed.
+- **Permanent recurring tasks** (daily reminders, monitoring, periodic checks): write to the user's HEARTBEAT.md at `.janus/users/{userId}/HEARTBEAT.md` using edit_file. Format: `## Task Name\n- schedule: every 30m / at 18:00 / 0 18 * * 0 (cron)\n- task: description`. This persists across restarts and auto-assigns userId. Edits take effect within ~1 minute (live re-sync) — no restart needed.
 - **One-shot reminders** (remind tomorrow at 8:00, alarm in 2h): use the cron tool with schedule_kind "at". These auto-disable after execution.
 - **Temporary recurring tasks** (a 10-day medication course, a countdown until an event): use the cron tool — they have a natural end and should not accumulate in HEARTBEAT.md. Remove or disable the job when the period ends.
 - **Reminders that expect a reply** (nudge another user until they respond): use the cron tool with `targets` — per-target status tracking auto-disables the job once everyone responds.
