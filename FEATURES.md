@@ -98,7 +98,7 @@ Three auth modes (mutually exclusive):
 - **Structured output** — Subscription providers use JSON schema enforcement via `sdk-utils.ts` (~99% reliability + fallback parsing).
 - **Setup wizard** — Interactive first-run config. Generates providers+slots format. Detects API key vs subscription. Fallback provider selection. `/config` command for reconfiguration.
 
-## Tools (16)
+## Tools (17)
 
 | Tool | Description |
 |------|-------------|
@@ -117,6 +117,7 @@ Three auth modes (mutually exclusive):
 | `heartbeat` | Manage periodic heartbeat tasks. |
 | `self_update` | Check/apply updates. Git mode: git pull + npm install + test + self-respawn + auto-revert. Tarball mode: GitHub Releases API + download + backup/rollback. |
 | `invite` | Generate Telegram invite links for new user onboarding. |
+| `react` | React to a message with an emoji (Telegram). Defaults to the message being answered; channel-agnostic, refuses outside a chat context (CLI/cron turns). Can be the whole answer — no text needed. |
 
 ### Tool Infrastructure
 
@@ -164,7 +165,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 | Channel | Features |
 |---------|----------|
 | **CLI** | Interactive REPL, single-message mode (`-m`), persistent history (~/.janus/history), `/help`, `/config`, `/model`, `/stop` commands, inline streaming output, gate confirmation via readline. |
-| **Telegram** | Grammy bot, user allowlist (denyByDefault), streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami`, `/stop`, `/model` commands, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup, forum/topic session isolation, group mention policy (`groupPolicy: all\|mention`), voice message transcription (Groq Whisper), message dedup (hash-based, 30s window). |
+| **Telegram** | Grammy bot, user allowlist (denyByDefault), streaming via edit-in-place (500ms throttle), gate confirmation via inline keyboard, message splitting (4096 char limit), `/whoami`, `/stop`, `/model` commands, invite deep-link onboarding, drop pending updates on startup, markdown URL cleanup, forum/topic session isolation, group mention policy (`groupPolicy: all\|mention`), voice message transcription (Groq Whisper), message dedup (hash-based, 30s window), reactions (inbound: a reaction reaches the agent quoting the message it refers to, from an in-memory per-chat message buffer, routed to the right forum topic; outbound: `react` tool answers with an emoji via `setMessageReaction`; groups deliver reactions only when the bot is an admin). |
 | **MCP Server** | JSON-RPC 2.0 over stdio. Exposes tools and prompts to editors (VS Code, Cursor, Claude Code). Tool bridge maps ToolRegistry to MCP protocol. |
 | **MCP Client** | Connect to external MCP servers. Config-driven `mcp.servers[]`. Auto-discover tools, register as `mcp_{server}_{tool}`. Schema normalization strips unsupported JSON Schema keywords for OpenAI compatibility. |
 

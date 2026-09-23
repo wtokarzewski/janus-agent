@@ -3,10 +3,10 @@
 ## Current State (Phase 15 complete + reliability hardening)
 
 - **Version:** 0.14.1
-- **Codebase:** ~17,500 LOC TypeScript, 885 tests across 86 files, CI
+- **Codebase:** ~17,500 LOC TypeScript, 908 tests across 89 files, CI
 - **Runtime deps:** 12 + 1 optional (@anthropic-ai/claude-agent-sdk, @anthropic-ai/sdk, @openai/codex-sdk, @xenova/transformers, better-sqlite3, chalk, commander, croner, grammy, openai, yaml, zod; optional: playwright)
 - **Providers:** 8 (openrouter, anthropic, openai, deepseek, groq, claude-agent, codex, codex-oauth)
-- **Tools:** 16 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite)
+- **Tools:** 17 (exec, read/write/edit/append-file, list-dir, message, send-file, spawn_agent, cron, web_fetch, web_search, browser, heartbeat, self_update, invite, react)
 - **Skills:** 10 (programmer, meal-planner, home-assistant, personal-travel, stock-watcher, google-workspace, github, skill-creator, browser-operator, diet-tracker)
 - **Channels:** 2 (CLI, Telegram) + MCP server + MCP client
 - **DB:** SQLite (WAL, 13 migrations: memory_chunks+FTS5, learner_records, cron_jobs+cron_runs, embedding, multi-user, per-user cron, cron session IDs, cron chat_id, cron_runs finished_at, cron agent_id, gate_audit_log, not_before, cron targets)
