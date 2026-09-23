@@ -6,49 +6,14 @@ Usage: python3 add_stock.py --user <userId> <ticker> [stock_name]
 import argparse
 import sys
 import os
-import requests
-from bs4 import BeautifulSoup
-from config import watchlist_paths, GOOGLE_FINANCE_URL, validate_ticker
-
-REQUEST_TIMEOUT = 10
-
-# Default exchange mapping for common tickers
-DEFAULT_EXCHANGES = {
-    "NASDAQ": ["AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "NVDA", "NFLX"],
-}
-
-
-def guess_google_url(ticker: str) -> str:
-    """Build Google Finance URL for a ticker."""
-    if ":" in ticker:
-        symbol, exchange = ticker.split(":", 1)
-        return f"{GOOGLE_FINANCE_URL}/{symbol}:{exchange}"
-    # Try NASDAQ first, then NYSE — Google redirects anyway
-    return f"{GOOGLE_FINANCE_URL}/{ticker}:NASDAQ"
+from config import watchlist_paths, validate_ticker, fetch_yahoo_quote
 
 
 def get_stock_name(ticker: str) -> str | None:
-    """Get stock name from Google Finance."""
-    try:
-        url = guess_google_url(ticker)
-        response = requests.get(url, timeout=REQUEST_TIMEOUT)
-        response.encoding = "utf-8"
-
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            # Google Finance puts the company name in the first h1 or specific div
-            heading = soup.find("div", class_="zzDege")
-            if heading:
-                return heading.get_text().strip()
-            # Fallback: try title
-            title = soup.find("title")
-            if title:
-                text = title.get_text()
-                # Title format: "AAPL Stock Price - Apple Inc" or similar
-                if "-" in text:
-                    return text.split("-")[0].strip()
-    except (requests.RequestException, ValueError):
-        pass
+    """Get stock name from Yahoo Finance."""
+    data = fetch_yahoo_quote(ticker)
+    if data and data.get("name"):
+        return data["name"]
     return None
 
 

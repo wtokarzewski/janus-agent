@@ -314,7 +314,7 @@ export function parseHeartbeatMd(content: string): HeartbeatTask[] {
       continue;
     }
 
-    // Parse 'every Xm/h/d', 'at HH:MM', or cron expression
+    // Parse 'every Xm/h/d', 'at HH:MM', or cron expression (with optional 'cron ' prefix)
     const atMatch = scheduleRaw.match(/^at\s+(\d{1,2}):(\d{2})$/i);
     if (atMatch) {
       const hour = parseInt(atMatch[1], 10);
@@ -347,19 +347,24 @@ export function parseHeartbeatMd(content: string): HeartbeatTask[] {
         scheduleValue: String(intervalMs),
         ...(chatId ? { chatId } : {}),
       });
-    } else if (CRON_EXPR_RE.test(scheduleRaw)) {
+      continue;
+    }
+
+    // Strip optional 'cron ' prefix and test as cron expression
+    const cronExpr = scheduleRaw.replace(/^cron\s+/i, '');
+    if (CRON_EXPR_RE.test(cronExpr)) {
       tasks.push({
         name,
         description,
         intervalMs: 0,
         lastRun: 0,
         scheduleKind: 'cron',
-        scheduleValue: scheduleRaw,
+        scheduleValue: cronExpr,
         scheduleTz: systemTz,
         ...(chatId ? { chatId } : {}),
       });
     } else {
-      log.debug(`Heartbeat: unrecognized schedule format for "${name}": ${scheduleRaw}`);
+      log.warn(`Heartbeat: unrecognized schedule format for task "${name}": "${scheduleRaw}" — accepted forms: "every <N>m|h|d", "at HH:MM", or "0 18 * * 0" (cron)`);
     }
   }
 
