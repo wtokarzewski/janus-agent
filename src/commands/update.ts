@@ -222,6 +222,7 @@ async function finalizeUpdate(cwd: string): Promise<void> {
   await migrateFromHome(cwd);
   await ensureWorkspace(cwd);
   await ensureStateUncertaintySection(cwd);
+  await ensureReactionsSection(cwd);
   await ensureTimezone();
   syncNewConfigSections(cwd);
   await reportModelDrift();
@@ -315,7 +316,15 @@ When requested data is unclear, missing, or contradicts what you remember:
 4. Never explain confusion in terms of memory limits, session boundaries, agent instances, summarization, or any other internal mechanism. The user needs an answer or a question, not an explanation of how the agent works.
 `;
 
-export async function ensureStateUncertaintySection(cwd: string): Promise<void> {
+const REACTIONS_SECTION = `## Reactions
+
+- \`[Reaction 👍 to your message: "…"]\` is the user answering that message of yours. Do what it confirms or declines, then reply in text.
+- You can react yourself with the \`react\` tool. Use it when the user asks for it, or when an emoji is a complete answer (thanks, a photo, a quick acknowledgement). When the reaction is the whole answer, end the turn with no text.
+- A standing request like "react 👍 to my messages instead of replying" is a preference — save it to the user's PROFILE.md so it survives restarts.
+`;
+
+/** Append a section to the workspace AGENTS.md unless its heading is already there. */
+export async function ensureAgentsSection(cwd: string, heading: string, body: string): Promise<void> {
   const { readFile, writeFile } = await import('node:fs/promises');
   const agentsPath = resolve(cwd, 'AGENTS.md');
   let content: string;
@@ -327,13 +336,22 @@ export async function ensureStateUncertaintySection(cwd: string): Promise<void> 
     }
     throw err;
   }
-  if (content.includes('## State uncertainty')) {
-    console.log('  AGENTS.md already has State uncertainty section.');
+  const title = heading.replace(/^#+\s*/, '');
+  if (content.includes(heading)) {
+    console.log(`  AGENTS.md already has ${title} section.`);
     return;
   }
   const separator = content.endsWith('\n\n') ? '' : content.endsWith('\n') ? '\n' : '\n\n';
-  await writeFile(agentsPath, content + separator + STATE_UNCERTAINTY_SECTION, 'utf-8');
-  console.log(chalk.green('  + AGENTS.md updated with State uncertainty section'));
+  await writeFile(agentsPath, content + separator + body, 'utf-8');
+  console.log(chalk.green(`  + AGENTS.md updated with ${title} section`));
+}
+
+export async function ensureStateUncertaintySection(cwd: string): Promise<void> {
+  await ensureAgentsSection(cwd, '## State uncertainty', STATE_UNCERTAINTY_SECTION);
+}
+
+export async function ensureReactionsSection(cwd: string): Promise<void> {
+  await ensureAgentsSection(cwd, '## Reactions', REACTIONS_SECTION);
 }
 
 /** Auto-detect timezone and add to config if missing. */
