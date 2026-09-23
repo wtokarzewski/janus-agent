@@ -1,3 +1,4 @@
+import type { ReactionTypeEmoji } from 'grammy/types';
 import type { StoredMessage, TelegramMessageStore } from './telegram-message-store.js';
 
 /**
@@ -29,14 +30,12 @@ export function resolveReactionRoute(
 }
 
 export interface ReactionApi {
-  setMessageReaction(
-    chatId: number | string,
-    messageId: number,
-    reaction: Array<{ type: 'emoji'; emoji: string }>,
-  ): Promise<unknown>;
+  setMessageReaction(chatId: number | string, messageId: number, reaction: ReactionTypeEmoji[]): Promise<unknown>;
 }
 
 /** Set the bot's reaction on a message. Throws what the API throws — callers log. */
 export async function applyReaction(api: ReactionApi, chatId: string, messageId: number, emoji: string): Promise<void> {
-  await api.setMessageReaction(chatId, messageId, [{ type: 'emoji', emoji }]);
+  // The emoji comes from the agent as a plain string; Telegram validates it
+  // (an unsupported one fails with 400, which the caller logs).
+  await api.setMessageReaction(chatId, messageId, [{ type: 'emoji', emoji: emoji as ReactionTypeEmoji['emoji'] }]);
 }

@@ -61,4 +61,11 @@ describe('applyReaction', () => {
     const api = { setMessageReaction: vi.fn().mockRejectedValue(new Error('REACTION_INVALID')) };
     await expect(applyReaction(api, '555', 10, '🦄')).rejects.toThrow('REACTION_INVALID');
   });
+
+  it('accepts grammy\'s Api as ReactionApi', () => {
+    // Compile-time check: grammy's Api must be assignable to ReactionApi
+    type GrammyApi = import('grammy').Api;
+    const check: (a: GrammyApi) => import('../../src/channels/telegram-reactions.js').ReactionApi = (a) => a;
+    expect(typeof check).toBe('function');
+  });
 });
