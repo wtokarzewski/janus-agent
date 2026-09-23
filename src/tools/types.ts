@@ -31,6 +31,10 @@ export interface ToolContext {
 /** Per-request context — passed to execute(), not shared across lanes. */
 export interface RequestContext {
   chatId?: string;
+  /** Channel of the conversation being handled (e.g. "telegram", "cli"). */
+  channel?: string;
+  /** The channel's ID of the message being handled; absent for CLI and system turns. */
+  channelMessageId?: number;
   userId?: string;
   /** Whether the current user is an owner (has elevated privileges). */
   isOwner?: boolean;

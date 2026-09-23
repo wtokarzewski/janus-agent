@@ -391,6 +391,8 @@ export class AgentLoop {
 
     const reqCtx: RequestContext = {
       chatId: msg.chatId,
+      channel: msg.channel,
+      channelMessageId: msg.channelMessageId,
       userId: msg.user?.userId,
       isOwner,
       familyUserIds,
