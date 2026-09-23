@@ -1,75 +1,16 @@
 #!/usr/bin/env python3
 """
 Summarize performance of all stocks in the watchlist.
-Uses Google Finance for data.
+Uses Yahoo Finance chart API for data (no consent wall, no API key needed).
 Usage: python3 summarize_performance.py --user <userId>
 """
 import argparse
 import os
 import sys
-import re
 import time
-import requests
-from bs4 import BeautifulSoup
-from config import watchlist_paths, GOOGLE_FINANCE_URL, validate_ticker
+from config import watchlist_paths, validate_ticker, fetch_yahoo_quote
 
-REQUEST_TIMEOUT = 10
-RATE_LIMIT_SECONDS = 1
-
-
-def guess_google_url(ticker: str) -> str:
-    """Build Google Finance URL for a ticker."""
-    if ":" in ticker:
-        symbol, exchange = ticker.split(":", 1)
-        return f"{GOOGLE_FINANCE_URL}/{symbol}:{exchange}"
-    return f"{GOOGLE_FINANCE_URL}/{ticker}:NASDAQ"
-
-
-def fetch_stock_data(ticker: str) -> dict | None:
-    """Fetch stock data from Google Finance."""
-    url = guess_google_url(ticker)
-
-    try:
-        response = requests.get(url, timeout=REQUEST_TIMEOUT)
-        response.encoding = "utf-8"
-
-        if response.status_code != 200:
-            return None
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # Extract price and change from Google Finance page
-        price = None
-        change = None
-
-        # Google Finance uses specific data attributes and classes
-        # Look for price in the main price display
-        price_el = soup.find("div", class_="YMlKec fxKbKc")
-        if price_el:
-            price = price_el.get_text().strip()
-
-        # Look for change percentage
-        change_el = soup.find("div", class_="JwB6zf")
-        if change_el:
-            change = change_el.get_text().strip()
-
-        # Fallback: parse percentages from text
-        if not change:
-            text = soup.get_text()
-            pcts = re.findall(r"[-+]?\d+\.?\d*%", text)
-            if pcts:
-                change = pcts[0]
-
-        return {
-            "ticker": ticker,
-            "url": url,
-            "price": price,
-            "change": change,
-        }
-
-    except (requests.RequestException, ValueError) as e:
-        print(f"Error fetching {ticker}: {e}", file=sys.stderr)
-        return None
+RATE_LIMIT_SECONDS = 0.3
 
 
 def summarize_performance(watchlist_file: str) -> None:
@@ -97,14 +38,16 @@ def summarize_performance(watchlist_file: str) -> None:
         except ValueError:
             print(f"{ticker} ({name}): invalid ticker, skipping")
             continue
-        data = fetch_stock_data(ticker)
+        data = fetch_yahoo_quote(ticker)
 
-        if data and (data["price"] or data["change"]):
-            price_str = data["price"] or "N/A"
-            change_str = data["change"] or "N/A"
+        if data:
+            currency = data["currency"] or ""
+            price_str = f"{data['price']:.2f} {currency}".strip()
+            if data["change_pct"] is not None:
+                change_str = f"{data['change_pct']:+.2f}%"
+            else:
+                change_str = "N/A"
             print(f"{ticker} ({name}): {price_str} ({change_str})")
-        elif data:
-            print(f"{ticker} ({name}): no data available")
         else:
             print(f"{ticker} ({name}): fetch failed")
 

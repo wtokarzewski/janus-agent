@@ -10,8 +10,8 @@ describe('stock-watcher SKILL.md frontmatter', () => {
   if (!match) throw new Error('No frontmatter found');
   const frontmatter = parseYAML(match[1]) as Record<string, unknown>;
 
-  it('is at version 2.0.0', () => {
-    expect(frontmatter.version).toBe('2.0.0');
+  it('is at version 2.1.0', () => {
+    expect(frontmatter.version).toBe('2.1.0');
   });
 
   it('declares pinned: stocks/watchlist.txt', () => {
