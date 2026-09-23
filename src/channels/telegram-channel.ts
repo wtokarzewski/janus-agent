@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Bot, InputFile } from 'grammy';
+import type { User } from 'grammy/types';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage } from '../bus/types.js';
 import type { JanusConfig } from '../config/schema.js';
@@ -18,6 +19,8 @@ import type { Database } from '../db/database.js';
 import { upsertKnownChat } from '../db/known-chats.js';
 import { transcribeVoice } from './voice-transcribe.js';
 import { synthesizeVoice } from './voice-synthesize.js';
+import { TelegramMessageStore } from './telegram-message-store.js';
+import { resolveReactionRoute, applyReaction } from './telegram-reactions.js';
 import * as log from '../utils/logger.js';
 
 const MAX_TELEGRAM_MSG = 4096;
@@ -30,6 +33,9 @@ const START_RETRY_DELAY_MS = 5000;
  * Telegram Channel — receives and sends messages via Telegram Bot API.
  * Uses grammy (official-ish, TypeScript-native, long polling).
  */
+/** Sender fields kept with a stored message, so a reaction can tell whose message it was. */
+type MessageAuthor = Pick<User, 'id' | 'first_name' | 'username'>;
+
 interface StreamState {
   messageId: number; // 0 = pending (initial send failed, chunks buffered)
   text: string;
@@ -41,6 +47,8 @@ interface StreamState {
 
 /** Interval for refreshing Telegram "typing..." action (expires after ~5s). */
 const TYPING_REFRESH_MS = 4500;
+/** Upper bound on how long stream end waits for an in-flight flush (edit or delayed send). */
+const STREAM_END_FLUSH_WAIT_MS = 10_000;
 
 export class TelegramChannel {
   name = 'telegram';
@@ -54,6 +62,8 @@ export class TelegramChannel {
   private rateLimitUntil = new Map<string, number>();
   /** Dedup: track recently sent message hashes to prevent duplicates (S6). */
   private sentHashes = new Map<string, number>();
+  /** Recent messages per chat — lets a reaction name the message it refers to. */
+  private messageStore = new TelegramMessageStore();
 
   /** Get the bot instance (available after start). */
   getBot(): Bot | undefined {
@@ -106,6 +116,16 @@ export class TelegramChannel {
 
       if (msg.type === 'typing_stop') {
         this.stopTyping(msg.chatId);
+        return;
+      }
+
+      if (msg.type === 'reaction') {
+        if (msg.reactTo === undefined || !msg.content) return;
+        try {
+          await applyReaction(bot.api, tgChatId, msg.reactTo, msg.content);
+        } catch (err) {
+          log.warn(`Telegram: reaction ${msg.content} on ${msg.chatId}/${msg.reactTo} failed: ${err instanceof Error ? err.message : err}`);
+        }
         return;
       }
 
@@ -181,7 +201,8 @@ export class TelegramChannel {
       const chunks = chunkMessage(cleaned, MAX_TELEGRAM_MSG);
       for (const chunk of chunks) {
         try {
-          await bot.api.sendMessage(tgChatId, chunk, topicOpts);
+          const sent = await bot.api.sendMessage(tgChatId, chunk, topicOpts);
+          this.remember(msg.chatId, sent.message_id, chunk, true);
         } catch (err) {
           log.error(`Telegram: failed to send message to ${msg.chatId}: ${err instanceof Error ? err.message : err}`);
           // Retry once after 429 cooldown
@@ -189,7 +210,8 @@ export class TelegramChannel {
           if (retryAfter) {
             await delay(retryAfter * 1000);
             try {
-              await bot.api.sendMessage(tgChatId, chunk, topicOpts);
+              const sent = await bot.api.sendMessage(tgChatId, chunk, topicOpts);
+              this.remember(msg.chatId, sent.message_id, chunk, true);
             } catch (retryErr) {
               log.error(`Telegram: retry also failed for ${msg.chatId}: ${retryErr instanceof Error ? retryErr.message : retryErr}`);
             }
@@ -438,7 +460,9 @@ export class TelegramChannel {
         topicId,
         replyContext,
         routingMeta: topicId ? { topicId } : undefined,
+        channelMessageId: ctx.message.message_id,
       };
+      this.remember(chatId, ctx.message.message_id, ctx.message.text, false, ctx.from);
 
       // If the agent is already processing this chat, buffer as steering message
       if (bus.isProcessing(chatId)) {
@@ -459,7 +483,8 @@ export class TelegramChannel {
       }
     });
 
-    // Emoji reactions — convert to inbound message so agent can respond
+    // Emoji reactions — delivered only to group admins (Telegram rule; private chats always).
+    // The update has no text, so the buffer supplies which message was reacted to.
     bot.on('message_reaction', async (ctx) => {
       const reaction = ctx.messageReaction;
       if (!reaction) return;
@@ -471,7 +496,9 @@ export class TelegramChannel {
       const emoji = added.map(r => 'emoji' in r ? r.emoji : '').filter(Boolean).join('');
       if (!emoji) return;
       const baseChatId = String(reaction.chat.id);
-      const chatId = baseChatId;
+      const reactorId = reaction.user ? String(reaction.user.id) : undefined;
+      const route = resolveReactionRoute(this.messageStore, baseChatId, reaction.message_id, emoji, reactorId);
+      const chatId = route.chatId;
       const author = reaction.user?.username || String(reaction.user?.id || 'unknown');
 
       log.info(`Telegram: reaction ${emoji} from ${author} (chat ${chatId})`);
@@ -499,7 +526,9 @@ export class TelegramChannel {
         id: randomUUID(),
         channel: 'telegram',
         chatId,
-        content: `[Reaction: ${emoji}]`,
+        content: route.content,
+        channelMessageId: reaction.message_id,
+        ...(route.topicId ? { topicId: route.topicId, routingMeta: { topicId: route.topicId } } : {}),
         author,
         timestamp: new Date(),
         user: resolved ? {
@@ -636,7 +665,9 @@ export class TelegramChannel {
         topicId,
         replyContext,
         routingMeta: topicId ? { topicId } : undefined,
+        channelMessageId: ctx.message.message_id,
       };
+      this.remember(chatId, ctx.message.message_id, `[Voice] ${transcript}`, false, ctx.from);
 
       if (bus.isProcessing(chatId)) {
         bus.pushSteering(inbound);
@@ -757,7 +788,9 @@ export class TelegramChannel {
         topicId,
         replyContext,
         routingMeta: topicId ? { topicId } : undefined,
+        channelMessageId: ctx.message.message_id,
       };
+      this.remember(chatId, ctx.message.message_id, caption || '[Photo]', false, ctx.from);
 
       if (bus.isProcessing(chatId)) {
         bus.pushSteering(inbound);
@@ -840,6 +873,19 @@ export class TelegramChannel {
     this.typingTimers.clear();
   }
 
+  /** Remember a message under its base chat; `chatId` may carry a `/topic` suffix. */
+  private remember(chatId: string, messageId: number, text: string, fromBot: boolean, author?: MessageAuthor): void {
+    if (!messageId || !text) return;
+    const { chatId: baseChatId, topicId } = parseTelegramChatId(chatId);
+    this.messageStore.record(baseChatId, messageId, {
+      text,
+      fromBot,
+      ...(topicId ? { topicId } : {}),
+      ...(author ? { authorId: String(author.id) } : {}),
+      ...(author && (author.first_name || author.username) ? { authorName: author.first_name || author.username } : {}),
+    });
+  }
+
   /**
    * Handle a streaming chunk (called within serialized promise chain).
    *
@@ -862,6 +908,7 @@ export class TelegramChannel {
     const { chatId: tgChatId } = parseTelegramChatId(chatId);
     try {
       const sent = await bot.api.sendMessage(tgChatId, content, topicOpts);
+      this.remember(chatId, sent.message_id, content, true);
       this.streamStates.set(chatId, {
         messageId: sent.message_id,
         text: content,
@@ -910,6 +957,7 @@ export class TelegramChannel {
         // Initial send failed — try sending now with buffered text
         const sent = await bot.api.sendMessage(tgChatId, state.text, state.topicOpts ?? {});
         state.messageId = sent.message_id;
+        this.remember(chatId, sent.message_id, state.text, true);
       } else {
         await bot.api.editMessageText(tgChatId, state.messageId, state.text);
       }
@@ -928,9 +976,20 @@ export class TelegramChannel {
 
   private async handleStreamEnd(bot: Bot, chatId: string): Promise<void> {
     const state = this.streamStates.get(chatId);
-    if (!state) return;
+    if (!state) {
+      // Nothing was streamed (e.g. a reply made only with a reaction) — the
+      // typing indicator must still stop.
+      this.stopTyping(chatId);
+      return;
+    }
 
     if (state.flushTimer) clearInterval(state.flushTimer);
+
+    // Let an in-flight flush finish first: otherwise a flush doing the delayed
+    // initial send races the final send below and the reply is posted twice.
+    for (let waited = 0; state.flushing && waited < STREAM_END_FLUSH_WAIT_MS; waited += 50) {
+      await delay(50);
+    }
 
     // Wait out rate limit before final send (message must be delivered)
     const limitUntil = this.rateLimitUntil.get(chatId);
@@ -943,7 +1002,8 @@ export class TelegramChannel {
     const finalText = cleanMarkdownUrls(state.text);
     try {
       if (state.messageId === 0) {
-        await bot.api.sendMessage(tgChatId, finalText, state.topicOpts ?? {});
+        const sent = await bot.api.sendMessage(tgChatId, finalText, state.topicOpts ?? {});
+        state.messageId = sent.message_id;
       } else {
         await bot.api.editMessageText(tgChatId, state.messageId, finalText);
       }
@@ -955,7 +1015,8 @@ export class TelegramChannel {
         await delay(retryAfter * 1000);
         try {
           if (state.messageId === 0) {
-            await bot.api.sendMessage(tgChatId, finalText, state.topicOpts ?? {});
+            const sent = await bot.api.sendMessage(tgChatId, finalText, state.topicOpts ?? {});
+            state.messageId = sent.message_id;
           } else {
             await bot.api.editMessageText(tgChatId, state.messageId, finalText);
           }
@@ -965,6 +1026,7 @@ export class TelegramChannel {
       }
     }
 
+    this.remember(chatId, state.messageId, finalText, true);
     this.streamStates.delete(chatId);
     this.rateLimitUntil.delete(chatId);
     this.stopTyping(chatId);

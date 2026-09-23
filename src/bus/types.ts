@@ -40,6 +40,9 @@ export interface InboundMessage {
   /** Channel-specific routing metadata for binding resolution.
    *  Telegram: { topicId }. Discord: { guildId }. Slack: { teamId }. */
   routingMeta?: Record<string, string | number>;
+  /** The channel's own ID of the triggering message (Telegram message_id).
+   *  For a reaction: the message that was reacted to. */
+  channelMessageId?: number;
 }
 
 export interface OutboundMessage {
@@ -47,11 +50,13 @@ export interface OutboundMessage {
   channel: string;
   content: string;
   timestamp: Date;
-  type?: 'message' | 'chunk' | 'stream_end' | 'stream_flush' | 'typing' | 'typing_stop';
+  type?: 'message' | 'chunk' | 'stream_end' | 'stream_flush' | 'typing' | 'typing_stop' | 'reaction';
   /** Absolute path to file for send_file tool. */
   filePath?: string;
   /** How to send the file (affects Telegram API method). */
   fileType?: 'document' | 'photo' | 'audio' | 'video' | 'voice';
   /** When true, the text content should also be sent as a voice message (TTS). */
   voiceReply?: boolean;
+  /** For type 'reaction': the channel message ID to react to; `content` holds the emoji. */
+  reactTo?: number;
 }

@@ -134,7 +134,7 @@ export class AnthropicProvider implements LLMProvider {
     const params: Anthropic.MessageCreateParams = {
       model,
       max_tokens: request.maxTokens ?? 4096,
-      messages: nonSystemMsgs.map(m => convertMessage(m)),
+      messages: toAnthropicMessages(nonSystemMsgs),
     };
 
     // Extended thinking requires temperature=1 and uses a dedicated budget
@@ -292,7 +292,7 @@ export class AnthropicProvider implements LLMProvider {
     const params: Anthropic.MessageCreateParams = {
       model,
       max_tokens: request.maxTokens ?? 4096,
-      messages: nonSystemMsgs.map(m => convertMessage(m)),
+      messages: toAnthropicMessages(nonSystemMsgs),
       stream: true,
     };
 
@@ -404,6 +404,17 @@ export class AnthropicProvider implements LLMProvider {
       ...(thinkingContent ? { thinkingContent } : {}),
     };
   }
+}
+
+/**
+ * Convert conversation messages for the Messages API. Assistant messages with no
+ * text and no tool calls are dropped: Anthropic rejects an empty assistant turn
+ * anywhere but last with 400, and such a turn carries nothing for the model.
+ */
+export function toAnthropicMessages(messages: LLMMessage[]): Anthropic.MessageParam[] {
+  return messages
+    .filter(m => !(m.role === 'assistant' && !m.content.trim() && !m.tool_calls?.length))
+    .map(m => convertMessage(m));
 }
 
 function convertMessage(msg: LLMMessage): Anthropic.MessageParam {

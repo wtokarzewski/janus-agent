@@ -528,4 +528,85 @@ describe('AgentLoop integration', () => {
     expect(result).toBe('The action was denied.');
     expect(execCalled).toBe(false);
   });
+
+  it('does not persist an empty final assistant message after a tool-only turn', async () => {
+    const mock = new MockProvider([
+      {
+        content: '',
+        toolCalls: [{
+          id: 'tc-react',
+          type: 'function',
+          function: { name: 'react', arguments: JSON.stringify({ emoji: '👍' }) },
+        }],
+      },
+      { content: '' },
+    ]);
+    const { deps } = createDeps(mock);
+    deps.tools.register({
+      name: 'react',
+      description: 'React to a message',
+      parameters: { type: 'object', properties: { emoji: { type: 'string' } }, required: ['emoji'] },
+      execute: async () => 'Reacted with 👍',
+    });
+
+    const agent = new AgentLoop(deps);
+    await agent.processDirect('thanks!', { channel: 'test', chatId: 'react-only' });
+
+    const history = await deps.sessions.getHistory('main:test:react-only');
+    const emptyAssistant = history.filter(m =>
+      m.role === 'assistant' && !m.content.trim() && !(m.tool_calls?.length));
+    expect(emptyAssistant).toHaveLength(0);
+    // History ends with the tool result — the next user message follows it directly
+    expect(history[history.length - 1].role).toBe('tool');
+  });
+
+  it('does not persist an empty final assistant message when the model says nothing', async () => {
+    const mock = new MockProvider([{ content: '' }]);
+    const { deps } = createDeps(mock);
+    const agent = new AgentLoop(deps);
+
+    await agent.processDirect('👍', { channel: 'test', chatId: 'silent' });
+
+    const history = await deps.sessions.getHistory('main:test:silent');
+    expect(history.some(m => m.role === 'assistant')).toBe(false);
+  });
+
+  it('points reqCtx.channelMessageId at the latest steered message', async () => {
+    const mock = new MockProvider([
+      {
+        content: '',
+        toolCalls: [{
+          id: 'tc-steer',
+          type: 'function',
+          function: { name: 'probe', arguments: '{}' },
+        }],
+      },
+      { content: 'ok' },
+    ]);
+    const { deps } = createDeps(mock);
+    const seen: Array<number | undefined> = [];
+    deps.tools.register({
+      name: 'probe',
+      description: 'Record the request context',
+      parameters: { type: 'object', properties: {} },
+      execute: async (_args, reqCtx) => { seen.push(reqCtx?.channelMessageId); return 'recorded'; },
+    });
+    // Two messages arrived while the chat was busy — they are drained as steering
+    for (const id of [101, 102]) {
+      deps.bus.pushSteering({
+        id: `steer-${id}`,
+        channel: 'test',
+        chatId: 'steer-chat',
+        content: `message ${id}`,
+        author: 'user',
+        timestamp: new Date(),
+        channelMessageId: id,
+      });
+    }
+
+    const agent = new AgentLoop(deps);
+    await agent.processDirect('first', { channel: 'test', chatId: 'steer-chat' });
+
+    expect(seen).toEqual([102]);
+  });
 });

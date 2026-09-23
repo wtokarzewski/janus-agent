@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyCacheMarkers, applyCacheToPenultimateMessage, trimLastAssistantWhitespace, modelRejectsSamplingParams } from '../../src/llm/anthropic-provider.js';
+import { applyCacheMarkers, applyCacheToPenultimateMessage, trimLastAssistantWhitespace, modelRejectsSamplingParams, toAnthropicMessages } from '../../src/llm/anthropic-provider.js';
 
 describe('applyCacheMarkers', () => {
   it('marks only last tool when no MCP tools present', () => {
@@ -183,5 +183,35 @@ describe('prefill error matching', () => {
   it('does not match unrelated 400 messages', () => {
     expect(PREFILL_ERROR_RE.test('messages: final assistant content cannot end with trailing whitespace')).toBe(false);
     expect(PREFILL_ERROR_RE.test('Invalid tool_choice value')).toBe(false);
+  });
+});
+
+describe('toAnthropicMessages', () => {
+  it('drops an assistant message with no text and no tool calls', () => {
+    const out = toAnthropicMessages([
+      { role: 'user', content: 'thanks!' },
+      { role: 'assistant', content: '' },
+      { role: 'user', content: 'next question' },
+      { role: 'assistant', content: '  \n' },
+      { role: 'user', content: 'still there?' },
+    ]);
+    expect(out.map(m => m.role)).toEqual(['user', 'user', 'user']);
+  });
+
+  it('keeps an assistant message that carries only tool calls', () => {
+    const out = toAnthropicMessages([
+      { role: 'user', content: 'thanks!' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 'tc-1', type: 'function', function: { name: 'react', arguments: '{"emoji":"👍"}' } }],
+      },
+      { role: 'tool', tool_call_id: 'tc-1', content: 'ok' },
+    ]);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toEqual({
+      role: 'assistant',
+      content: [{ type: 'tool_use', id: 'tc-1', name: 'react', input: { emoji: '👍' } }],
+    });
   });
 });
