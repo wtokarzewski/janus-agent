@@ -43,6 +43,8 @@ interface StreamState {
 
 /** Interval for refreshing Telegram "typing..." action (expires after ~5s). */
 const TYPING_REFRESH_MS = 4500;
+/** Upper bound on how long stream end waits for an in-flight flush (edit or delayed send). */
+const STREAM_END_FLUSH_WAIT_MS = 10_000;
 
 export class TelegramChannel {
   name = 'telegram';
@@ -895,6 +897,7 @@ export class TelegramChannel {
     const { chatId: tgChatId } = parseTelegramChatId(chatId);
     try {
       const sent = await bot.api.sendMessage(tgChatId, content, topicOpts);
+      this.remember(chatId, sent.message_id, content, true);
       this.streamStates.set(chatId, {
         messageId: sent.message_id,
         text: content,
@@ -943,6 +946,7 @@ export class TelegramChannel {
         // Initial send failed — try sending now with buffered text
         const sent = await bot.api.sendMessage(tgChatId, state.text, state.topicOpts ?? {});
         state.messageId = sent.message_id;
+        this.remember(chatId, sent.message_id, state.text, true);
       } else {
         await bot.api.editMessageText(tgChatId, state.messageId, state.text);
       }
@@ -961,9 +965,20 @@ export class TelegramChannel {
 
   private async handleStreamEnd(bot: Bot, chatId: string): Promise<void> {
     const state = this.streamStates.get(chatId);
-    if (!state) return;
+    if (!state) {
+      // Nothing was streamed (e.g. a reply made only with a reaction) — the
+      // typing indicator must still stop.
+      this.stopTyping(chatId);
+      return;
+    }
 
     if (state.flushTimer) clearInterval(state.flushTimer);
+
+    // Let an in-flight flush finish first: otherwise a flush doing the delayed
+    // initial send races the final send below and the reply is posted twice.
+    for (let waited = 0; state.flushing && waited < STREAM_END_FLUSH_WAIT_MS; waited += 50) {
+      await delay(50);
+    }
 
     // Wait out rate limit before final send (message must be delivered)
     const limitUntil = this.rateLimitUntil.get(chatId);
