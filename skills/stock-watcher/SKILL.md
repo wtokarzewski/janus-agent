@@ -85,5 +85,6 @@ See `KNOWN_ISSUES.md` in this skill's directory for data-source history and reje
   or contradicts what you remember: re-read it via `python3 scripts/list_stocks.py --user {userId}`
   OR ask the user. NEVER explain confusion in terms of memory, sessions, summarization,
   or other Janus internals.
-- If the summary prints a WARNING or exits non-zero, say plainly that quotes are unavailable —
-  never estimate or reuse old prices.
+- If the summary prints a WARNING line, say plainly that quotes are unavailable —
+  never estimate or reuse old prices. (The agent runs scripts via `exec`, which returns
+  stdout+stderr but not the exit code, so the WARNING line is the signal to watch for.)
