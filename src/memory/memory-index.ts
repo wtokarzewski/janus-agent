@@ -53,26 +53,25 @@ export class MemoryIndex {
     if (!sanitized) return [];
 
     try {
-      // Fetch more candidates than needed, then re-rank with temporal decay
+      // Apply visibility before ranking and LIMIT so foreign hits cannot crowd out this scope.
+      const { kind, id } = this.scopeIdentity(scope);
       const candidates = this.db.prepare(`
         SELECT mc.source, mc.heading, mc.content, mc.updated_at, mc.owner, mc.scope, mc.scope_id,
                bm25(memory_chunks_fts) AS bm25_score
         FROM memory_chunks_fts fts
         JOIN memory_chunks mc ON mc.id = fts.rowid
         WHERE memory_chunks_fts MATCH ?
+          AND mc.scope = ? AND (? IS NULL OR mc.scope_id = ?)
         ORDER BY bm25(memory_chunks_fts)
         LIMIT ?
-      `).all(sanitized, limit * 5) as Array<MemoryChunk & { updated_at: string; bm25_score: number; owner: string; scope: string; scope_id: string | null }>;
-
-      // Filter by scope visibility
-      const visible = this.filterByScope(candidates, scope);
+      `).all(sanitized, kind, id, id, limit * 5) as Array<MemoryChunk & { updated_at: string; bm25_score: number; owner: string; scope: string; scope_id: string | null }>;
 
       // Apply temporal decay: 30-day half-life
       // BM25 returns negative values (lower = better match), so negate for scoring
       const now = Date.now();
       const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
 
-      const scored = visible.map(c => {
+      const scored = candidates.map(c => {
         const relevance = -c.bm25_score;
         const ageMs = now - new Date(c.updated_at).getTime();
         // MEMORY.md chunks are evergreen — no decay
@@ -195,22 +194,20 @@ export class MemoryIndex {
     }
   }
 
-  /**
-   * Filter memory chunks by scope visibility rules:
-   * - scope undefined (global/backward-compat): all chunks visible
-   * - scope.kind === 'user': shared+global + user's own private chunks
-   * - scope.kind === 'family': shared+global + family shared chunks (no user-private)
-   */
+  /** Same strict scope identity for SQL candidates and vector visibility. */
+  private scopeIdentity(scope?: { chatId?: string; userId?: string; agentId?: string }): { kind: string; id: string | null } {
+    if (scope?.agentId) return { kind: 'agent', id: scope.agentId };
+    if (scope?.chatId) return { kind: 'chat', id: scope.chatId };
+    if (scope?.userId) return { kind: 'user', id: scope.userId };
+    return { kind: 'global', id: null };
+  }
+
   private filterByScope<T extends { owner: string; scope: string; scope_id: string | null }>(
     chunks: T[],
     scope?: { chatId?: string; userId?: string; agentId?: string },
   ): T[] {
-    // Strict scoping: a search sees ONLY chunks of its own scope — no cross-scope merge.
-    // Precedence mirrors MemoryStore.resolveMemDir: agent > chat > user > global.
-    if (scope?.agentId) return chunks.filter(c => c.scope === 'agent' && c.scope_id === scope.agentId);
-    if (scope?.chatId) return chunks.filter(c => c.scope === 'chat' && c.scope_id === scope.chatId);
-    if (scope?.userId) return chunks.filter(c => c.scope === 'user' && c.scope_id === scope.userId);
-    return chunks.filter(c => c.scope === 'global'); // chatless / global context
+    const { kind, id } = this.scopeIdentity(scope);
+    return chunks.filter(chunk => chunk.scope === kind && (id === null || chunk.scope_id === id));
   }
 
   /** Reindex all provided files. */

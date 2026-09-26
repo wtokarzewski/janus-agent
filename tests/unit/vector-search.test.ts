@@ -3,11 +3,16 @@
  * Embedder is tested with mock to avoid downloading the model in CI.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import BetterSqlite3 from 'better-sqlite3';
 import { MemoryIndex } from '../../src/memory/memory-index.js';
-import { cosineSimilarity } from '../../src/memory/embedder.js';
+import { cosineSimilarity, embed } from '../../src/memory/embedder.js';
 import { migrations } from '../../src/db/migrations.js';
+
+vi.mock('../../src/memory/embedder.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/memory/embedder.js')>();
+  return { ...actual, embed: vi.fn(async () => new Float32Array([1, 0])) };
+});
 
 function createTestDb() {
   const raw = new BetterSqlite3(':memory:');
@@ -53,6 +58,23 @@ describe('MemoryIndex hybrid search', () => {
   beforeEach(() => {
     db = createTestDb();
     index = new MemoryIndex(db);
+  });
+
+  it.each([
+    ['user', { userId: 'mine' }], ['chat', { chatId: 'mine' }],
+    ['agent', { agentId: 'mine' }], ['global', {}],
+  ] as const)('retains weak in-scope FTS hits for %s in hybrid and embedding fallback', async (kind, scope) => {
+    for (let i = 0; i < 50; i++) {
+      index.indexFile(`foreign-${i}.md`, '## Keyword\nkeyword keyword foreignsecret', 'other', 'user', 'other');
+    }
+    db.db.prepare('UPDATE memory_chunks SET embedding = ?').run(Buffer.from(new Float32Array([1, 0]).buffer));
+    index.indexFile('mine.md', `## Notes\nkeyword ownfact ${'padding '.repeat(200)}`, kind === 'global' ? 'shared' : 'mine', kind, kind === 'global' ? null : 'mine');
+    const hybrid = await index.hybridSearch('keyword', 4, scope);
+    expect(hybrid.map(row => row.source)).toEqual(['mine.md']);
+    expect(JSON.stringify(hybrid)).not.toContain('foreignsecret');
+    vi.mocked(embed).mockRejectedValueOnce(new Error('embedding unavailable'));
+    const fallback = await index.hybridSearch('keyword', 4, scope);
+    expect(fallback).toEqual(hybrid);
   });
 
   it('should fall back to FTS results when no embeddings exist', async () => {
