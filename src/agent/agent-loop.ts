@@ -4,6 +4,7 @@ import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
 import type { LLMMessage, ToolCall, ToolContentBlock, UserContentBlock } from '../llm/types.js';
 import { userContentText } from '../llm/types.js';
+import { toUserMessage, sameSteeringIdentity } from './inbound-message.js';
 import type { ProviderRegistry } from '../llm/provider-registry.js';
 import { isContextLengthError, isNonRetryableClientError } from '../llm/retry.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
@@ -184,6 +185,8 @@ export class AgentLoop {
       signal: opts?.signal,
     } as InboundMessage & { signal?: AbortSignal };
 
+    const ownsProcessing = !this.deps.bus.isProcessing(msg.chatId);
+    if (ownsProcessing) this.deps.bus.markProcessing(msg.chatId);
     try {
       const response = await this.processMessage(msg);
       return response.content;
@@ -191,6 +194,8 @@ export class AgentLoop {
       const errorText = err instanceof Error ? err.message : String(err);
       log.error(`processDirect error: ${errorText}`);
       return `Error: ${errorText}`;
+    } finally {
+      if (ownsProcessing) this.deps.bus.clearProcessing(msg.chatId);
     }
   }
 
@@ -424,32 +429,10 @@ export class AgentLoop {
     // 3. Build messages: [system, ...history, user]
     const history = await this.deps.sessions.getHistory(sessionKey);
     const cleanHistory = repairToolMessages(history);
-    let userContent = msg.replyContext
-      ? `[Reply to ${msg.replyContext}]\n\n${msg.content}`
-      : msg.content;
-
-    // Context injection: for cron/heartbeat jobs, inject recent messages from the target user's
-    // primary session so the cron agent can see confirmations like "done" or "cancel".
-    if (msg.cronDepth && msg.cronDepth > 0) {
-      const injected = await this.injectTargetSessionContext(msg, agentId);
-      if (injected) {
-        userContent = `${injected}\n\n${userContent}`;
-      }
-    }
-
-    // Build user message — multimodal if images attached, plain string otherwise
-    const userMessage: LLMMessage = msg.images?.length
-      ? {
-          role: 'user',
-          content: [
-            { type: 'text', text: userContent },
-            ...msg.images.map(img => ({
-              type: 'image' as const,
-              source: { type: 'base64' as const, media_type: img.mimeType, data: img.data },
-            })),
-          ],
-        }
-      : { role: 'user', content: userContent };
+    const injected = msg.cronDepth && msg.cronDepth > 0
+      ? await this.injectTargetSessionContext(msg, agentId)
+      : '';
+    const userMessage = toUserMessage(msg, injected ?? '');
 
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
@@ -481,7 +464,7 @@ export class AgentLoop {
       });
 
     const systemParts = { staticPart, dynamicPart };
-    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose, msg.lane, systemParts, pinnedPaths ?? new Set<string>());
+    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose, msg.lane, systemParts, pinnedPaths ?? new Set<string>(), msg);
 
     // 6. Save final assistant message — unless the turn produced no text (e.g. a
     // reply made only with a reaction). An empty assistant message mid-history is
@@ -801,6 +784,7 @@ export class AgentLoop {
     lane?: string,
     systemParts?: { staticPart: string; dynamicPart: string },
     pinnedPaths: Set<string> = new Set(),
+    activeInput?: InboundMessage,
   ): Promise<IterateResult> {
     let lastContent = '';
     let totalToolCalls = 0;
@@ -831,9 +815,13 @@ export class AgentLoop {
 
       // Inject steering messages from user (sent while agent was processing)
       if (chatId) {
-        const steering = this.deps.bus.drainSteering(chatId);
+        const steering = this.deps.bus.drainSteering(chatId, next => {
+          if (!activeInput || !sameSteeringIdentity(activeInput, next)) return false;
+          const nextAgent = this.deps.agentResolver?.resolve(next).id ?? 'main';
+          return nextAgent === (agentCtx?.id ?? 'main');
+        });
         for (const s of steering) {
-          const steerMsg: LLMMessage = { role: 'user', content: s.content };
+          const steerMsg = toUserMessage(s);
           messages.push(steerMsg);
           // The latest message is what "this message" means from now on (e.g. the react tool's default target)
           if (reqCtx && s.channelMessageId !== undefined) reqCtx.channelMessageId = s.channelMessageId;

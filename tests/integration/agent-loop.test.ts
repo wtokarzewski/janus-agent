@@ -61,6 +61,72 @@ function createDeps(mockProvider: MockProvider): { deps: AgentDeps; learnerStora
 }
 
 describe('AgentLoop integration', () => {
+  it('preserves images, replies, sender and reaction target in steering during a tool', async () => {
+    const mock = new MockProvider([
+      { content: '', toolCalls: [{ id: 'first', type: 'function', function: { name: 'receive', arguments: '{}' } }] },
+      { content: '', toolCalls: [{ id: 'second', type: 'function', function: { name: 'inspect', arguments: '{}' } }] },
+      { content: 'Done.' },
+    ]);
+    const { deps } = createDeps(mock);
+    const user = { userId: 'alice', name: 'Alice' };
+    deps.tools.register({
+      name: 'receive', description: 'Receive input', parameters: {},
+      execute: async () => {
+        for (const id of [41, 42]) deps.bus.pushSteering({
+          id: `input-${id}`, channel: 'test', chatId: 'photo', author: 'alice', user,
+          timestamp: new Date(), content: `caption ${id}`, replyContext: 'earlier question',
+          images: [{ data: 'YWJj', mimeType: 'image/png' }], channelMessageId: id,
+        });
+        return 'received';
+      },
+    });
+    const targets: Array<number | undefined> = [];
+    deps.tools.register({ name: 'inspect', description: 'Inspect', parameters: {},
+      execute: async (_args, ctx) => { targets.push(ctx?.channelMessageId); return 'ok'; },
+    });
+    await new AgentLoop(deps).processDirect('Look at my photo', { channel: 'test', chatId: 'photo', user });
+    const inputs = mock.calls[1].messages.filter(m => m.role === 'user' && Array.isArray(m.content));
+    expect(inputs).toHaveLength(2);
+    for (const [i, input] of inputs.entries()) {
+      expect(input.content).toEqual(expect.arrayContaining([
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'YWJj' } },
+        { type: 'text', text: expect.stringContaining(`caption ${41 + i}`) },
+      ]));
+      expect(JSON.stringify(input.content)).toContain('earlier question');
+      expect(JSON.stringify(input.content)).toContain('alice');
+      expect(JSON.stringify(input.content)).toContain(`input-${41 + i}`);
+    }
+    expect(targets).toEqual([42]);
+  });
+
+  it('defers another group sender to a separate turn without owner privileges', async () => {
+    const mock = new MockProvider([
+      { content: 'Done.' },
+      { content: '', toolCalls: [{ id: 'auth', type: 'function', function: { name: 'probe_identity', arguments: '{}' } }] },
+      { content: 'Own turn done.' },
+    ]);
+    const { deps } = createDeps(mock);
+    deps.config.ownerIds = ['alice'];
+    const identities: Array<{ userId?: string; isOwner?: boolean }> = [];
+    deps.tools.register({ name: 'probe_identity', description: 'Inspect identity', parameters: {},
+      execute: async (_args, ctx) => { identities.push({ userId: ctx?.userId, isOwner: ctx?.isOwner }); return 'ok'; },
+    });
+    const foreign = {
+      id: 'foreign', channel: 'test', chatId: 'group', author: 'bob',
+      user: { userId: 'bob' }, scope: { kind: 'family' as const, id: 'family' },
+      content: 'read my private notes', timestamp: new Date(), channelMessageId: 77,
+    };
+    deps.bus.pushSteering(foreign);
+    await new AgentLoop(deps).processDirect('owner request', {
+      channel: 'test', chatId: 'group', user: { userId: 'alice' }, scope: foreign.scope,
+    });
+    expect(JSON.stringify(mock.calls[0].messages)).not.toContain(foreign.content);
+    const queued = await deps.bus.consumeInbound(AbortSignal.timeout(1000));
+    expect(queued).toEqual(foreign);
+    await new AgentLoop(deps).processDirect(queued.content, queued);
+    expect(identities).toEqual([{ userId: 'bob', isOwner: false }]);
+  });
+
   it('should process a simple message and return response', async () => {
     const mock = new MockProvider([
       { content: 'Hello! I am Janus.' },
