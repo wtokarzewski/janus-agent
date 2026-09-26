@@ -4,6 +4,7 @@ import type { ContextualTool, ToolContext } from '../types.js';
 import { validatePath } from '../validate-path.js';
 
 export class ListDirTool implements ContextualTool {
+  readonly readOnly = true;
   name = 'list_dir';
   description = 'List files and directories in a given path. Shows type (file/dir) and size for each entry.';
   parameters = {
