@@ -187,6 +187,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
 
   tools.setContext({
     workspaceDir: config.workspace.dir,
+    onFileChanged: path => memory.refreshFile(path),
     execDenyPatterns: [...config.tools.execDenyPatterns, ...(config.tools.execDenyPatternsExtra ?? [])],
     execTimeout: config.tools.execTimeout,
     maxFileSize: config.tools.maxFileSize,
