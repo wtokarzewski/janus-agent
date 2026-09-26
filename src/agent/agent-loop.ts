@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
@@ -808,6 +809,7 @@ export class AgentLoop {
     let contextRetries = 0;
     let llmRetries = 0;
     const seenToolCalls = new Set<string>();
+    const readObservations = new Map<string, string>();
     const toolFailCounts = new Map<string, number>(); // tool name → consecutive failure count
     const MAX_ITERATIONS = 200; // Hard safety limit — prevent infinite loops
     const recentToolSigs: string[] = []; // Track recent tool call signatures for loop detection
@@ -1012,10 +1014,10 @@ export class AgentLoop {
 
       for (const tc of response.toolCalls) {
         const callSig = `${tc.function.name}:${tc.function.arguments}`;
-        if (seenToolCalls.has(callSig)) {
+        if (!this.deps.tools.get(tc.function.name)?.readOnly && seenToolCalls.has(callSig)) {
           dupMessages.push({ role: 'tool', tool_call_id: tc.id, content: 'Skipped: identical tool call already executed. Try a different approach.' });
         } else {
-          seenToolCalls.add(callSig);
+          if (!this.deps.tools.get(tc.function.name)?.readOnly) seenToolCalls.add(callSig);
           uniqueCalls.push(tc);
         }
       }
@@ -1118,13 +1120,26 @@ export class AgentLoop {
         }
       }
 
-      // No-progress guard: if every tool call this turn was a duplicate of one we
-      // already executed, the model produced no new work. A few of these in a row
-      // means the model is wedged repeating itself — bail with whatever text we have.
-      if (response.toolCalls.length > 0 && uniqueCalls.length === 0) {
+      // Repeated reads execute, but unchanged observations cannot keep a turn alive.
+      // A successful side effect makes all prior observations potentially stale.
+      const hasMutation = uniqueCalls.some((tc, index) => !this.deps.tools.get(tc.function.name)?.readOnly
+        && !String(toolResults[index].content).startsWith('Error:'));
+      if (hasMutation) readObservations.clear();
+      let madeProgress = false;
+      for (const [index, tc] of uniqueCalls.entries()) {
+        if (!this.deps.tools.get(tc.function.name)?.readOnly) {
+          madeProgress = true;
+          continue;
+        }
+        const signature = `${tc.function.name}:${tc.function.arguments}`;
+        const fingerprint = createHash('sha256').update(JSON.stringify(toolResults[index].content)).digest('hex');
+        if (readObservations.get(signature) !== fingerprint) madeProgress = true;
+        readObservations.set(signature, fingerprint);
+      }
+      if (response.toolCalls.length > 0 && !madeProgress) {
         dupOnlyStreak++;
         if (dupOnlyStreak >= DUP_ONLY_LIMIT) {
-          log.warn(`[${sessionKey}] No-progress exit: ${dupOnlyStreak} iterations of all-duplicate tool calls`);
+          log.warn(`[${sessionKey}] No-progress exit: ${dupOnlyStreak} iterations of repeated tool calls without new observations`);
           if (streamCtx && (this.deps.config.streaming?.enabled ?? true)) {
             this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
           }

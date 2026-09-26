@@ -4,6 +4,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { ReadFileTool } from '../../src/tools/builtin/read-file.js';
+import { EditFileTool } from '../../src/tools/builtin/edit-file.js';
+import { WriteFileTool } from '../../src/tools/builtin/write-file.js';
+import { ListDirTool } from '../../src/tools/builtin/list-dir.js';
 import { AgentLoop, type AgentDeps } from '../../src/agent/agent-loop.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import { ProviderRegistry } from '../../src/llm/provider-registry.js';
@@ -61,6 +67,69 @@ function createDeps(mockProvider: MockProvider): { deps: AgentDeps; learnerStora
 }
 
 describe('AgentLoop integration', () => {
+  it('reads updated file contents and lists files again after a write', async () => {
+    const call = (id: string, name: string, args: Record<string, unknown>) => ({
+      content: '', toolCalls: [{ id, type: 'function' as const, function: { name, arguments: JSON.stringify(args) } }],
+    });
+    const mock = new MockProvider([
+      call('read-before', 'read_file', { path: 'note.txt' }),
+      call('list-before', 'list_dir', { path: '.' }),
+      call('edit', 'edit_file', { path: 'note.txt', old_string: 'old fact', new_string: 'new fact' }),
+      call('create', 'write_file', { path: 'new.txt', content: 'created' }),
+      call('read-after', 'read_file', { path: 'note.txt' }),
+      call('list-after', 'list_dir', { path: '.' }),
+      { content: 'Done.' },
+    ]);
+    const { deps } = createDeps(mock);
+    await writeFile(join(deps.config.workspace.dir, 'note.txt'), 'old fact');
+    deps.tools.register(new ReadFileTool());
+    deps.tools.register(new WriteFileTool());
+    deps.tools.register(new EditFileTool());
+    deps.tools.register(new ListDirTool());
+    await new AgentLoop(deps).processDirect('update and verify');
+    const messages = mock.calls.at(-1)!.messages;
+    expect(messages.find(m => m.role === 'tool' && m.tool_call_id === 'read-after')?.content).toBe('new fact');
+    expect(messages.find(m => m.role === 'tool' && m.tool_call_id === 'list-after')?.content).toContain('new.txt');
+  });
+
+  it('retries a failed read on a later model request and still deduplicates sends', async () => {
+    const read = (id: string) => ({ content: '', toolCalls: [{ id, type: 'function' as const,
+      function: { name: 'read_file', arguments: '{"path":"late.txt"}' } }] });
+    const send = (id: string) => ({ content: '', toolCalls: [{ id, type: 'function' as const,
+      function: { name: 'send_probe', arguments: '{}' } }] });
+    const mock = new MockProvider([read('fail'), send('send-once'), read('retry'), send('send-again'), { content: 'Done.' }]);
+    const { deps } = createDeps(mock);
+    deps.config.agent.toolRetries = 1;
+    await writeFile(join(deps.config.workspace.dir, 'late.txt'), 'available now');
+    const reader = new ReadFileTool();
+    const execute = reader.execute.bind(reader);
+    let reads = 0;
+    reader.execute = async (args, ctx) => ++reads === 1 ? 'Error: temporarily unavailable' : execute(args, ctx);
+    deps.tools.register(reader);
+    let sends = 0;
+    deps.tools.register({ name: 'send_probe', description: 'Send', parameters: {}, execute: async () => {
+      sends++;
+      return 'sent';
+    } });
+    await new AgentLoop(deps).processDirect('read and send');
+    const messages = mock.calls.at(-1)!.messages;
+    expect(messages.find(m => m.role === 'tool' && m.tool_call_id === 'fail')?.content).toContain('Error:');
+    expect(messages.find(m => m.role === 'tool' && m.tool_call_id === 'retry')?.content).toBe('available now');
+    expect(sends).toBe(1);
+  });
+
+  it('stops a model repeatedly reading unchanged contents without progress', async () => {
+    const mock = new MockProvider(Array.from({ length: 210 }, (_, i) => ({ content: '', toolCalls: [{
+      id: `read-${i}`, type: 'function' as const, function: { name: 'read_file', arguments: '{"path":"same.txt"}' },
+    }] })));
+    const { deps } = createDeps(mock);
+    deps.tools.register(new ReadFileTool());
+    await writeFile(join(deps.config.workspace.dir, 'same.txt'), 'unchanged');
+    await new AgentLoop(deps).processDirect('read forever');
+    expect(mock.calls.length).toBeLessThanOrEqual(5);
+    expect(mock.calls.length).toBeGreaterThan(1);
+  });
+
   it('should process a simple message and return response', async () => {
     const mock = new MockProvider([
       { content: 'Hello! I am Janus.' },
