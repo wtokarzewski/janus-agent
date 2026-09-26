@@ -348,6 +348,7 @@ export class AgentLoop {
     // 2. Update tool contexts (static — workspace/deny patterns, safe to share across lanes)
     this.deps.tools.setContext({
       workspaceDir: this.deps.config.workspace.dir,
+      onFileChanged: path => this.deps.memory?.refreshFile(path) ?? Promise.resolve(),
       execDenyPatterns: [...this.deps.config.tools.execDenyPatterns, ...(this.deps.config.tools.execDenyPatternsExtra ?? [])],
       execTimeout: this.deps.config.tools.execTimeout,
       maxFileSize: this.deps.config.tools.maxFileSize,

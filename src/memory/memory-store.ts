@@ -1,5 +1,5 @@
-import { readFile, writeFile, mkdir, appendFile, readdir } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { readFile, writeFile, mkdir, appendFile, readdir, lstat, realpath } from 'node:fs/promises';
+import { resolve, join, relative, dirname, sep } from 'node:path';
 import type { JanusConfig } from '../config/schema.js';
 import type { MemoryIndex, MemoryChunk } from './memory-index.js';
 import type { InboundMessage } from '../bus/types.js';
@@ -43,6 +43,9 @@ export class MemoryStore {
   private memoryDir: string;
   private config: JanusConfig;
   private index: MemoryIndex | null = null;
+  private versions = new Map<string, string>();
+  private scopeUpdates = new Map<string, Promise<void>>();
+  private embeddingJobs = new Map<string, Promise<void>>();
 
   constructor(config: JanusConfig) {
     this.config = config;
@@ -51,102 +54,143 @@ export class MemoryStore {
 
   setIndex(index: MemoryIndex): void {
     this.index = index;
+    this.versions.clear();
   }
 
   /** Search memory via FTS5 index. Falls back to full readMemory() if no index. */
   async search(query: string, limit = 5, scope?: MemoryScope): Promise<MemoryChunk[]> {
     if (!this.index) return [];
+    await this.refreshScope(scope);
     return this.index.search(query, limit, scope);
   }
 
   /** Hybrid search: FTS5 + vector similarity via RRF. Falls back to FTS-only if no embeddings. */
   async hybridSearch(query: string, limit = 5, scope?: MemoryScope): Promise<MemoryChunk[]> {
     if (!this.index) return [];
+    await this.refreshScope(scope);
     return this.index.hybridSearch(query, limit, scope,
       this.config.memory?.textWeight ?? 1.0,
       this.config.memory?.vectorWeight ?? 1.0);
   }
 
-  /** Reindex all memory files into the FTS5 index. */
+  /** Refresh FTS on startup; inference remains deferred by bootstrap. */
   async reindex(): Promise<void> {
-    if (!this.index) return;
-    const files = await this.collectMemoryFiles();
-    this.index.reindex(files);
+    for (const scope of await this.memoryScopes()) await this.refreshScope(scope, false);
   }
 
-  /** Reindex all memory files with vector embeddings (slower, requires model download). */
   async reindexWithEmbeddings(): Promise<void> {
     if (!this.index) return;
-    const files = await this.collectMemoryFiles();
-    for (const file of files) {
-      if (file.content.trim()) {
-        await this.index.indexFileWithEmbeddings(file.source, file.content, file.owner, file.scope, file.scopeId ?? null);
+    for (const scope of await this.memoryScopes()) {
+      await this.refreshScope(scope, false);
+      const [owner, kind, id] = this.indexScope(scope);
+      for (const source of this.index.sources(owner, kind, id)) this.queueEmbedding(source, scope);
+    }
+    await Promise.all(this.embeddingJobs.values());
+  }
+
+  private async memoryScopes(): Promise<MemoryScope[]> {
+    const scopes: MemoryScope[] = [{}];
+    for (const [folder, key] of [['users', 'userId'], ['chats', 'chatId'], ['agents', 'agentId']] as const) {
+      const root = resolve(this.config.workspace.dir, '.janus', folder);
+      try {
+        for (const entry of await readdir(root, { withFileTypes: true })) {
+          if (entry.isDirectory()) scopes.push({ [key]: entry.name });
+        }
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       }
+    }
+    return scopes;
+  }
+
+  private indexScope(scope: MemoryScope): [string, string, string | null] {
+    if (scope.agentId) return [scope.agentId, 'agent', scope.agentId];
+    if (scope.chatId) return [scope.chatId, 'chat', scope.chatId];
+    if (scope.userId) return [scope.userId, 'user', scope.userId];
+    return ['shared', 'global', null];
+  }
+
+  /** Called after a validated tool write; ignore paths outside memory directories. */
+  async refreshFile(path: string): Promise<void> {
+    if (!this.index || !path.endsWith('.md')) return;
+    const workspace = await realpath(this.config.workspace.dir);
+    const parent = dirname(resolve(path));
+    const globalDir = resolve(workspace, relative(this.config.workspace.dir, this.memoryDir));
+    if (parent === globalDir) return this.refreshScope({});
+    const parts = relative(workspace, parent).split(sep);
+    if (parts.length !== 4 || parts[0] !== '.janus' || parts[3] !== 'memory') return;
+    const key = { users: 'userId', chats: 'chatId', agents: 'agentId' }[parts[1]];
+    if (key) await this.refreshScope({ [key]: parts[2] });
+  }
+
+  private async refreshScope(scope: MemoryScope = {}, embeddings = true): Promise<void> {
+    if (!this.index) return;
+    const dir = this.resolveMemDir(scope);
+    const previous = this.scopeUpdates.get(dir);
+    const update = (async () => {
+      if (previous) await previous.catch(() => {});
+      await this.refreshScopeFiles(scope, embeddings);
+    })();
+    this.scopeUpdates.set(dir, update);
+    try { await update; }
+    finally { if (this.scopeUpdates.get(dir) === update) this.scopeUpdates.delete(dir); }
+  }
+
+  private async refreshScopeFiles(scope: MemoryScope, embeddings: boolean): Promise<void> {
+    if (!this.index) return;
+    const dir = this.resolveMemDir(scope);
+    const [owner, kind, id] = this.indexScope(scope);
+    const remaining = new Set(this.index.sources(owner, kind, id));
+    const workspace = await realpath(this.config.workspace.dir);
+    const expectedDir = resolve(workspace, relative(this.config.workspace.dir, dir));
+    let entries: string[] = [];
+    try {
+      // Reject symlinked directories as well as files, including cross-scope aliases.
+      if (expectedDir.startsWith(workspace + sep) && await realpath(dir) === expectedDir) {
+        entries = await readdir(dir);
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    for (const source of entries) {
+      // The global activity log can contain facts from multiple private scopes.
+      // Backups preserve older facts for recovery, not current search results.
+      if (!source.endsWith('.md') || source === 'HISTORY.md' || source.startsWith('MEMORY.backup.')) continue;
+      const path = join(dir, source);
+      const stat = await lstat(path).catch((err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT') return null;
+        throw err;
+      });
+      if (!stat?.isFile() || stat.isSymbolicLink()) continue;
+      const version = `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+      remaining.delete(source);
+      if (this.versions.get(path) === version) continue;
+      const content = await readFile(path, 'utf8').catch((err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT') return '';
+        throw err;
+      });
+      this.index.indexFile(source, content, owner, kind, id);
+      this.versions.set(path, version);
+      if (embeddings && this.config.memory?.vectorSearch && content.trim()) this.queueEmbedding(source, scope);
+    }
+    for (const source of remaining) {
+      this.index.indexFile(source, '', owner, kind, id);
+      this.versions.delete(join(dir, source));
     }
   }
 
-  private async collectMemoryFiles(): Promise<Array<{ source: string; content: string; owner?: string; scope?: string; scopeId?: string | null }>> {
-    const files: Array<{ source: string; content: string; owner?: string; scope?: string; scopeId?: string | null }> = [];
-
-    // Shared global files (workspace memory/)
-    const memoryContent = await this.readMemory();
-    if (memoryContent.trim()) {
-      files.push({ source: 'MEMORY.md', content: memoryContent, owner: 'shared', scope: 'global' });
-    }
-    const today = new Date();
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      const dateStr = localDate(date);
-      const content = await this.readDaily(dateStr);
-      if (content.trim()) {
-        files.push({ source: `${dateStr}.md`, content, owner: 'shared', scope: 'global' });
-      }
-    }
-
-    // Per-user files: scan .janus/users/{userId}/memory/
-    if (this.config.users.length > 0) {
-      for (const user of this.config.users) {
-        const userMemDir = resolve(this.config.workspace.dir, '.janus', 'users', user.id, 'memory');
-        const userFiles = await this.collectDirMemoryFiles(userMemDir);
-        for (const f of userFiles) {
-          files.push({ ...f, owner: user.id, scope: 'user', scopeId: user.id });
-        }
-      }
-    }
-
-    // Per-chat files: scan .janus/chats/{chatId}/memory/
-    try {
-      const chatsRoot = resolve(this.config.workspace.dir, '.janus', 'chats');
-      for (const chatId of await readdir(chatsRoot)) {
-        const chatFiles = await this.collectDirMemoryFiles(resolve(chatsRoot, chatId, 'memory'));
-        for (const f of chatFiles) {
-          files.push({ ...f, owner: chatId, scope: 'chat', scopeId: chatId });
-        }
-      }
-    } catch {
-      // No chats dir yet — fine
-    }
-
-    return files;
-  }
-
-  /** Collect memory files from a directory. */
-  private async collectDirMemoryFiles(dir: string): Promise<Array<{ source: string; content: string }>> {
-    const files: Array<{ source: string; content: string }> = [];
-    try {
-      const entries = await readdir(dir);
-      for (const entry of entries) {
-        if (!entry.endsWith('.md')) continue;
-        const content = await this.readSafe(join(dir, entry));
-        if (content.trim()) {
-          files.push({ source: entry, content });
-        }
-      }
-    } catch {
-      // Directory doesn't exist — that's fine
-    }
-    return files;
+  private queueEmbedding(source: string, scope: MemoryScope): void {
+    const index = this.index;
+    if (!index) return;
+    const key = join(this.resolveMemDir(scope), source);
+    const previous = this.embeddingJobs.get(key);
+    const job = (async () => {
+      await new Promise<void>(done => setImmediate(done));
+      if (previous) await previous;
+      await index.updateFileEmbeddings(source, ...this.indexScope(scope));
+    })().catch(err => log.warn(`Memory embedding update failed: ${err instanceof Error ? err.message : String(err)}`));
+    this.embeddingJobs.set(key, job);
+    void job.finally(() => { if (this.embeddingJobs.get(key) === job) this.embeddingJobs.delete(key); });
   }
 
   get hasIndex(): boolean {
@@ -187,6 +231,7 @@ export class MemoryStore {
         throw new Error('Write verification failed: content mismatch');
       }
       this.writeFailures = 0;
+      await this.refreshScope(scope);
     } catch (err) {
       this.writeFailures++;
       log.error(`Memory write failed (${this.writeFailures}/3): ${err instanceof Error ? err.message : String(err)}`);
@@ -206,6 +251,7 @@ export class MemoryStore {
     const path = join(dir, `${this.todayDate()}.md`);
     const prefix = (await this.readSafe(path)) ? '\n' : `# ${this.todayDate()}\n\n`;
     await appendFile(path, `${prefix}${entry}\n`, 'utf-8');
+    await this.refreshScope(scope);
   }
 
   async readDaily(date: string | undefined, scope: MemoryScope = {}): Promise<string> {

@@ -33,10 +33,9 @@ export class MemoryIndex {
   /** Index a markdown file's content by splitting into heading-based chunks. */
   indexFile(source: string, content: string, owner = 'shared', scope = 'global', scopeId: string | null = null): void {
     const chunks = splitMarkdownChunks(source, content);
-    if (chunks.length === 0) return;
 
     const tx = this.db.transaction(() => {
-      this.db.prepare('DELETE FROM memory_chunks WHERE source = ? AND owner = ? AND scope = ?').run(source, owner, scope);
+      this.db.prepare('DELETE FROM memory_chunks WHERE source = ? AND owner = ? AND scope = ? AND scope_id IS ?').run(source, owner, scope, scopeId);
       const insert = this.db.prepare(
         'INSERT INTO memory_chunks (source, heading, content, updated_at, owner, scope, scope_id) VALUES (?, ?, ?, datetime(\'now\'), ?, ?, ?)',
       );
@@ -150,17 +149,20 @@ export class MemoryIndex {
     // First do the regular FTS index
     this.indexFile(source, content, owner, scope, scopeId);
 
-    // Then compute and store embeddings (yields to event loop between chunks).
-    // indexFile() above dropped and reinserted the rows, so every embedding column is
-    // NULL again — but the vectors themselves only depend on the chunk text. Look them
-    // up by content hash first, so an unchanged workspace costs no model inference.
+    await this.updateFileEmbeddings(source, owner, scope, scopeId);
+  }
+
+  /** Fill embeddings for current rows without replacing the already fresh FTS snapshot. */
+  async updateFileEmbeddings(source: string, owner = 'shared', scope = 'global', scopeId: string | null = null): Promise<void> {
+    // Cache by text; row identity and content are checked again after inference
+    // so a delayed vector cannot overwrite a newer file snapshot or another scope.
     try {
       const { embed, EMBEDDING_MODEL } = await import('./embedder.js');
       const chunks = this.db.prepare(
-        'SELECT id, content FROM memory_chunks WHERE source = ? AND owner = ? AND scope = ?',
-      ).all(source, owner, scope) as Array<{ id: number; content: string }>;
+        'SELECT id, content FROM memory_chunks WHERE source = ? AND owner = ? AND scope = ? AND scope_id IS ?',
+      ).all(source, owner, scope, scopeId) as Array<{ id: number; content: string }>;
 
-      const updateStmt = this.db.prepare('UPDATE memory_chunks SET embedding = ? WHERE id = ?');
+      const updateStmt = this.db.prepare('UPDATE memory_chunks SET embedding = ? WHERE id = ? AND content = ? AND source = ? AND owner = ? AND scope = ? AND scope_id IS ?');
       const readCache = this.db.prepare('SELECT embedding FROM embedding_cache WHERE content_hash = ?');
       const writeCache = this.db.prepare(
         'INSERT OR REPLACE INTO embedding_cache (content_hash, embedding) VALUES (?, ?)',
@@ -180,7 +182,7 @@ export class MemoryIndex {
           writeCache.run(hash, buffer);
           computed++;
         }
-        updateStmt.run(buffer, chunk.id);
+        updateStmt.run(buffer, chunk.id, chunk.content, source, owner, scope, scopeId);
         // embed() already yields, but yield again after SQLite write
         // to keep event loop responsive during bulk indexing
       }
@@ -211,6 +213,11 @@ export class MemoryIndex {
     if (scope?.chatId) return chunks.filter(c => c.scope === 'chat' && c.scope_id === scope.chatId);
     if (scope?.userId) return chunks.filter(c => c.scope === 'user' && c.scope_id === scope.userId);
     return chunks.filter(c => c.scope === 'global'); // chatless / global context
+  }
+
+  sources(owner: string, scope: string, scopeId: string | null): string[] {
+    return (this.db.prepare('SELECT DISTINCT source FROM memory_chunks WHERE owner = ? AND scope = ? AND scope_id IS ?')
+      .all(owner, scope, scopeId) as Array<{ source: string }>).map(row => row.source);
   }
 
   /** Reindex all provided files. */
