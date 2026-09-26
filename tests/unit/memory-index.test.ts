@@ -74,6 +74,20 @@ describe('MemoryIndex', () => {
     index = new MemoryIndex(db);
   });
 
+  it.each([
+    ['user', { userId: 'mine' }], ['chat', { chatId: 'mine' }],
+    ['agent', { agentId: 'mine' }], ['global', {}],
+  ] as const)('filters %s before the candidate limit even with 50 stronger foreign hits', (kind, scope) => {
+    for (let i = 0; i < 50; i++) {
+      index.indexFile(`foreign-${i}.md`, '## Keyword\nkeyword keyword foreignsecret', 'other', 'user', 'other');
+    }
+    const content = `keyword ownfact ${'padding '.repeat(200)}`;
+    index.indexFile('mine.md', `## Notes\n${content}`, kind === 'global' ? 'shared' : 'mine', kind, kind === 'global' ? null : 'mine');
+    const results = index.search('keyword', 8, scope);
+    expect(results).toEqual([{ source: 'mine.md', heading: 'Notes', content: content.trim() }]);
+    expect(JSON.stringify(results)).not.toContain('foreignsecret');
+  });
+
   it('should index and search content', () => {
     index.indexFile('MEMORY.md', `## Architecture\n\nThe agent uses a flat loop architecture.\n\n## Tools\n\nSeven built-in tools: exec, read, write, edit, list, message, spawn.`);
 
