@@ -1,9 +1,11 @@
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
 import type { LLMMessage, ToolCall, ToolContentBlock, UserContentBlock } from '../llm/types.js';
 import { userContentText } from '../llm/types.js';
+import { toUserMessage, sameSteeringIdentity } from './inbound-message.js';
 import type { ProviderRegistry } from '../llm/provider-registry.js';
 import { isContextLengthError, isNonRetryableClientError } from '../llm/retry.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
@@ -184,6 +186,8 @@ export class AgentLoop {
       signal: opts?.signal,
     } as InboundMessage & { signal?: AbortSignal };
 
+    const ownsProcessing = !this.deps.bus.isProcessing(msg.chatId);
+    if (ownsProcessing) this.deps.bus.markProcessing(msg.chatId);
     try {
       const response = await this.processMessage(msg);
       return response.content;
@@ -191,6 +195,8 @@ export class AgentLoop {
       const errorText = err instanceof Error ? err.message : String(err);
       log.error(`processDirect error: ${errorText}`);
       return `Error: ${errorText}`;
+    } finally {
+      if (ownsProcessing) this.deps.bus.clearProcessing(msg.chatId);
     }
   }
 
@@ -426,32 +432,10 @@ export class AgentLoop {
     // 3. Build messages: [system, ...history, user]
     const history = await this.deps.sessions.getHistory(sessionKey);
     const cleanHistory = repairToolMessages(history);
-    let userContent = msg.replyContext
-      ? `[Reply to ${msg.replyContext}]\n\n${msg.content}`
-      : msg.content;
-
-    // Context injection: for cron/heartbeat jobs, inject recent messages from the target user's
-    // primary session so the cron agent can see confirmations like "done" or "cancel".
-    if (msg.cronDepth && msg.cronDepth > 0) {
-      const injected = await this.injectTargetSessionContext(msg, agentId);
-      if (injected) {
-        userContent = `${injected}\n\n${userContent}`;
-      }
-    }
-
-    // Build user message — multimodal if images attached, plain string otherwise
-    const userMessage: LLMMessage = msg.images?.length
-      ? {
-          role: 'user',
-          content: [
-            { type: 'text', text: userContent },
-            ...msg.images.map(img => ({
-              type: 'image' as const,
-              source: { type: 'base64' as const, media_type: img.mimeType, data: img.data },
-            })),
-          ],
-        }
-      : { role: 'user', content: userContent };
+    const injected = msg.cronDepth && msg.cronDepth > 0
+      ? await this.injectTargetSessionContext(msg, agentId)
+      : '';
+    const userMessage = toUserMessage(msg, injected ?? '');
 
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
@@ -483,7 +467,7 @@ export class AgentLoop {
       });
 
     const systemParts = { staticPart, dynamicPart };
-    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose, msg.lane, systemParts, pinnedPaths ?? new Set<string>(), buildContext);
+    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose, msg.lane, systemParts, pinnedPaths ?? new Set<string>(), buildContext, msg);
 
     // 6. Save final assistant message — unless the turn produced no text (e.g. a
     // reply made only with a reaction). An empty assistant message mid-history is
@@ -804,6 +788,7 @@ export class AgentLoop {
     systemParts?: { staticPart: string; dynamicPart: string },
     pinnedPaths: Set<string> = new Set(),
     rebuildContext?: (summary?: string) => Promise<ContextResult>,
+    activeInput?: InboundMessage,
   ): Promise<IterateResult> {
     let lastContent = '';
     let totalToolCalls = 0;
@@ -811,6 +796,7 @@ export class AgentLoop {
     let contextRetries = 0;
     let llmRetries = 0;
     const seenToolCalls = new Set<string>();
+    const readObservations = new Map<string, string>();
     const toolFailCounts = new Map<string, number>(); // tool name → consecutive failure count
     const MAX_ITERATIONS = 200; // Hard safety limit — prevent infinite loops
     const recentToolSigs: string[] = []; // Track recent tool call signatures for loop detection
@@ -836,9 +822,13 @@ export class AgentLoop {
 
       // Inject steering messages from user (sent while agent was processing)
       if (chatId) {
-        const steering = this.deps.bus.drainSteering(chatId);
+        const steering = this.deps.bus.drainSteering(chatId, next => {
+          if (!activeInput || !sameSteeringIdentity(activeInput, next)) return false;
+          const nextAgent = this.deps.agentResolver?.resolve(next).id ?? 'main';
+          return nextAgent === (agentCtx?.id ?? 'main');
+        });
         for (const s of steering) {
-          const steerMsg: LLMMessage = { role: 'user', content: s.content };
+          const steerMsg = toUserMessage(s);
           messages.push(steerMsg);
           // The latest message is what "this message" means from now on (e.g. the react tool's default target)
           if (reqCtx && s.channelMessageId !== undefined) reqCtx.channelMessageId = s.channelMessageId;
@@ -1025,10 +1015,10 @@ export class AgentLoop {
 
       for (const tc of response.toolCalls) {
         const callSig = `${tc.function.name}:${tc.function.arguments}`;
-        if (seenToolCalls.has(callSig)) {
+        if (!this.deps.tools.get(tc.function.name)?.readOnly && seenToolCalls.has(callSig)) {
           dupMessages.push({ role: 'tool', tool_call_id: tc.id, content: 'Skipped: identical tool call already executed. Try a different approach.' });
         } else {
-          seenToolCalls.add(callSig);
+          if (!this.deps.tools.get(tc.function.name)?.readOnly) seenToolCalls.add(callSig);
           uniqueCalls.push(tc);
         }
       }
@@ -1133,13 +1123,26 @@ export class AgentLoop {
         }
       }
 
-      // No-progress guard: if every tool call this turn was a duplicate of one we
-      // already executed, the model produced no new work. A few of these in a row
-      // means the model is wedged repeating itself — bail with whatever text we have.
-      if (response.toolCalls.length > 0 && uniqueCalls.length === 0) {
+      // Repeated reads execute, but unchanged observations cannot keep a turn alive.
+      // A successful side effect makes all prior observations potentially stale.
+      const hasMutation = uniqueCalls.some((tc, index) => !this.deps.tools.get(tc.function.name)?.readOnly
+        && !String(toolResults[index].content).startsWith('Error:'));
+      if (hasMutation) readObservations.clear();
+      let madeProgress = false;
+      for (const [index, tc] of uniqueCalls.entries()) {
+        if (!this.deps.tools.get(tc.function.name)?.readOnly) {
+          madeProgress = true;
+          continue;
+        }
+        const signature = `${tc.function.name}:${tc.function.arguments}`;
+        const fingerprint = createHash('sha256').update(JSON.stringify(toolResults[index].content)).digest('hex');
+        if (readObservations.get(signature) !== fingerprint) madeProgress = true;
+        readObservations.set(signature, fingerprint);
+      }
+      if (response.toolCalls.length > 0 && !madeProgress) {
         dupOnlyStreak++;
         if (dupOnlyStreak >= DUP_ONLY_LIMIT) {
-          log.warn(`[${sessionKey}] No-progress exit: ${dupOnlyStreak} iterations of all-duplicate tool calls`);
+          log.warn(`[${sessionKey}] No-progress exit: ${dupOnlyStreak} iterations of repeated tool calls without new observations`);
           if (streamCtx && (this.deps.config.streaming?.enabled ?? true)) {
             this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'stream_end');
           }
