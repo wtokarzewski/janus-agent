@@ -30,7 +30,8 @@ import {
   routeCall,
   softTrimOldToolResults,
   hardClearOldToolResults,
-  estimateMessagesTokens as estimateMessagesTokensV2,
+  estimateMessagesTokens,
+  estimateRequestTokens,
   DEFAULT_TRANSFORM_SETTINGS,
 } from '../context/context-manager.js';
 
@@ -515,7 +516,10 @@ export class AgentLoop {
     // that raced with each other and silently skipped each other. Now: just one count-based
     // trigger after iterate. Shutdown flush still in flushAllSessions().
     const unflushed = fullSession.messages.length - state.lastFlushed;
-    const sessionTokenEstimate = estimateMessagesTokensV2(fullSession.messages);
+    const freshContext = await buildContext(fullSession.metadata.summary);
+    const sessionTokenEstimate = estimateRequestTokens({
+      messages: fullSession.messages, systemPrompt: freshContext.systemPrompt, tools: toolDefs,
+    });
     if (this.deps.memory && unflushed >= 20 && !state.flushing) {
       this.flushMemory(sessionKey, state.userId, state.chatId).catch(err => {
         log.warn(`Count-aware memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -526,9 +530,9 @@ export class AgentLoop {
     // Trigger threshold uses contextWindow (the real LLM budget) rather than the
     // legacy tokenBudget (which was 5x contextWindow and never fired in time).
     const isEphemeralLane = msg.lane === 'heartbeat' || msg.lane === 'cron';
-    const compactBudget = resolveBudget({ modelContextWindow: this.deps.config.agent.contextWindow });
+    const compactBudget = resolveBudget({ modelContextWindow: this.deps.config.agent.contextWindow, reservedForOutput: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens });
     const compactTokenThreshold = compactBudget.effective * 0.5;
-    if (!isEphemeralLane && (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
+    if (iterResult.outcome === 'success' && !isEphemeralLane && (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
         || sessionTokenEstimate > compactTokenThreshold)) {
       if (this.summarizing.has(sessionKey)) {
         log.debug(`[${sessionKey}] Skipping summarization — already in progress`);
@@ -854,9 +858,10 @@ export class AgentLoop {
       // See docs/superpowers/specs/2026-05-16-context-management-redesign.md.
       const budget = resolveBudget({
         modelContextWindow: this.deps.config.agent.contextWindow,
+        reservedForOutput: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens,
       });
       const systemPromptText = typeof messages[0].content === 'string' ? messages[0].content : '';
-      const router = routeCall({ messages, systemPrompt: systemPromptText, budget });
+      const router = routeCall({ messages, systemPrompt: systemPromptText, tools, budget });
       if (router.route.type !== 'fits') {
         log.info(`[${sessionKey}] route=${router.route.type} (${router.estimatedTokens}/${router.budget} tokens, overflow=${router.overflowTokens})`);
       }
@@ -876,6 +881,18 @@ export class AgentLoop {
         messages = [messages[0], ...repairToolMessages(reloaded.messages), ...pendingNudges];
         if (router.route.type === 'compact_then_truncate') {
           messages = softTrimOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
+        }
+      }
+
+      // A transform is only an attempt: pinned/system/schema costs and a protected
+      // tail may still exceed the budget. Recheck once, without a compaction loop.
+      if (estimateRequestTokens({ messages, tools }) > budget.effective) {
+        messages = hardClearOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
+        const remaining = estimateRequestTokens({ messages, tools });
+        if (remaining > budget.effective) {
+          log.warn(`[${sessionKey}] Request still exceeds context budget (${remaining}/${budget.effective})`);
+          return { content: 'Stopped: the request still exceeds the context budget after compression. Reduce the input or attached context.',
+            iterations: i, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
         }
       }
 
@@ -921,8 +938,7 @@ export class AgentLoop {
 
         // Timeout with high context usage → hard-clear old tool results and retry
         if (isTimeout && contextRetries < 2 && messages.length > 6) {
-          const estTokens = estimateMessagesTokensV2(messages);
-          const budget = resolveBudget({ modelContextWindow: this.deps.config.agent.contextWindow });
+          const estTokens = estimateRequestTokens({ messages, tools });
           if (estTokens > budget.effective * 0.7) {
             contextRetries++;
             log.warn(`[${sessionKey}] LLM timeout with high context (${estTokens}/${budget.effective}), hard-clearing old tool results`);
@@ -1553,34 +1569,6 @@ function repairToolMessages(history: LLMMessage[]): LLMMessage[] {
   }
 
   return repaired;
-}
-
-/** Conservative token estimation: ~2.5 chars per token (better to over-estimate). */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 2.5);
-}
-
-
-function estimateMessagesTokens(messages: LLMMessage[]): number {
-  let total = 0;
-  for (const m of messages) {
-    if ('content' in m && m.content) {
-      if (typeof m.content === 'string') {
-        total += estimateTokens(m.content);
-      } else if (Array.isArray(m.content)) {
-        for (const b of m.content) {
-          if (b.type === 'text') total += estimateTokens(b.text);
-          else if (b.type === 'image') total += 1000; // approximate image token cost
-        }
-      }
-    }
-    if ('tool_calls' in m && m.tool_calls) {
-      for (const tc of m.tool_calls) {
-        total += estimateTokens(tc.function.name + tc.function.arguments);
-      }
-    }
-  }
-  return total;
 }
 
 /**
