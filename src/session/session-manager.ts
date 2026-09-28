@@ -21,6 +21,12 @@ export interface SessionMetadata {
   lastFlushed?: number;
 }
 
+/** Detached summary input; its commit boundary is owned by this manager. */
+export interface CompactionSnapshot {
+  messages: LLMMessage[];
+  previousSummary?: string;
+}
+
 export interface Session {
   metadata: SessionMetadata;
   messages: LLMMessage[];
@@ -35,6 +41,10 @@ export class SessionManager {
   private contextWindow: number;
   private cache = new Map<string, Session>();
   private locks = new Map<string, Promise<void>>();
+  private generations = new WeakMap<Session, number>();
+  private snapshots = new WeakMap<CompactionSnapshot, {
+    key: string; session: Session; generation: number; cutIndex: number; prefix: string;
+  }>();
 
   constructor(config: JanusConfig) {
     this.sessionsDir = resolve(config.workspace.dir, config.workspace.sessionsDir);
@@ -132,6 +142,37 @@ export class SessionManager {
     });
   }
 
+  /** Capture the exact prefix once, before awaiting an external summarizer. */
+  async prepareCompaction(key: string, keepRecentTokens: number): Promise<CompactionSnapshot> {
+    return this.withLock(key, async () => this.captureCompaction(
+      key, await this.getOrCreateInner(key), keepRecentTokens,
+    ));
+  }
+
+  private captureCompaction(key: string, session: Session, keepRecentTokens: number): CompactionSnapshot {
+    const cutIndex = this.findTailCutIndex(session.messages, keepRecentTokens);
+    const messages = structuredClone(session.messages.slice(0, cutIndex));
+    const snapshot = { messages, previousSummary: session.metadata.summary };
+    this.snapshots.set(snapshot, {
+      key, session, generation: this.generations.get(session) ?? 0,
+      cutIndex, prefix: JSON.stringify(messages),
+    });
+    return snapshot;
+  }
+
+  private snapshotBoundary(key: string, session: Session, snapshot: CompactionSnapshot): number | null {
+    const record = this.snapshots.get(snapshot);
+    if (!record || record.key !== key || record.session !== session
+      || record.generation !== (this.generations.get(session) ?? 0)
+      || snapshot.previousSummary !== session.metadata.summary
+      || record.prefix !== JSON.stringify(session.messages.slice(0, record.cutIndex))) return null;
+    return record.cutIndex;
+  }
+
+  private advanceGeneration(session: Session): void {
+    this.generations.set(session, (this.generations.get(session) ?? 0) + 1);
+  }
+
   /**
    * Compact session by archiving the current JSONL and writing a new one starting
    * with a compaction entry + the tail messages. Replaces the older "in-place
@@ -141,13 +182,18 @@ export class SessionManager {
    *   - {key}.jsonl       — new file: metadata + compaction entry + tail messages
    *   - {key}.{ts}.jsonl  — archive: previous file (kept for forensics, never reloaded)
    */
-  async summarize(key: string, summaryText: string, keepRecentTokens: number): Promise<void> {
+  async summarize(key: string, summaryText: string, keepRecentTokens: number, snapshot?: CompactionSnapshot): Promise<boolean> {
     return this.withLock(key, async () => {
       const session = await this.getOrCreateInner(key);
-      const cutIndex = this.findTailCutIndex(session.messages, keepRecentTokens);
+      const captured = snapshot ?? this.captureCompaction(key, session, keepRecentTokens);
+      const cutIndex = this.snapshotBoundary(key, session, captured);
+      if (cutIndex === null) {
+        log.info(`[session ${key}] Discarding stale compaction result`);
+        return false;
+      }
 
       // If cut would remove fewer than 4 messages, skip (not worth summarizing)
-      if (cutIndex < 4) return;
+      if (cutIndex < 4) return false;
 
       const path = this.sessionPath(key);
       const archivePath = `${path}.${Date.now()}.jsonl`;
@@ -182,15 +228,17 @@ export class SessionManager {
       } catch (err) {
         log.error(`[session ${key}] Rotation write failed: ${err instanceof Error ? err.message : err}`);
         // We've already archived; cache stays in old state until next successful save
-        return;
+        return false;
       }
 
       // Update cache atomically
+      this.advanceGeneration(session);
       session.messages = tailMessages;
       session.metadata = newMetadata;
       this.cache.set(key, session);
 
       log.info(`[session ${key}] rotated: ${session.messages.length + cutIndex} → ${tailMessages.length} messages; archive: ${archivePath}`);
+      return true;
     });
   }
 
@@ -220,9 +268,12 @@ export class SessionManager {
       }
       if (tokens + msgTokens > keepRecentTokens) {
         cutIndex = i + 1;
-        // Snap forward to next user message boundary
-        for (let j = cutIndex; j < messages.length; j++) {
-          if (messages[j].role === 'user') { cutIndex = j; break; }
+        // Never cut inside an assistant/tool group. If there is no later user,
+        // keep the entire final turn even when it exceeds the requested budget.
+        const nextUser = messages.findIndex((message, index) => index >= cutIndex && message.role === 'user');
+        if (nextUser !== -1) cutIndex = nextUser;
+        else {
+          while (cutIndex > 0 && messages[cutIndex]?.role !== 'user') cutIndex--;
         }
         break;
       }
@@ -236,10 +287,12 @@ export class SessionManager {
    * oldest `ratio` fraction of messages WITHOUT a summary. Loud log entry —
    * this should be rare. Better than infinite cascade.
    */
-  async forceDropOldest(key: string, ratio: number): Promise<void> {
+  async forceDropOldest(key: string, ratio: number, snapshot?: CompactionSnapshot): Promise<void> {
     return this.withLock(key, async () => {
       const session = await this.getOrCreateInner(key);
-      let dropCount = Math.floor(session.messages.length * ratio);
+      const boundary = snapshot ? this.snapshotBoundary(key, session, snapshot) : session.messages.length;
+      if (boundary === null) return;
+      let dropCount = Math.min(Math.floor(session.messages.length * ratio), boundary);
       if (dropCount < 4) return;
 
       // Snap to next user message boundary so we don't orphan tool messages
@@ -247,7 +300,10 @@ export class SessionManager {
         if (session.messages[j].role === 'user') { dropCount = j; break; }
       }
 
+      // A delayed failure must not discard any input outside its captured prefix.
+      if (dropCount > boundary) return;
       const droppedCount = dropCount;
+      this.advanceGeneration(session);
       session.messages = session.messages.slice(dropCount);
       session.metadata.summary = `[compaction failed; force-dropped oldest ${droppedCount} messages at ${new Date().toISOString()}]`;
       session.metadata.messageCount = session.messages.length;
@@ -263,6 +319,7 @@ export class SessionManager {
   async clear(key: string): Promise<void> {
     return this.withLock(key, async () => {
       const session = await this.getOrCreateInner(key);
+      this.advanceGeneration(session);
       session.messages = [];
       session.metadata.summary = undefined;
       session.metadata.messageCount = 0;

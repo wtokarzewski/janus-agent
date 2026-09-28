@@ -50,6 +50,16 @@ child sessions do not join a shared DM. Telegram steering uses the resolved
 session identity rather than a bare chat ID. End-to-end provider/tool cancellation
 and watchdog slot lifecycle remain follow-up work in JL-14.
 
+Context routing, timeout recovery and background compaction thresholds use the
+same request estimator: system text once, message framing, tool-call arguments
+and IDs, tool definitions, text and image blocks. The response reserves the
+request's configured `maxTokens`. The character ratio, fixed image allowance and
+safety margin are heuristics, not an exact tokenizer or a guaranteed upper bound.
+After a transform the loop checks the whole request again, tries one hard clear
+of eligible old tool results, and stops with a budget message if it still cannot
+fit. It preserves the input and does not repeatedly compact an unchanged request.
+Provider-specific windows and legacy budget options remain separate follow-up work.
+
 ### 3. ContextBuilder (`src/context/context-builder.ts`)
 
 Assembles system prompt from multiple sources:
@@ -65,6 +75,13 @@ Assembles system prompt from multiple sources:
 | 7 | Skills | SKILL.md files (lazy stubs or full body) | ✅ |
 | 8 | Memory | FTS5 + vector hybrid search with scope filtering | ❌ skipped |
 | 9 | Learner | Recommendations from similar past executions | ❌ skipped |
+
+Pinned skill files are snapshots for the current model request. After file reads
+or potentially mutating tools, a turn with pins rebuilds its context before the
+next request, updating both the system message and cached-provider system parts.
+This also covers failed tools that wrote before failing and formerly missing files.
+Explicit reads always use normal tool gates and path/user validation; they never
+redirect the model to a stale snapshot. Rebuilds use the existing symlink guard.
 
 Subagents use **minimal mode** (identity + skills + session only) to save tokens.
 
@@ -103,6 +120,10 @@ Providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Groq (OpenAI-compatible API)
 **Gates:** Pattern-based confirmation before destructive commands (rm, git push, etc.).
 
 ## Memory System (`src/memory/`)
+
+### Session compaction snapshots
+
+Before a summarizer request, SessionManager captures a detached prefix, its previous summary and a single cut boundary under the session lock. Commit reuses that boundary and preserves all messages appended while the model was running. Clear, rotation and force-drop invalidate older snapshots; stale responses and delayed timeout fallbacks cannot replace a newer session generation. A final assistant/tool group stays intact even if it exceeds the tail budget. Existing JSONL sessions remain readable without migration. Rotation write-failure recovery and memory-flush cursor behavior are separate follow-up work.
 
 ### Storage
 - `MEMORY.md` — persistent knowledge (agent-editable via `write_file`)

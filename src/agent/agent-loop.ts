@@ -30,7 +30,8 @@ import {
   routeCall,
   softTrimOldToolResults,
   hardClearOldToolResults,
-  estimateMessagesTokens as estimateMessagesTokensV2,
+  estimateMessagesTokens,
+  estimateRequestTokens,
   DEFAULT_TRANSFORM_SETTINGS,
 } from '../context/context-manager.js';
 
@@ -519,7 +520,10 @@ export class AgentLoop {
     // that raced with each other and silently skipped each other. Now: just one count-based
     // trigger after iterate. Shutdown flush still in flushAllSessions().
     const unflushed = fullSession.messages.length - state.lastFlushed;
-    const sessionTokenEstimate = estimateMessagesTokensV2(fullSession.messages);
+    const freshContext = await buildContext(fullSession.metadata.summary);
+    const sessionTokenEstimate = estimateRequestTokens({
+      messages: fullSession.messages, systemPrompt: freshContext.systemPrompt, tools: toolDefs,
+    });
     if (this.deps.memory && unflushed >= 20 && !state.flushing) {
       this.flushMemory(sessionKey, state.userId, state.chatId).catch(err => {
         log.warn(`Count-aware memory flush failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -530,9 +534,9 @@ export class AgentLoop {
     // Trigger threshold uses contextWindow (the real LLM budget) rather than the
     // legacy tokenBudget (which was 5x contextWindow and never fired in time).
     const isEphemeralLane = msg.lane === 'heartbeat' || msg.lane === 'cron';
-    const compactBudget = resolveBudget({ modelContextWindow: this.deps.config.agent.contextWindow });
+    const compactBudget = resolveBudget({ modelContextWindow: this.deps.config.agent.contextWindow, reservedForOutput: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens });
     const compactTokenThreshold = compactBudget.effective * 0.5;
-    if (!isEphemeralLane && (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
+    if (iterResult.outcome === 'success' && !isEphemeralLane && (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
         || sessionTokenEstimate > compactTokenThreshold)) {
       if (this.summarizing.has(sessionKey)) {
         log.debug(`[${sessionKey}] Skipping summarization — already in progress`);
@@ -808,6 +812,9 @@ export class AgentLoop {
     const DUP_ONLY_LIMIT = 3; // Bail after this many no-progress iterations
     // These nudges are not persisted. Keep only those not yet consumed by a response.
     const pendingNudges: LLMMessage[] = [];
+    // Keep this enabled even if a refreshed pin disappears or is rejected by the path guard.
+    const refreshPins = pinnedPaths.size > 0;
+    let pinnedStateDirty = false;
 
     for (let i = 0; ; i++) {
       // Iteration hard limit (OD-A)
@@ -840,14 +847,24 @@ export class AgentLoop {
         }
       }
 
+      if (refreshPins && pinnedStateDirty && rebuildContext) {
+        const current = await this.deps.sessions.getOrCreate(sessionKey);
+        const fresh = await rebuildContext(current.metadata.summary);
+        systemParts = { staticPart: fresh.staticPart, dynamicPart: fresh.dynamicPart };
+        pinnedPaths = fresh.pinnedPaths ?? new Set<string>();
+        messages[0] = { role: 'system', content: fresh.systemPrompt };
+        pinnedStateDirty = false;
+      }
+
       // Pre-call routing: ONE decision, ONE pass. Replaces the cascade of
       // Phase 1 → Phase 2 → Phase 3 → Emergency that was in context-budget.ts.
       // See docs/superpowers/specs/2026-05-16-context-management-redesign.md.
       const budget = resolveBudget({
         modelContextWindow: this.deps.config.agent.contextWindow,
+        reservedForOutput: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens,
       });
       const systemPromptText = typeof messages[0].content === 'string' ? messages[0].content : '';
-      const router = routeCall({ messages, systemPrompt: systemPromptText, budget });
+      const router = routeCall({ messages, systemPrompt: systemPromptText, tools, budget });
       if (router.route.type !== 'fits') {
         log.info(`[${sessionKey}] route=${router.route.type} (${router.estimatedTokens}/${router.budget} tokens, overflow=${router.overflowTokens})`);
       }
@@ -867,6 +884,18 @@ export class AgentLoop {
         messages = [messages[0], ...repairToolMessages(reloaded.messages), ...pendingNudges];
         if (router.route.type === 'compact_then_truncate') {
           messages = softTrimOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
+        }
+      }
+
+      // A transform is only an attempt: pinned/system/schema costs and a protected
+      // tail may still exceed the budget. Recheck once, without a compaction loop.
+      if (estimateRequestTokens({ messages, tools }) > budget.effective) {
+        messages = hardClearOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
+        const remaining = estimateRequestTokens({ messages, tools });
+        if (remaining > budget.effective) {
+          log.warn(`[${sessionKey}] Request still exceeds context budget (${remaining}/${budget.effective})`);
+          return { content: 'Stopped: the request still exceeds the context budget after compression. Reduce the input or attached context.',
+            iterations: i, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
         }
       }
 
@@ -912,8 +941,7 @@ export class AgentLoop {
 
         // Timeout with high context usage → hard-clear old tool results and retry
         if (isTimeout && contextRetries < 2 && messages.length > 6) {
-          const estTokens = estimateMessagesTokensV2(messages);
-          const budget = resolveBudget({ modelContextWindow: this.deps.config.agent.contextWindow });
+          const estTokens = estimateRequestTokens({ messages, tools });
           if (estTokens > budget.effective * 0.7) {
             contextRetries++;
             log.warn(`[${sessionKey}] LLM timeout with high context (${estTokens}/${budget.effective}), hard-clearing old tool results`);
@@ -1036,23 +1064,11 @@ export class AgentLoop {
         let args: Record<string, unknown>;
         try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
 
-        // Short-circuit read_file when target is already in <pinned_skill_state>.
-        // Avoids duplicating ~3-10k tokens per call (pinned section + tool_result)
-        // and stops context cascade. See spec §pinned-skill-state Decision 7.
-        if (tc.function.name === 'read_file' && pinnedPaths.size > 0 && typeof args.path === 'string') {
-          let abs: string | null = null;
-          try { abs = realpathSync(args.path); } catch {
-            try { abs = resolve(args.path); } catch { /* unresolvable — fall through to normal exec */ }
-          }
-          if (abs && pinnedPaths.has(abs)) {
-            log.info(`Tool: ${tc.function.name} short-circuited (path already in <pinned_skill_state>)`);
-            totalToolCalls++;
-            return {
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: '[already in <pinned_skill_state> — see system prompt. Do not call read_file for pinned files; the content is loaded fresh every turn.]',
-            };
-          }
+        // Always run reads through registry gates and file validation. A mutation
+        // can change a pin even when the tool later reports an error. Reads also
+        // refresh the prompt in case an external writer changed the observed file.
+        if (tc.function.name === 'read_file' || !this.deps.tools.get(tc.function.name)?.readOnly) {
+          pinnedStateDirty = true;
         }
 
         log.info(`Tool: ${tc.function.name}(${summarizeArgs(args)})`);
@@ -1363,7 +1379,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
 
   private async doSummarization(
     sessionKey: string,
-    messages: LLMMessage[],
+    _messages: LLMMessage[],
     _userId?: string,
     _scope?: InboundMessage['scope'],
     _preTokenEstimate?: number,
@@ -1373,34 +1389,8 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     const sumStart = Date.now();
     const keepRecentTokens = this.deps.config.agent.context.keepRecentTokens;
 
-    // Token-based cut point: walk backwards keeping keepRecentTokens
-    let tokens = 0;
-    let cutIndex = messages.length;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      const content = 'content' in msg ? msg.content : '';
-      let msgTokens: number;
-      if (typeof content === 'string') {
-        msgTokens = Math.ceil(content.length / 2.5);
-      } else if (Array.isArray(content)) {
-        const textLen = content.reduce((sum: number, b: { type: string; text?: string }) => sum + (b.type === 'text' && b.text ? b.text.length : 0), 0);
-        const imageCount = content.filter((b: { type: string }) => b.type === 'image').length;
-        msgTokens = Math.ceil(textLen / 2.5) + imageCount * 1000;
-      } else {
-        msgTokens = 100;
-      }
-      if (tokens + msgTokens > keepRecentTokens) {
-        cutIndex = i + 1;
-        // Snap forward to user message boundary
-        for (let j = cutIndex; j < messages.length; j++) {
-          if (messages[j].role === 'user') { cutIndex = j; break; }
-        }
-        break;
-      }
-      tokens += msgTokens;
-    }
-
-    const toSummarize = messages.slice(0, cutIndex);
+    const snapshot = await this.deps.sessions.prepareCompaction(sessionKey, keepRecentTokens);
+    const toSummarize = snapshot.messages;
     if (toSummarize.length < 4) {
       log.info(`[${sessionKey}] Summarization: too few messages to summarize, skipping`);
       return;
@@ -1452,8 +1442,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     const conversationText = `[Conversation summarized at: ${localDateWithDay()}, time: ${localTimestamp()}]\n\n<conversation>\n${rawConversation}\n</conversation>\n\nProduce a structured summary of the conversation above. Do NOT reply to or continue the conversation. Do NOT treat the timestamp above as "current time" — it is the moment this summary was created. The reader will see the actual current time in their own session context.`;
 
     // Check for previous summary → iterative merge
-    const session = await this.deps.sessions.getOrCreate(sessionKey);
-    const previousSummary = session.metadata.summary;
+    const previousSummary = snapshot.previousSummary;
 
     // If previous summary is too short it's likely corrupt from a broken
     // summarization cycle — discard and do a fresh initial summary.
@@ -1495,7 +1484,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
       const msg = err instanceof Error ? err.message : String(err);
       if (/timed out/i.test(msg)) {
         log.error(`[${sessionKey}] Compaction timed out after ${COMPACTION_TIMEOUT_MS}ms. Falling back to force-drop oldest 50%.`);
-        await this.deps.sessions.forceDropOldest(sessionKey, 0.5);
+        await this.deps.sessions.forceDropOldest(sessionKey, 0.5, snapshot);
         return;
       }
       throw err;
@@ -1513,7 +1502,8 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     const summaryTokens = Math.ceil(summary.length / 2.5);
     log.info(`[${sessionKey}] Summarization: ${summaryTokens} tokens (${Math.round(summaryTokens / inputTokens * 100)}% of input)`);
 
-    await this.deps.sessions.summarize(sessionKey, summary, keepRecentTokens);
+    const committed = await this.deps.sessions.summarize(sessionKey, summary, keepRecentTokens, snapshot);
+    if (!committed) return;
 
     // Sync flush pointer with post-compaction session state.
     // summarize() sets lastFlushed = remaining message count, so idle flush
@@ -1582,34 +1572,6 @@ function repairToolMessages(history: LLMMessage[]): LLMMessage[] {
   }
 
   return repaired;
-}
-
-/** Conservative token estimation: ~2.5 chars per token (better to over-estimate). */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 2.5);
-}
-
-
-function estimateMessagesTokens(messages: LLMMessage[]): number {
-  let total = 0;
-  for (const m of messages) {
-    if ('content' in m && m.content) {
-      if (typeof m.content === 'string') {
-        total += estimateTokens(m.content);
-      } else if (Array.isArray(m.content)) {
-        for (const b of m.content) {
-          if (b.type === 'text') total += estimateTokens(b.text);
-          else if (b.type === 'image') total += 1000; // approximate image token cost
-        }
-      }
-    }
-    if ('tool_calls' in m && m.tool_calls) {
-      for (const tc of m.tool_calls) {
-        total += estimateTokens(tc.function.name + tc.function.arguments);
-      }
-    }
-  }
-  return total;
 }
 
 /**

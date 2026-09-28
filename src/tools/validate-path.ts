@@ -68,7 +68,9 @@ export function validateUserFileAccess(
   // (e.g. forward slashes on Windows) must not silently bypass them.
   fullPath = resolve(fullPath);
 
-  const wsDir = resolve(workspaceDir);
+  // validatePath returns real paths; compare against the same canonical root
+  // (e.g. macOS /var -> /private/var or a symlinked workspace).
+  const wsDir = existsSync(workspaceDir) ? realpathSync(resolve(workspaceDir)) : resolve(workspaceDir);
 
   // Protected directories outside .janus/
   const sessionsDir = resolve(wsDir, 'sessions');
