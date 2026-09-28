@@ -130,12 +130,16 @@ export class MessageBus {
     buf.push(msg);
   }
 
-  /** Drain all buffered steering messages for a chat (returns and clears). */
-  drainSteering(chatId: string): InboundMessage[] {
+  /** Consume only a compatible prefix; another sender waits for a fresh authorized turn. */
+  drainSteering(chatId: string, accepts: (msg: InboundMessage) => boolean = () => true): InboundMessage[] {
     const buf = this.steering.get(chatId);
     if (!buf || buf.length === 0) return [];
-    this.steering.delete(chatId);
-    return buf;
+    const boundary = buf.findIndex(msg => !accepts(msg));
+    if (boundary === -1) {
+      this.steering.delete(chatId);
+      return buf;
+    }
+    return buf.splice(0, boundary);
   }
 
   /**
