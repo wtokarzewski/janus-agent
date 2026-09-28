@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { MessageBus } from '../../src/bus/message-bus.js';
 import { AgentLoop } from '../../src/agent/agent-loop.js';
 import { SubagentRegistry } from '../../src/agent/subagent-registry.js';
 
@@ -6,13 +7,13 @@ describe('stop command', () => {
   describe('AgentLoop.stop()', () => {
     it('returns cancelled: false when idle', () => {
       // Create a minimal AgentLoop (won't call run, so deps don't matter)
-      const agent = new AgentLoop({} as any);
+      const agent = new AgentLoop({ bus: new MessageBus() } as any);
       const result = agent.stop();
       expect(result).toEqual({ cancelled: false });
     });
 
     it('aborts all iteration controllers when running', () => {
-      const agent = new AgentLoop({} as any);
+      const agent = new AgentLoop({ bus: new MessageBus() } as any);
 
       // Simulate _iterationControllers being set (as run() would do)
       const controller = new AbortController();
@@ -27,7 +28,7 @@ describe('stop command', () => {
     });
 
     it('stops only the specified chatId', () => {
-      const agent = new AgentLoop({} as any);
+      const agent = new AgentLoop({ bus: new MessageBus() } as any);
       const c1 = new AbortController();
       const c2 = new AbortController();
       (agent as any)._iterationControllers.set('chat-1', c1);
@@ -41,7 +42,7 @@ describe('stop command', () => {
     });
 
     it('can be called multiple times safely', () => {
-      const agent = new AgentLoop({} as any);
+      const agent = new AgentLoop({ bus: new MessageBus() } as any);
       const controller = new AbortController();
       (agent as any)._iterationControllers.set('chat-1', controller);
 

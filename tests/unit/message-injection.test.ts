@@ -4,7 +4,7 @@
  * session so the agent remembers what it sent.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { MessageTool } from '../../src/tools/builtin/message.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import type { RequestContext } from '../../src/tools/types.js';
@@ -91,24 +91,37 @@ describe('MessageTool cross-session injection', () => {
   });
 });
 
-describe('MessageBus processing TTL', () => {
+describe('MessageBus session ownership', () => {
+  it('separates processing and steering by channel as well as chat ID', () => {
+    const bus = new MessageBus();
+    const first = { id: '1', channel: 'telegram', chatId: '123', content: 'a', author: 'user', timestamp: new Date() };
+    const second = { ...first, id: '2', channel: 'discord', content: 'b' };
+    bus.markProcessing(bus.sessionKey(first));
+    expect(bus.isProcessing(first)).toBe(true);
+    expect(bus.isProcessing(second)).toBe(false);
+    bus.pushSteering(first);
+    bus.pushSteering(second);
+    expect(bus.drainSteering(bus.sessionKey(first))).toEqual([first]);
+    expect(bus.drainSteering(bus.sessionKey(second))).toEqual([second]);
+  });
+
   it('isProcessing returns true for active chats', () => {
     const bus = new MessageBus();
-    bus.markProcessing('chat1');
-    expect(bus.isProcessing('chat1')).toBe(true);
-    expect(bus.isProcessing('chat2')).toBe(false);
+    bus.markProcessing('main:telegram:chat1');
+    expect(bus.isProcessing('main:telegram:chat1')).toBe(true);
+    expect(bus.isProcessing('main:telegram:chat2')).toBe(false);
   });
 
   it('clearProcessing removes the entry when no steering pending', () => {
     const bus = new MessageBus();
-    bus.markProcessing('chat1');
-    bus.clearProcessing('chat1');
-    expect(bus.isProcessing('chat1')).toBe(false);
+    bus.markProcessing('main:telegram:chat1');
+    bus.clearProcessing('main:telegram:chat1');
+    expect(bus.isProcessing('main:telegram:chat1')).toBe(false);
   });
 
   it('clearProcessing keeps entry alive when steering messages pending', () => {
     const bus = new MessageBus();
-    bus.markProcessing('chat1');
+    bus.markProcessing('main:telegram:chat1');
 
     bus.pushSteering({
       id: '1', channel: 'telegram', chatId: 'chat1', content: 'msg1',
@@ -120,30 +133,30 @@ describe('MessageBus processing TTL', () => {
     });
 
     // After clearProcessing, chat stays "processing" because msg2 is still pending
-    bus.clearProcessing('chat1');
-    expect(bus.isProcessing('chat1')).toBe(true);
+    bus.clearProcessing('main:telegram:chat1');
+    expect(bus.isProcessing('main:telegram:chat1')).toBe(true);
 
     // Second clearProcessing re-queues msg2, keeps entry alive (msg2 in flight)
-    bus.clearProcessing('chat1');
-    expect(bus.isProcessing('chat1')).toBe(true);
+    bus.clearProcessing('main:telegram:chat1');
+    expect(bus.isProcessing('main:telegram:chat1')).toBe(true);
 
     // Third clearProcessing — no more steering → now it clears
-    bus.clearProcessing('chat1');
-    expect(bus.isProcessing('chat1')).toBe(false);
+    bus.clearProcessing('main:telegram:chat1');
+    expect(bus.isProcessing('main:telegram:chat1')).toBe(false);
   });
 
-  it('auto-clears stale entries older than 5 minutes', () => {
+  it('keeps a live turn busy after more than five minutes', () => {
     const bus = new MessageBus();
-    bus.markProcessing('chat1');
-    const processingChats = (bus as unknown as { processingChats: Map<string, number> }).processingChats;
-    processingChats.set('chat1', Date.now() - 6 * 60 * 1000); // 6 minutes ago
-
-    expect(bus.isProcessing('chat1')).toBe(false);
+    bus.markProcessing('main:telegram:chat1');
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 6 * 60 * 1000);
+    try { expect(bus.isProcessing('main:telegram:chat1')).toBe(true); }
+    finally { clock.mockRestore(); }
   });
 
   it('re-queues ONE steering message at a time (serialization)', () => {
     const bus = new MessageBus();
-    bus.markProcessing('chat1');
+    bus.markProcessing('main:telegram:chat1');
 
     bus.pushSteering({
       id: '1', channel: 'telegram', chatId: 'chat1', content: 'first',
@@ -155,10 +168,10 @@ describe('MessageBus processing TTL', () => {
     });
 
     // clearProcessing re-queues only the first message
-    bus.clearProcessing('chat1');
+    bus.clearProcessing('main:telegram:chat1');
 
     // Second message should still be in steering buffer
-    const remaining = bus.drainSteering('chat1');
+    const remaining = bus.drainSteering('main:telegram:chat1');
     expect(remaining).toHaveLength(1);
     expect(remaining[0].content).toBe('second');
   });

@@ -465,14 +465,14 @@ export class TelegramChannel {
       this.remember(chatId, ctx.message.message_id, ctx.message.text, false, ctx.from);
 
       // If the agent is already processing this chat, buffer as steering message
-      if (bus.isProcessing(chatId)) {
+      if (bus.isProcessing(inbound)) {
         bus.pushSteering(inbound);
         log.info(`Telegram: steering message buffered for ${chatId}`);
         return;
       }
 
       // Show "typing..." indicator while agent processes the message
-      log.info(`Telegram: incoming from ${author} (chat=${chatId}, processing=${bus.isProcessing(chatId)})`);
+      log.info(`Telegram: incoming from ${author} (chat=${chatId}, processing=${bus.isProcessing(inbound)})`);
       await this.startTyping(bot, chatId);
 
       try {
@@ -541,7 +541,7 @@ export class TelegramChannel {
       };
 
       // If agent is already processing, buffer as steering message
-      if (bus.isProcessing(chatId)) {
+      if (bus.isProcessing(inbound)) {
         bus.pushSteering(inbound);
         log.info(`Telegram: reaction steering message buffered for ${chatId}`);
         return;
@@ -669,7 +669,7 @@ export class TelegramChannel {
       };
       this.remember(chatId, ctx.message.message_id, `[Voice] ${transcript}`, false, ctx.from);
 
-      if (bus.isProcessing(chatId)) {
+      if (bus.isProcessing(inbound)) {
         bus.pushSteering(inbound);
         log.info(`Telegram: voice steering message buffered for ${chatId}`);
         return;
@@ -792,7 +792,7 @@ export class TelegramChannel {
       };
       this.remember(chatId, ctx.message.message_id, caption || '[Photo]', false, ctx.from);
 
-      if (bus.isProcessing(chatId)) {
+      if (bus.isProcessing(inbound)) {
         bus.pushSteering(inbound);
         log.info(`Telegram: photo steering message buffered for ${chatId}`);
         return;

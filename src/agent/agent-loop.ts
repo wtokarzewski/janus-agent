@@ -135,6 +135,10 @@ export class AgentLoop {
 
   constructor(deps: AgentDeps) {
     this.deps = deps;
+    deps.bus.setSessionKeyResolver(msg => {
+      const agentId = deps.agentResolver?.resolve(msg).id ?? 'main';
+      return deps.agentResolver?.resolveSessionKey(agentId, msg) ?? `${agentId}:${msg.channel}:${msg.chatId}`;
+    });
   }
 
   /** Set gate service for error recovery prompts (onToolError: 'ask'). */
@@ -143,15 +147,15 @@ export class AgentLoop {
   }
 
   /**
-   * Stop running iterations. If chatId provided, stops only that chat.
+   * Stop running iterations. If a full session key is provided, stop only that session.
    * Otherwise stops all active iterations.
    */
-  stop(chatId?: string): { cancelled: boolean } {
-    if (chatId) {
-      const ctrl = this._iterationControllers.get(chatId);
+  stop(sessionKey?: string): { cancelled: boolean } {
+    if (sessionKey) {
+      const ctrl = this._iterationControllers.get(sessionKey);
       if (!ctrl) return { cancelled: false };
       ctrl.abort();
-      this._iterationControllers.delete(chatId);
+      this._iterationControllers.delete(sessionKey);
       return { cancelled: true };
     }
     if (this._iterationControllers.size === 0) return { cancelled: false };
@@ -187,18 +191,31 @@ export class AgentLoop {
       signal: opts?.signal,
     } as InboundMessage & { signal?: AbortSignal };
 
-    const ownsProcessing = !this.deps.bus.isProcessing(msg.chatId);
-    if (ownsProcessing) this.deps.bus.markProcessing(msg.chatId);
     try {
-      const response = await this.processMessage(msg);
+      const response = await this.processTurn(msg, () => this.processMessage(msg));
       return response.content;
     } catch (err) {
       const errorText = err instanceof Error ? err.message : String(err);
       log.error(`processDirect error: ${errorText}`);
       return `Error: ${errorText}`;
-    } finally {
-      if (ownsProcessing) this.deps.bus.clearProcessing(msg.chatId);
     }
+  }
+
+  private async processTurn<T>(msg: InboundMessage & { signal?: AbortSignal }, run: () => Promise<T>): Promise<T> {
+    const key = this.deps.bus.sessionKey(msg);
+    return this.deps.bus.withSessionTurn(key, async () => {
+      const ctrl = new AbortController();
+      msg.signal = msg.signal ? AbortSignal.any([msg.signal, ctrl.signal]) : ctrl.signal;
+      this._iterationControllers.set(key, ctrl);
+      this.deps.bus.markProcessing(key);
+      try {
+        if (msg.signal.aborted) throw new Error('Aborted');
+        return await run();
+      } finally {
+        if (this._iterationControllers.get(key) === ctrl) this._iterationControllers.delete(key);
+        this.deps.bus.clearProcessing(key);
+      }
+    });
   }
 
   async run(signal: AbortSignal): Promise<void> {
@@ -266,8 +283,7 @@ export class AgentLoop {
           release();
         };
         const runCtrl = new AbortController();
-        // System runs read this signal in iterate(); user runs replace it with
-        // their own per-chat controller in processLaneMessage.
+        // processTurn combines this with its per-session controller after acquiring ownership.
         (msg as InboundMessage & { signal?: AbortSignal }).signal = runCtrl.signal;
         const timeoutMs = this.deps.config.agent.laneTimeoutMs;
         const watchdog = setTimeout(() => {
@@ -275,7 +291,7 @@ export class AgentLoop {
           runCtrl.abort();
           releaseOnce();
         }, timeoutMs);
-        this.processLaneMessage(msg, signal)
+        this.processTurn(msg, () => this.processLaneMessage(msg, signal))
           .catch(err => {
             if (!signal.aborted) {
               log.error(`Lane "${lane}" message error: ${err instanceof Error ? err.message : String(err)}`);
@@ -303,17 +319,7 @@ export class AgentLoop {
 
       log.info(`[${tag}] Processing: "${msg.content.slice(0, 80)}"`);
       const processStart = Date.now();
-      this.deps.bus.markProcessing(msg.chatId);
-      const iterCtrl = new AbortController();
-      this._iterationControllers.set(msg.chatId, iterCtrl);
-      let response;
-      try {
-        (msg as InboundMessage & { signal?: AbortSignal }).signal = iterCtrl.signal;
-        response = await this.processMessage(msg);
-      } finally {
-        this._iterationControllers.delete(msg.chatId);
-        this.deps.bus.clearProcessing(msg.chatId);
-      }
+      const response = await this.processMessage(msg);
       if (!response.streamed) {
         await this.deps.bus.publishOutbound(response, signal);
       }
@@ -343,9 +349,7 @@ export class AgentLoop {
     if (agentCtx && !agentCtx.memoryShared) {
       ensureAgentDir(agentId, this.deps.config.workspace.dir);
     }
-    const sessionKey = this.deps.agentResolver
-      ? this.deps.agentResolver.resolveSessionKey(agentId, msg)
-      : `${agentId}:${msg.channel}:${msg.chatId}`;
+    const sessionKey = this.deps.bus.sessionKey(msg);
 
     // 1. Resolve user profile (if multi-user)
     const userProfile = msg.user?.userId
@@ -633,8 +637,7 @@ export class AgentLoop {
     // Clear cron/heartbeat sessions after each run — they're stateless
     // (tasks fetch fresh data via tools, user replies go to telegram session)
     if (msg.lane === 'heartbeat' || msg.lane === 'cron') {
-      const agentId = this.deps.agentResolver?.resolve(msg)?.id ?? 'main';
-      const sessionKey = `${agentId}:${msg.channel}:${msg.chatId}`;
+      const sessionKey = this.deps.bus.sessionKey(msg);
       try {
         const session = await this.deps.sessions.getOrCreate(sessionKey);
         const estimate = estimateMessagesTokens(session.messages);
@@ -829,7 +832,7 @@ export class AgentLoop {
 
       // Inject steering messages from user (sent while agent was processing)
       if (chatId) {
-        const steering = this.deps.bus.drainSteering(chatId, next => {
+        const steering = this.deps.bus.drainSteering(sessionKey, next => {
           if (!activeInput || !sameSteeringIdentity(activeInput, next)) return false;
           const nextAgent = this.deps.agentResolver?.resolve(next).id ?? 'main';
           return nextAgent === (agentCtx?.id ?? 'main');
