@@ -101,6 +101,10 @@ Providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Groq (OpenAI-compatible API)
 
 ## Memory System (`src/memory/`)
 
+### Session compaction snapshots
+
+Before a summarizer request, SessionManager captures a detached prefix, its previous summary and a single cut boundary under the session lock. Commit reuses that boundary and preserves all messages appended while the model was running. Clear, rotation and force-drop invalidate older snapshots; stale responses and delayed timeout fallbacks cannot replace a newer session generation. A final assistant/tool group stays intact even if it exceeds the tail budget. Existing JSONL sessions remain readable without migration. Rotation write-failure recovery and memory-flush cursor behavior are separate follow-up work.
+
 ### Storage
 - `MEMORY.md` — persistent knowledge (agent-editable via `write_file`)
 - `memory/YYYY-MM-DD.md` — daily notes (auto-populated by memory flush)
