@@ -25,6 +25,24 @@ function makeMsg(overrides: Partial<InboundMessage> = {}): InboundMessage {
 }
 
 describe('AgentResolver', () => {
+  it('keeps system turns outside a shared DM session', () => {
+    const resolver = new AgentResolver(makeConfig({ session: { dmScope: 'main', identityLinks: {} } }));
+    expect(resolver.resolveSessionKey('main', makeMsg())).toBe('main:main');
+    expect(resolver.resolveSessionKey('main', makeMsg({ channel: 'system', chatId: 'sub-1' }))).toBe('main:system:sub-1');
+  });
+
+  it('resolves configured channel identities even when the user already has a profile ID', () => {
+    const resolver = new AgentResolver(makeConfig({ session: { dmScope: 'per-peer', identityLinks: { shared: ['telegram:123', 'discord:456'] } } }));
+    expect(resolver.resolveSessionKey('main', makeMsg({ user: { userId: 'profile-a', channelUserId: '123' } }))).toBe('main:direct:shared');
+    expect(resolver.resolveSessionKey('main', makeMsg({ channel: 'discord', chatId: 'dm456', user: { userId: 'profile-b', channelUserId: '456' } }))).toBe('main:direct:shared');
+  });
+
+  it('includes group topics once regardless of channel normalization', () => {
+    const resolver = new AgentResolver(makeConfig());
+    expect(resolver.resolveSessionKey('main', makeMsg({ chatId: '-100', topicId: 42 }))).toBe('main:telegram:-100/42');
+    expect(resolver.resolveSessionKey('main', makeMsg({ chatId: '-100/42', topicId: 42 }))).toBe('main:telegram:-100/42');
+  });
+
   it('synthesizes implicit main agent when agents[] is empty', () => {
     const resolver = new AgentResolver(makeConfig());
     const ctx = resolver.resolve(makeMsg());

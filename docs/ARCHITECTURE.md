@@ -40,6 +40,16 @@ Key behaviors:
 - **No-op suppression** — heartbeat/cron "HEARTBEAT_OK" responses not routed to user
 - **Subagent spawning** — `spawn_agent` tool creates child AgentLoop with minimal prompt
 
+Lane and direct entry share a FIFO turn lock on the bus, keyed by the same full
+session key used for history and steering. A session remains owned until its
+turn settles, even after a watchdog releases the lane slot or five minutes pass.
+Controllers are registered only after acquiring the lock. Other sessions remain
+concurrent. DM identity links use channel identities (with legacy profile-ID
+links retained); channel/topic/agent boundaries remain distinct. System jobs and
+child sessions do not join a shared DM. Telegram steering uses the resolved
+session identity rather than a bare chat ID. End-to-end provider/tool cancellation
+and watchdog slot lifecycle remain follow-up work in JL-14.
+
 Context routing, timeout recovery and background compaction thresholds use the
 same request estimator: system text once, message framing, tool-call arguments
 and IDs, tool definitions, text and image blocks. The response reserves the

@@ -11,6 +11,7 @@ import { ReadFileTool } from '../../src/tools/builtin/read-file.js';
 import { EditFileTool } from '../../src/tools/builtin/edit-file.js';
 import { WriteFileTool } from '../../src/tools/builtin/write-file.js';
 import { ListDirTool } from '../../src/tools/builtin/list-dir.js';
+import { AgentResolver } from '../../src/agent/agent-resolver.js';
 import { AgentLoop, type AgentDeps } from '../../src/agent/agent-loop.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import { ProviderRegistry } from '../../src/llm/provider-registry.js';
@@ -68,6 +69,114 @@ function createDeps(mockProvider: MockProvider): { deps: AgentDeps; learnerStora
 }
 
 describe('AgentLoop integration', () => {
+  it.each(['same', 'linked', 'separate loops'])('serializes %s direct sessions while another session proceeds', async mode => {
+    const mock = new MockProvider([]);
+    const { deps } = createDeps(mock);
+    if (mode === 'linked') {
+      deps.config.session = { dmScope: 'per-peer', identityLinks: { person: ['telegram:alice', 'discord:bob'] } };
+      deps.agentResolver = new AgentResolver(deps.config);
+    }
+    const agent = new AgentLoop(deps);
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const started: string[] = [];
+    vi.spyOn(mock, 'chat').mockImplementation(async request => {
+      const input = String(request.messages.filter(m => m.role === 'user').at(-1)!.content);
+      const label = input.includes('first input') ? 'first' : input.includes('second input') ? 'second' : 'other';
+      started.push(label);
+      if (label === 'first') await held;
+      return { content: `answer ${label}`, toolCalls: [], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, finishReason: 'stop' };
+    });
+    const firstOptions = { channel: 'telegram', chatId: '111', user: { userId: 'alice' } };
+    const secondOptions = mode === 'linked' ? { channel: 'discord', chatId: '222', user: { userId: 'bob' } } : firstOptions;
+    const first = agent.processDirect('first input', firstOptions);
+    await vi.waitFor(() => expect(started).toContain('first'));
+    const secondAgent = mode === 'separate loops' ? new AgentLoop(deps) : agent;
+    const second = secondAgent.processDirect('second input', secondOptions);
+    try {
+      expect(await agent.processDirect('independent input', { channel: 'cli', chatId: 'other' })).toBe('answer other');
+      expect(started).toEqual(['first', 'other']);
+      release();
+      expect(await first).toBe('answer first');
+      expect(await second).toBe('answer second');
+      const key = mode === 'linked' ? 'main:direct:person' : 'main:telegram:111';
+      const history = await deps.sessions.getHistory(key);
+      expect(history.map(m => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+      expect(history[1].content).toBe('answer first');
+      expect(history[3].content).toBe('answer second');
+    } finally {
+      release();
+      await Promise.allSettled([first, second]);
+    }
+  });
+
+  it('serializes inputs queued before processing and mixed direct entry', async () => {
+    const mock = new MockProvider([]);
+    const { deps } = createDeps(mock);
+    deps.config.agent.lanes.user = 3;
+    const agent = new AgentLoop(deps);
+    const shutdown = new AbortController();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const started: string[] = [];
+    vi.spyOn(mock, 'chat').mockImplementation(async request => {
+      const input = String(request.messages.filter(m => m.role === 'user').at(-1)!.content);
+      started.push(input);
+      if (input === 'first') await held;
+      return { content: `answer ${input}`, toolCalls: [], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, finishReason: 'stop' };
+    });
+    for (const content of ['first', 'second']) await deps.bus.publishInbound({
+      id: content, content, channel: 'test', chatId: 'queued', author: 'user', timestamp: new Date(),
+    });
+    const running = agent.run(shutdown.signal);
+    await vi.waitFor(() => expect(started).toContain('first'));
+    const direct = agent.processDirect('third', { channel: 'test', chatId: 'queued' });
+    try {
+      await agent.processDirect('independent', { channel: 'test', chatId: 'other' });
+      expect(started).toEqual(['first', 'independent']);
+      release();
+      await direct;
+      await deps.bus.consumeOutbound(AbortSignal.timeout(1000));
+      await deps.bus.consumeOutbound(AbortSignal.timeout(1000));
+      expect(started).toEqual(['first', 'independent', 'second', 'third']);
+      expect((await deps.sessions.getHistory('main:test:queued')).map(m => m.role)).toEqual([
+        'user', 'assistant', 'user', 'assistant', 'user', 'assistant',
+      ]);
+    } finally {
+      release();
+      await direct;
+      shutdown.abort();
+      await running;
+    }
+  });
+
+  it.each([
+    ['telegram', '123', 'discord', '123'],
+    ['telegram', '-100/1', 'telegram', '-100/2'],
+  ])('keeps %s:%s independent from %s:%s', async (channel1, chat1, channel2, chat2) => {
+    const mock = new MockProvider([]);
+    const { deps } = createDeps(mock);
+    deps.agentResolver = new AgentResolver(deps.config);
+    const agent = new AgentLoop(deps);
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let firstStarted = false;
+    vi.spyOn(mock, 'chat').mockImplementation(async request => {
+      const first = request.messages.at(-1)?.content === 'first';
+      if (first) { firstStarted = true; await held; }
+      return { content: 'done', toolCalls: [], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, finishReason: 'stop' };
+    });
+    const first = agent.processDirect('first', { channel: channel1, chatId: chat1 });
+    await vi.waitFor(() => expect(firstStarted).toBe(true));
+    try {
+      expect(await agent.processDirect('second', { channel: channel2, chatId: chat2 })).toBe('done');
+      expect(agent.stop(`main:${channel1}:${chat1}`).cancelled).toBe(true);
+    } finally {
+      release();
+      await first;
+    }
+  });
+
   it.each([1000, 5000])('reserves the requested %i output tokens before calling the model', async maxTokens => {
     const mock = new MockProvider([{ content: 'Fits' }]);
     const { deps } = createDeps(mock);

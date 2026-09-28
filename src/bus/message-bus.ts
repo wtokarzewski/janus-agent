@@ -18,9 +18,33 @@ export class MessageBus {
   private outbound: AsyncQueue<OutboundMessage>;
   private handlers = new Map<string, OutboundHandler>();
   private steering = new Map<string, InboundMessage[]>();
-  /** chatId → timestamp when markProcessing was called. Entries older than PROCESSING_TTL_MS are stale. */
-  private processingChats = new Map<string, number>();
-  private static readonly PROCESSING_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  /** Full session keys stay busy until their owning turn actually settles. */
+  private processingChats = new Set<string>();
+  private sessionTurns = new Map<string, Promise<void>>();
+  private keyResolver = (msg: InboundMessage): string => `${msg.agentId ?? 'main'}:${msg.channel}:${msg.chatId}`;
+
+  setSessionKeyResolver(resolve: (msg: InboundMessage) => string): void {
+    this.keyResolver = resolve;
+  }
+
+  sessionKey(msg: InboundMessage): string {
+    return this.keyResolver(msg);
+  }
+
+  /** Shared by lane and direct entry, including separate loops using this bus. */
+  async withSessionTurn<T>(key: string, run: () => Promise<T>): Promise<T> {
+    const previous = this.sessionTurns.get(key);
+    let release!: () => void;
+    const current = new Promise<void>(resolve => { release = resolve; });
+    this.sessionTurns.set(key, current);
+    await previous;
+    try {
+      return await run();
+    } finally {
+      release();
+      if (this.sessionTurns.get(key) === current) this.sessionTurns.delete(key);
+    }
+  }
 
   constructor(maxSize = 100) {
     this.inboundLanes = new Map();
@@ -85,58 +109,53 @@ export class MessageBus {
 
   // --- Steering: mid-iteration user messages ---
 
-  /** Mark a chat as being processed by the agent loop. */
-  markProcessing(chatId: string): void {
-    this.processingChats.set(chatId, Date.now());
+  /** Mark a full session key as being processed by the agent loop. */
+  markProcessing(sessionKey: string): void {
+    this.processingChats.add(sessionKey);
   }
 
-  /** Clear processing state; re-queue ONE pending steering message to maintain per-chat serialization. */
-  clearProcessing(chatId: string): void {
-    const pending = this.steering.get(chatId);
+  /** Clear a session; re-queue ONE pending steering message for a fresh authorized turn. */
+  clearProcessing(sessionKey: string): void {
+    const pending = this.steering.get(sessionKey);
     if (pending && pending.length > 0) {
       // Re-queue only the FIRST message — remaining stay buffered.
       // Keep processingChats alive so new Telegram messages stay buffered
-      // until the re-queued message calls markProcessing in processLaneMessage.
+      // until the re-queued message calls markProcessing in processTurn.
       const first = pending.shift()!;
-      if (pending.length === 0) this.steering.delete(chatId);
-      this.processingChats.set(chatId, Date.now());
+      if (pending.length === 0) this.steering.delete(sessionKey);
+      this.processingChats.add(sessionKey);
       const lane = first.lane ?? 'user';
       const queue = this.inboundLanes.get(lane) ?? this.inboundLanes.get('user')!;
       queue.publish(first).catch(() => {});
     } else {
-      this.processingChats.delete(chatId);
+      this.processingChats.delete(sessionKey);
     }
   }
 
-  /** Check if a chat is currently being processed. Auto-clears stale entries (>5 min). */
-  isProcessing(chatId: string): boolean {
-    const ts = this.processingChats.get(chatId);
-    if (ts === undefined) return false;
-    if (Date.now() - ts > MessageBus.PROCESSING_TTL_MS) {
-      log.warn(`Stale processing state for chat ${chatId} (${Math.round((Date.now() - ts) / 60000)}m), auto-clearing`);
-      this.clearProcessing(chatId);
-      return false;
-    }
-    return true;
+  /** Accept an inbound identity or an already resolved full session key. */
+  isProcessing(message: InboundMessage | string): boolean {
+    const key = typeof message === 'string' ? message : this.sessionKey(message);
+    return this.processingChats.has(key);
   }
 
   /** Buffer a steering message for a chat that is currently processing. */
   pushSteering(msg: InboundMessage): void {
-    let buf = this.steering.get(msg.chatId);
+    const key = this.sessionKey(msg);
+    let buf = this.steering.get(key);
     if (!buf) {
       buf = [];
-      this.steering.set(msg.chatId, buf);
+      this.steering.set(key, buf);
     }
     buf.push(msg);
   }
 
   /** Consume only a compatible prefix; another sender waits for a fresh authorized turn. */
-  drainSteering(chatId: string, accepts: (msg: InboundMessage) => boolean = () => true): InboundMessage[] {
-    const buf = this.steering.get(chatId);
+  drainSteering(sessionKey: string, accepts: (msg: InboundMessage) => boolean = () => true): InboundMessage[] {
+    const buf = this.steering.get(sessionKey);
     if (!buf || buf.length === 0) return [];
     const boundary = buf.findIndex(msg => !accepts(msg));
     if (boundary === -1) {
-      this.steering.delete(chatId);
+      this.steering.delete(sessionKey);
       return buf;
     }
     return buf.splice(0, boundary);
