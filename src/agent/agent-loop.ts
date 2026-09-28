@@ -9,7 +9,7 @@ import { isContextLengthError, isNonRetryableClientError } from '../llm/retry.js
 import type { ToolRegistry } from '../tools/tool-registry.js';
 import type { RequestContext } from '../tools/types.js';
 import type { SessionManager } from '../session/session-manager.js';
-import type { ContextBuilder } from '../context/context-builder.js';
+import type { ContextBuilder, ContextResult } from '../context/context-builder.js';
 import type { SkillLoader } from '../skills/skill-loader.js';
 import type { JanusConfig } from '../config/schema.js';
 import { type MemoryStore, scopeForChat } from '../memory/memory-store.js';
@@ -405,17 +405,18 @@ export class AgentLoop {
     // 3. Get session + build system prompt (split into static/dynamic for prompt caching)
     const t0 = Date.now();
     const session = await this.deps.sessions.getOrCreate(sessionKey);
-    const { staticPart, dynamicPart, systemPrompt: systemPromptFull, pinnedPaths } = await this.deps.context.build({
+    const buildContext = (summary?: string) => this.deps.context.build({
       channel: msg.channel,
       chatId: msg.chatId,
       tools: this.deps.tools.summaries(isOwner),
-      summary: session.metadata.summary,
+      summary,
       userMessage: msg.content,
       mode: msg.contextMode,
       user: msg.user,
       scope: msg.scope,
       agentCtx,
     });
+    const { staticPart, dynamicPart, systemPrompt: systemPromptFull, pinnedPaths } = await buildContext(session.metadata.summary);
     // Dynamic content now goes into a separate (uncached) system block via systemParts.
     // The user message is saved as PLAIN content — no <context> wrap — so history
     // doesn't accumulate N copies of dynamicPart per turn. See spec §H.
@@ -481,7 +482,7 @@ export class AgentLoop {
       });
 
     const systemParts = { staticPart, dynamicPart };
-    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose, msg.lane, systemParts, pinnedPaths ?? new Set<string>());
+    const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose, msg.lane, systemParts, pinnedPaths ?? new Set<string>(), buildContext);
 
     // 6. Save final assistant message — unless the turn produced no text (e.g. a
     // reply made only with a reaction). An empty assistant message mid-history is
@@ -801,6 +802,7 @@ export class AgentLoop {
     lane?: string,
     systemParts?: { staticPart: string; dynamicPart: string },
     pinnedPaths: Set<string> = new Set(),
+    rebuildContext?: (summary?: string) => Promise<ContextResult>,
   ): Promise<IterateResult> {
     let lastContent = '';
     let totalToolCalls = 0;
@@ -814,6 +816,8 @@ export class AgentLoop {
     const LOOP_WINDOW = 6; // Check last N tool calls for repeating patterns
     let dupOnlyStreak = 0; // Iterations in a row where every tool call was a duplicate (no progress)
     const DUP_ONLY_LIMIT = 3; // Bail after this many no-progress iterations
+    // These nudges are not persisted. Keep only those not yet consumed by a response.
+    const pendingNudges: LLMMessage[] = [];
 
     for (let i = 0; ; i++) {
       // Iteration hard limit (OD-A)
@@ -856,10 +860,17 @@ export class AgentLoop {
       if (router.route.type === 'truncate_only') {
         messages = softTrimOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
       } else if (router.route.type === 'compact_only' || router.route.type === 'compact_then_truncate') {
-        // Synchronous compaction; iterate again after fresh session loads
+        // Persisted input (including steering and tool results) is already in the tail.
+        // Rebuild both provider representations of the prompt with the new summary.
         await this.triggerCompactionSync(sessionKey, pinnedPaths ?? new Set<string>());
         const reloaded = await this.deps.sessions.getOrCreate(sessionKey);
-        messages = [messages[0], ...reloaded.messages, messages[messages.length - 1]];
+        if (rebuildContext) {
+          const fresh = await rebuildContext(reloaded.metadata.summary);
+          systemParts = { staticPart: fresh.staticPart, dynamicPart: fresh.dynamicPart };
+          pinnedPaths = fresh.pinnedPaths ?? new Set<string>();
+          messages[0] = { role: 'system', content: fresh.systemPrompt };
+        }
+        messages = [messages[0], ...repairToolMessages(reloaded.messages), ...pendingNudges];
         if (router.route.type === 'compact_then_truncate') {
           messages = softTrimOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
         }
@@ -970,6 +981,7 @@ export class AgentLoop {
         return { content: errorContent, iterations: i + 1, toolCalls: totalToolCalls, totalTokens, outcome: 'error' };
       }
 
+      pendingNudges.length = 0;
       lastContent = stripControlTokens(response.content);
       totalTokens += response.usage.totalTokens;
 
@@ -1114,7 +1126,9 @@ export class AgentLoop {
         const secondHalf = recent.slice(half).join(',');
         if (firstHalf === secondHalf) {
           log.warn(`[${sessionKey}] Cross-tool loop detected: ${firstHalf} repeating`);
-          messages.push({ role: 'user', content: '[System: Repeating tool call pattern detected. You are stuck in a loop. Stop calling tools and respond to the user with what you have so far.]' });
+          const loopNudge: LLMMessage = { role: 'user', content: '[System: Repeating tool call pattern detected. You are stuck in a loop. Stop calling tools and respond to the user with what you have so far.]' };
+          messages.push(loopNudge);
+          pendingNudges.push(loopNudge);
         }
       }
 
@@ -1157,6 +1171,7 @@ export class AgentLoop {
           content: '[Reflect on the tool results above before proceeding. Are you on track?]',
         };
         messages.push(reflectMsg);
+        pendingNudges.push(reflectMsg);
       }
 
     }
