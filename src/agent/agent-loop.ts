@@ -805,6 +805,9 @@ export class AgentLoop {
     const DUP_ONLY_LIMIT = 3; // Bail after this many no-progress iterations
     // These nudges are not persisted. Keep only those not yet consumed by a response.
     const pendingNudges: LLMMessage[] = [];
+    // Keep this enabled even if a refreshed pin disappears or is rejected by the path guard.
+    const refreshPins = pinnedPaths.size > 0;
+    let pinnedStateDirty = false;
 
     for (let i = 0; ; i++) {
       // Iteration hard limit (OD-A)
@@ -835,6 +838,15 @@ export class AgentLoop {
           await this.deps.sessions.append(sessionKey, [steerMsg]);
           log.info(`Steering injected: "${s.content.slice(0, 80)}"`);
         }
+      }
+
+      if (refreshPins && pinnedStateDirty && rebuildContext) {
+        const current = await this.deps.sessions.getOrCreate(sessionKey);
+        const fresh = await rebuildContext(current.metadata.summary);
+        systemParts = { staticPart: fresh.staticPart, dynamicPart: fresh.dynamicPart };
+        pinnedPaths = fresh.pinnedPaths ?? new Set<string>();
+        messages[0] = { role: 'system', content: fresh.systemPrompt };
+        pinnedStateDirty = false;
       }
 
       // Pre-call routing: ONE decision, ONE pass. Replaces the cascade of
@@ -1033,23 +1045,11 @@ export class AgentLoop {
         let args: Record<string, unknown>;
         try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
 
-        // Short-circuit read_file when target is already in <pinned_skill_state>.
-        // Avoids duplicating ~3-10k tokens per call (pinned section + tool_result)
-        // and stops context cascade. See spec §pinned-skill-state Decision 7.
-        if (tc.function.name === 'read_file' && pinnedPaths.size > 0 && typeof args.path === 'string') {
-          let abs: string | null = null;
-          try { abs = realpathSync(args.path); } catch {
-            try { abs = resolve(args.path); } catch { /* unresolvable — fall through to normal exec */ }
-          }
-          if (abs && pinnedPaths.has(abs)) {
-            log.info(`Tool: ${tc.function.name} short-circuited (path already in <pinned_skill_state>)`);
-            totalToolCalls++;
-            return {
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: '[already in <pinned_skill_state> — see system prompt. Do not call read_file for pinned files; the content is loaded fresh every turn.]',
-            };
-          }
+        // Always run reads through registry gates and file validation. A mutation
+        // can change a pin even when the tool later reports an error. Reads also
+        // refresh the prompt in case an external writer changed the observed file.
+        if (tc.function.name === 'read_file' || !this.deps.tools.get(tc.function.name)?.readOnly) {
+          pinnedStateDirty = true;
         }
 
         log.info(`Tool: ${tc.function.name}(${summarizeArgs(args)})`);
