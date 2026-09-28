@@ -124,6 +124,87 @@ describe('SessionManager rotation', () => {
     expect(session.metadata.summary).toBe('SUMMARY');
   });
 
+  it('commits one captured prefix and leaves late messages outside that prefix', async () => {
+    const key = 'test:snapshot';
+    const original: LLMMessage[] = Array.from({ length: 12 }, (_, i) => ({
+      role: i % 2 ? 'assistant' : 'user', content: `${i}: ${'fact '.repeat(30)}`,
+    }));
+    await sm.append(key, original);
+    const snapshot = await sm.prepareCompaction(key, 150);
+    const prefixCount = snapshot.messages.length;
+    expect(prefixCount).toBeGreaterThanOrEqual(4);
+    const late: LLMMessage[] = [{ role: 'user', content: 'late correction '.repeat(1000) }];
+    await sm.append(key, late);
+    expect(snapshot.messages).toEqual(original.slice(0, prefixCount));
+    expect(await sm.summarize(key, 'captured facts', 150, snapshot)).toBe(true);
+    expect(await sm.getHistory(key)).toEqual([...original.slice(prefixCount), ...late]);
+    const restarted = new SessionManager(createTestConfig(workDir));
+    expect(await restarted.getHistory(key)).toEqual(await sm.getHistory(key));
+    expect((await restarted.getOrCreate(key)).metadata.summary).toBe('captured facts');
+  });
+
+  it.each(['clear', 'rotation', 'fallback'] as const)('rejects an old snapshot after %s even when the prefix is identical', async action => {
+    const key = 'test:generation';
+    const original = Array.from({ length: 12 }, (_, i) => userMsg(`fact ${i}`));
+    await sm.append(key, original);
+    const snapshot = await sm.prepareCompaction(key, 10);
+    if (action === 'clear') {
+      await sm.clear(key);
+      await sm.append(key, original);
+    } else if (action === 'rotation') {
+      const newer = await sm.prepareCompaction(key, 10);
+      expect(await sm.summarize(key, 'newer facts', 10, newer)).toBe(true);
+    } else {
+      await sm.forceDropOldest(key, 0.5);
+    }
+    const before = structuredClone(await sm.getOrCreate(key));
+    expect(await sm.summarize(key, 'stale facts', 10, snapshot)).toBe(false);
+    await sm.forceDropOldest(key, 0.5, snapshot);
+    expect(await sm.getOrCreate(key)).toEqual(before);
+  });
+
+  it('allows only one of two concurrent snapshots to replace the session', async () => {
+    const key = 'test:concurrent-snapshots';
+    await sm.append(key, Array.from({ length: 12 }, (_, i) => userMsg(`fact ${i}`)));
+    const [first, second] = await Promise.all([sm.prepareCompaction(key, 10), sm.prepareCompaction(key, 10)]);
+    const outcomes = await Promise.all([
+      sm.summarize(key, 'first summary', 10, first),
+      sm.summarize(key, 'second summary', 10, second),
+    ]);
+    expect(outcomes).toEqual([true, false]);
+    expect((await sm.getOrCreate(key)).metadata.summary).toBe('first summary');
+  });
+
+  it('retains an oversized final assistant/tool group intact', async () => {
+    const key = 'test:tool-boundary';
+    const tail: LLMMessage[] = [
+      userMsg('latest question'),
+      { role: 'assistant', content: '', tool_calls: [
+        { id: 'a', type: 'function', function: { name: 'probe', arguments: '{}' } },
+        { id: 'b', type: 'function', function: { name: 'probe', arguments: '{}' } },
+      ] },
+      { role: 'tool', tool_call_id: 'a', content: 'large result '.repeat(100) },
+      { role: 'tool', tool_call_id: 'b', content: 'other result' },
+      assistantMsg('answer'),
+    ];
+    const prefix = [userMsg('old 1'), assistantMsg('reply 1'), userMsg('old 2'), assistantMsg('reply 2')];
+    await sm.append(key, [...prefix, ...tail]);
+    const snapshot = await sm.prepareCompaction(key, 1);
+    expect(snapshot.messages).toEqual(prefix);
+    expect(await sm.summarize(key, 'old facts', 1, snapshot)).toBe(true);
+    expect(await sm.getHistory(key)).toEqual(tail);
+  });
+
+  it('bounds a delayed fallback by its captured prefix', async () => {
+    const key = 'test:fallback-snapshot';
+    await sm.append(key, Array.from({ length: 12 }, (_, i) => userMsg(`fact ${i}`)));
+    const snapshot = await sm.prepareCompaction(key, 10);
+    const late = Array.from({ length: 20 }, (_, i) => userMsg(`late ${i}`));
+    await sm.append(key, late);
+    await sm.forceDropOldest(key, 0.5, snapshot);
+    expect((await sm.getHistory(key)).slice(-late.length)).toEqual(late);
+  });
+
   it('truncateToolResult respects unified cap from contextWindow', () => {
     // contextWindow=200k → effective=192k → cap = 192_000 * 2.5 * 0.5 = 240_000 chars
     const big = 'x'.repeat(300_000);
