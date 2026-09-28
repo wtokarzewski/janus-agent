@@ -67,6 +67,54 @@ function createDeps(mockProvider: MockProvider): { deps: AgentDeps; learnerStora
 }
 
 describe('AgentLoop integration', () => {
+  it('keeps messages appended while the summarizer is awaiting its response, including after restart', async () => {
+    const mock = new MockProvider([{ content: 'Old facts summarized.' }, { content: 'Done.' }]);
+    const { deps } = createDeps(mock);
+    deps.config.agent.contextWindow = 12_000;
+    deps.config.agent.context.keepRecentTokens = 100;
+    const key = 'main:test:snapshot';
+    await deps.sessions.append(key, [
+      { role: 'user', content: 'old request '.repeat(2000) },
+      { role: 'assistant', content: 'old answer' },
+      { role: 'user', content: 'old question' },
+      { role: 'assistant', content: 'old details '.repeat(2000) },
+      { role: 'user', content: 'keep this tail' },
+      { role: 'assistant', content: 'tail answer' },
+    ]);
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const original = mock.chat.bind(mock);
+    let first = true;
+    vi.spyOn(mock, 'chat').mockImplementation(async request => {
+      if (first) {
+        first = false;
+        entered();
+        await pending;
+      }
+      return original(request);
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const turn = new AgentLoop(deps).processDirect('current question', { channel: 'test', chatId: 'snapshot' });
+      await started;
+      const correction = { role: 'user' as const, content: 'new correction '.repeat(300) };
+      await deps.sessions.append(key, [correction, { role: 'assistant', content: 'new answer' }]);
+      release();
+      await turn;
+      expect(JSON.stringify(mock.calls[0].messages)).not.toContain('new correction');
+      expect(await deps.sessions.getHistory(key)).toContainEqual(correction);
+      const restarted = new SessionManager(deps.config);
+      expect(await restarted.getHistory(key)).toContainEqual(correction);
+      expect(await restarted.getHistory(key)).toEqual(await deps.sessions.getHistory(key));
+    } finally {
+      release();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('reads updated file contents and lists files again after a write', async () => {
     const call = (id: string, name: string, args: Record<string, unknown>) => ({
       content: '', toolCalls: [{ id, type: 'function' as const, function: { name, arguments: JSON.stringify(args) } }],

@@ -5,7 +5,7 @@
  * via the agent loop's behavior.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { AgentLoop } from '../../src/agent/agent-loop.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import { ProviderRegistry } from '../../src/llm/provider-registry.js';
@@ -94,14 +94,15 @@ describe('Token counting and emergency compression', () => {
     // Summary must be >500 chars (~200 tokens) to avoid triggering fallback chain retry
     const mockSummary = '## Goal\nUser is testing the diet tracking system with Janus. Currently logging meals on the dedicated diet channel.\n\n## Constraints & Preferences\n- Low carb approach with IF window 10:00-22:00\n- Target: 1743 kcal/day, protein 130g, fat 120g, carbs 50g, fiber 25g\n- Gym 3x/week (Mon/Wed/Fri) with cardio\n\n## Established Facts\n- Starting weight: 80.8 kg on 2026-04-20\n- Target weight: 75 kg by 2026-06-27\n- BMR: 1800 kcal, TDEE with exercise: 2290 kcal\n\n## Progress\n### Done\n- Completed week 1 of diet tracking\n\n## Key Decisions\n- Decided on low carb approach based on past experience\n\n## Open TODOs\n- Track body measurements weekly\n\n## Critical Context\nDiet day 7. Cheat meal today (bread sandwich). BF trending down.\n\n## Identifiers\nNone';
     const mock = new MockProvider([
+      { content: mockSummary }, // pre-call compaction
       { content: 'Response' },
-      { content: mockSummary }, // summarization call
     ]);
 
     const config = createTestConfig({
       agent: {
         summarizationThreshold: 100, // high message count threshold
-        contextWindow: 5_000, // small context window → threshold = 5000 * 0.5 = 2500 tokens
+        contextWindow: 5_000, // small context window → compaction before the request
+        context: { keepRecentTokens: 100 },
       },
       streaming: { enabled: false },
     });
@@ -124,17 +125,24 @@ describe('Token counting and emergency compression', () => {
     // 20000 chars / 2.5 = 8000 tokens → triggers.
     const sessionKey = 'cli:token-sum-test';
     await sessions.append(sessionKey, [
-      { role: 'user', content: 'x'.repeat(10_000) },
-      { role: 'assistant', content: 'y'.repeat(10_000) },
+      { role: 'user', content: 'x'.repeat(5_000) },
+      { role: 'assistant', content: 'y'.repeat(5_000) },
+      { role: 'user', content: 'z'.repeat(5_000) },
+      { role: 'assistant', content: 'w'.repeat(5_000) },
+      { role: 'user', content: 'retained tail' },
+      { role: 'assistant', content: 'tail reply' },
     ]);
 
-    await agent.processDirect('check summarization', { channel: 'cli', chatId: 'token-sum-test' });
-
-    // Wait for fire-and-forget summarization
-    await new Promise(r => setTimeout(r, 100));
-
-    // The mock provider should have received 2 calls: main + summarization
-    expect(mock.calls.length).toBe(2);
+    // A real cut requires at least four old messages outside the retained tail.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await agent.processDirect('check summarization', { channel: 'cli', chatId: 'token-sum-test' });
+      expect(mock.calls.length).toBe(2);
+      expect((await sessions.getOrCreate('main:cli:token-sum-test')).metadata.summary).toContain(mockSummary);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   // Removed: 'should flush memory before summarization when MemoryStore is available'.
