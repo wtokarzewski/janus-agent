@@ -148,6 +148,7 @@ export class MyTool implements Tool {
 }
 ```
 
+- Set `readOnly = true` only for tools safe to repeat for a fresh observation. The agent executes these again and stops repeated unchanged results; unmarked tools retain per-turn duplicate protection for side effects. `read_file` and `list_dir` opt in.
 - Implement `ContextualTool` if the tool needs workspace/config context
 - Register in `bootstrap.ts`
 - Add test in `tests/unit/`

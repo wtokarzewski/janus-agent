@@ -4,6 +4,7 @@ import { validatePath, validateUserFileAccess } from '../validate-path.js';
 import { safeSlice } from '../../utils/sanitize.js';
 
 export class ReadFileTool implements ContextualTool {
+  readonly readOnly = true;
   name = 'read_file';
   description = 'Read the contents of a file. Returns the full content or an error if the file does not exist.';
   parameters = {
