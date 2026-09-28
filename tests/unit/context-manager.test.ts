@@ -50,6 +50,40 @@ describe('resolveBudget', () => {
 });
 
 describe('estimatePromptTokens', () => {
+  it('counts a system message exactly once when the compatibility argument mirrors it', () => {
+    const system = 'policy'.repeat(2000);
+    const withSystem: LLMMessage[] = [{ role: 'system', content: system }, userMsg('hi')];
+    expect(estimatePromptTokens(withSystem, system)).toBe(estimatePromptTokens(withSystem, ''));
+    expect(estimatePromptTokens(withSystem, system)).toBe(estimatePromptTokens([userMsg('hi')], system));
+  });
+
+  it('includes tool arguments even when assistant content is empty', () => {
+    const contentOnly = estimatePromptTokens([assistantMsg('')], '');
+    const withCall = estimatePromptTokens([{
+      role: 'assistant', content: '', tool_calls: [{ id: 'call', type: 'function',
+        function: { name: 'write_file', arguments: JSON.stringify({ content: 'x'.repeat(40_000) }) } }],
+    }], '');
+    expect(withCall - contentOnly).toBeGreaterThan(16_000);
+  });
+
+  it('includes tool schemas and message framing in the routing estimate', () => {
+    const budget = resolveBudget({ modelContextWindow: 20_000 });
+    const messages = [userMsg('hi')];
+    const tools = [{ type: 'function' as const, function: {
+      name: 'large', description: 'x'.repeat(40_000), parameters: { type: 'object' },
+    } }];
+    expect(routeCall({ messages, systemPrompt: '', budget, tools }).route.type).not.toBe('fits');
+    expect(estimatePromptTokens([assistantMsg(''), assistantMsg('')], '')).toBeGreaterThan(0);
+  });
+
+  it('counts image blocks in user and tool messages without treating base64 as text', () => {
+    const image = { type: 'image' as const, source: { type: 'base64' as const, media_type: 'image/png', data: 'x'.repeat(100_000) } };
+    const messages: LLMMessage[] = [{ role: 'user', content: [image] }, { role: 'tool', tool_call_id: 'c', content: [image] }];
+    const estimate = estimatePromptTokens(messages, '');
+    expect(estimate).toBeGreaterThanOrEqual(5000);
+    expect(estimate).toBeLessThan(10_000);
+  });
+
   it('estimates from string content', () => {
     const msgs: LLMMessage[] = [userMsg('hello world')];
     const tokens = estimatePromptTokens(msgs, 'system');

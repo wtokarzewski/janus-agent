@@ -67,6 +67,53 @@ function createDeps(mockProvider: MockProvider): { deps: AgentDeps; learnerStora
 }
 
 describe('AgentLoop integration', () => {
+  it.each([1000, 5000])('reserves the requested %i output tokens before calling the model', async maxTokens => {
+    const mock = new MockProvider([{ content: 'Fits' }]);
+    const { deps } = createDeps(mock);
+    deps.config.agent.contextWindow = 10_000;
+    deps.config.resolved.maxTokens = maxTokens;
+    const system = 's'.repeat(12_000);
+    vi.spyOn(deps.context, 'build').mockResolvedValue({ systemPrompt: system, staticPart: system, dynamicPart: '' });
+    const result = await new AgentLoop(deps).processDirect('hello');
+    if (maxTokens === 1000) {
+      expect(result).toBe('Fits');
+      expect(mock.calls[0].maxTokens).toBe(maxTokens);
+    } else {
+      expect(result).toContain('context budget');
+      expect(mock.calls).toHaveLength(0);
+    }
+  });
+
+  it.each(['system', 'schema', 'arguments'])('does not send an oversized %s after ineffective compaction', async (part) => {
+    const mock = new MockProvider([{ content: 'Should not be sent' }]);
+    const { deps } = createDeps(mock);
+    deps.config.agent.contextWindow = 12_000;
+    const large = 'x'.repeat(100_000);
+    if (part === 'system') {
+      vi.spyOn(deps.context, 'build').mockResolvedValue({ systemPrompt: large, staticPart: large, dynamicPart: '' });
+    } else if (part === 'schema') {
+      deps.tools.register({ name: 'large', description: large, parameters: {}, execute: async () => 'unused' });
+    } else {
+      await deps.sessions.append('main:cli:direct', [
+        { role: 'user', content: 'keep this turn' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'large', type: 'function', function: { name: 'write_file', arguments: large } }] },
+        { role: 'tool', tool_call_id: 'large', content: 'saved' },
+      ]);
+    }
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const result = await new AgentLoop(deps).processDirect('continue');
+      expect(result).toContain('context budget');
+      // At most one summarizer call; no oversized main request is sent.
+      expect(mock.calls.filter(call => call.systemParts)).toHaveLength(0);
+      expect(mock.calls.length).toBeLessThanOrEqual(1);
+      expect((await deps.sessions.getHistory('main:cli:direct')).some(m => m.content === 'continue')).toBe(true);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('reads updated file contents and lists files again after a write', async () => {
     const call = (id: string, name: string, args: Record<string, unknown>) => ({
       content: '', toolCalls: [{ id, type: 'function' as const, function: { name, arguments: JSON.stringify(args) } }],

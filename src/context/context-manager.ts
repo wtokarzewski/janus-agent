@@ -1,4 +1,4 @@
-import type { LLMMessage, UserContentBlock, ToolContentBlock } from '../llm/types.js';
+import type { LLMMessage, UserContentBlock, ToolContentBlock, ToolDefinition } from '../llm/types.js';
 import { safeSlice } from '../utils/sanitize.js';
 
 // Single source of truth for context-management decisions.
@@ -11,6 +11,7 @@ export const SAFETY_MARGIN = 1.2;
 export const CHARS_PER_TOKEN_ESTIMATE = 2.5;
 const TRUNCATE_ROUTE_BUFFER_TOKENS = 512;
 const IMAGE_TOKEN_ESTIMATE = 2500;
+const MESSAGE_OVERHEAD_TOKENS = 8;
 
 // -----------------------------------------------------------------------------
 // Budget resolution
@@ -72,16 +73,29 @@ function messageContentLength(msg: LLMMessage): number {
   return 0;
 }
 
-export function estimatePromptTokens(messages: LLMMessage[], systemPrompt: string): number {
-  let chars = systemPrompt.length;
-  for (const m of messages) chars += messageContentLength(m);
-  return Math.ceil(chars / CHARS_PER_TOKEN_ESTIMATE);
+/** Character/image heuristic, not an exact tokenizer or a guaranteed upper bound. */
+export function estimatePromptTokens(messages: LLMMessage[], systemPrompt = '', tools: ToolDefinition[] = []): number {
+  // The optional prompt is a fallback for callers with history-only messages.
+  // Provider systemParts mirror system messages and must not be added again.
+  const input = systemPrompt && !messages.some(m => m.role === 'system')
+    ? [{ role: 'system' as const, content: systemPrompt }, ...messages]
+    : messages;
+  let chars = tools.length ? JSON.stringify(tools).length : 0;
+  for (const message of input) {
+    chars += messageContentLength(message);
+    if (message.role === 'assistant' && message.tool_calls?.length) chars += JSON.stringify(message.tool_calls).length;
+    if (message.role === 'tool') chars += message.tool_call_id.length;
+  }
+  return Math.ceil(chars / CHARS_PER_TOKEN_ESTIMATE) + input.length * MESSAGE_OVERHEAD_TOKENS;
 }
 
 export function estimateMessagesTokens(messages: LLMMessage[]): number {
-  let chars = 0;
-  for (const m of messages) chars += messageContentLength(m);
-  return Math.ceil(chars / CHARS_PER_TOKEN_ESTIMATE);
+  return estimatePromptTokens(messages);
+}
+
+/** Shared conservative estimate for routing, rechecks and compaction decisions. */
+export function estimateRequestTokens(params: { messages: LLMMessage[]; systemPrompt?: string; tools?: ToolDefinition[] }): number {
+  return Math.ceil(estimatePromptTokens(params.messages, params.systemPrompt, params.tools) * SAFETY_MARGIN);
 }
 
 // -----------------------------------------------------------------------------
@@ -221,13 +235,13 @@ export function estimateReducibleToolTokens(
 
 export function routeCall(params: {
   messages: LLMMessage[];
-  systemPrompt: string;
+  systemPrompt?: string;
+  tools?: ToolDefinition[];
   budget: ContextBudget;
   transformSettings?: TransformSettings;
 }): RouterResult {
   const settings = params.transformSettings ?? DEFAULT_TRANSFORM_SETTINGS;
-  const raw = estimatePromptTokens(params.messages, params.systemPrompt);
-  const estimated = Math.ceil(raw * SAFETY_MARGIN);
+  const estimated = estimateRequestTokens(params);
   const budget = params.budget.effective;
   const overflow = Math.max(0, estimated - budget);
 

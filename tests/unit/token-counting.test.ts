@@ -5,7 +5,7 @@
  * via the agent loop's behavior.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { AgentLoop } from '../../src/agent/agent-loop.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import { ProviderRegistry } from '../../src/llm/provider-registry.js';
@@ -101,7 +101,8 @@ describe('Token counting and emergency compression', () => {
     const config = createTestConfig({
       agent: {
         summarizationThreshold: 100, // high message count threshold
-        contextWindow: 5_000, // small context window → threshold = 5000 * 0.5 = 2500 tokens
+        contextWindow: 20_000, // fits before the call, crosses the 50% background threshold
+        context: { keepRecentTokens: 100 },
       },
       streaming: { enabled: false },
     });
@@ -119,22 +120,26 @@ describe('Token counting and emergency compression', () => {
 
     const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner });
 
-    // Pre-fill session with enough content to exceed contextWindow * 0.5 token threshold.
-    // contextWindow=5000 → effective=max(4000, 5000-8000)=4000 → threshold=2000 tokens.
-    // 20000 chars / 2.5 = 8000 tokens → triggers.
-    const sessionKey = 'cli:token-sum-test';
+    // Four removable messages exceed the background threshold without overflowing
+    // the main request. The last short turn remains protected after compaction.
+    const sessionKey = 'main:cli:token-sum-test';
     await sessions.append(sessionKey, [
-      { role: 'user', content: 'x'.repeat(10_000) },
-      { role: 'assistant', content: 'y'.repeat(10_000) },
+      { role: 'user', content: 'x'.repeat(4000) },
+      { role: 'assistant', content: 'y'.repeat(4000) },
+      { role: 'user', content: 'x'.repeat(4000) },
+      { role: 'assistant', content: 'y'.repeat(4000) },
     ]);
-
-    await agent.processDirect('check summarization', { channel: 'cli', chatId: 'token-sum-test' });
-
-    // Wait for fire-and-forget summarization
-    await new Promise(r => setTimeout(r, 100));
-
-    // The mock provider should have received 2 calls: main + summarization
-    expect(mock.calls.length).toBe(2);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      expect(await agent.processDirect('check summarization', { channel: 'cli', chatId: 'token-sum-test' })).toBe('Response');
+      await vi.waitFor(async () => {
+        expect((await sessions.getOrCreate(sessionKey)).metadata.summary).toContain('Established Facts');
+      });
+      expect(mock.calls).toHaveLength(2);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   // Removed: 'should flush memory before summarization when MemoryStore is available'.

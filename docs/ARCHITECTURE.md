@@ -40,6 +40,16 @@ Key behaviors:
 - **No-op suppression** — heartbeat/cron "HEARTBEAT_OK" responses not routed to user
 - **Subagent spawning** — `spawn_agent` tool creates child AgentLoop with minimal prompt
 
+Context routing, timeout recovery and background compaction thresholds use the
+same request estimator: system text once, message framing, tool-call arguments
+and IDs, tool definitions, text and image blocks. The response reserves the
+request's configured `maxTokens`. The character ratio, fixed image allowance and
+safety margin are heuristics, not an exact tokenizer or a guaranteed upper bound.
+After a transform the loop checks the whole request again, tries one hard clear
+of eligible old tool results, and stops with a budget message if it still cannot
+fit. It preserves the input and does not repeatedly compact an unchanged request.
+Provider-specific windows and legacy budget options remain separate follow-up work.
+
 ### 3. ContextBuilder (`src/context/context-builder.ts`)
 
 Assembles system prompt from multiple sources:
