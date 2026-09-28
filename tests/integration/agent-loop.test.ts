@@ -4,7 +4,8 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, unlink, symlink } from 'node:fs/promises';
+import { AppendFileTool } from '../../src/tools/builtin/append-file.js';
 import { join } from 'node:path';
 import { ReadFileTool } from '../../src/tools/builtin/read-file.js';
 import { EditFileTool } from '../../src/tools/builtin/edit-file.js';
@@ -109,6 +110,132 @@ describe('AgentLoop integration', () => {
       expect(mock.calls.length).toBeLessThanOrEqual(1);
       expect((await deps.sessions.getHistory('main:cli:direct')).some(m => m.content === 'continue')).toBe(true);
     } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['edit', 'append', 'create'])('refreshes pinned state after %s in the same turn', async (operation) => {
+    const mock = new MockProvider([]);
+    const { deps } = createDeps(mock);
+    const relative = '.janus/users/u1/files/totals.md';
+    const absolute = join(deps.config.workspace.dir, relative);
+    await mkdir(join(deps.config.workspace.dir, '.janus/users/u1/files'), { recursive: true });
+    if (operation !== 'create') await writeFile(absolute, 'total: 10');
+    vi.spyOn(deps.skills, 'loadAll').mockResolvedValue([{
+      name: 'totals', description: '', version: '1', always: true,
+      pinned: ['totals.md'], instructions: '', location: '/synthetic',
+    }]);
+    deps.tools.register(new ReadFileTool());
+    deps.tools.register(new EditFileTool());
+    deps.tools.register(new AppendFileTool());
+    deps.tools.register(new WriteFileTool());
+    const steps: Array<[string, Record<string, unknown>]> = [
+      ['read_file', { path: absolute }],
+      operation === 'edit'
+        ? ['edit_file', { path: relative, old_string: '10', new_string: '20' }]
+        : [operation === 'append' ? 'append_file' : 'write_file', { path: relative, content: 'total: 20' }],
+      ['read_file', { path: absolute }],
+      ['read_file', { path: relative }],
+    ];
+    const snapshots: string[] = [];
+    vi.spyOn(mock, 'chat').mockImplementation(async request => {
+      mock.calls.push(request);
+      snapshots.push(request.systemParts!.dynamicPart);
+      const step = steps[mock.calls.length - 1];
+      return { content: step ? '' : 'Done', toolCalls: step ? [{
+        id: String(mock.calls.length), type: 'function',
+        function: { name: step[0], arguments: JSON.stringify(step[1]) },
+      }] : [], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, finishReason: step ? 'tool_calls' : 'stop' };
+    });
+    await new AgentLoop(deps).processDirect('update and verify totals', { user: { userId: 'u1' } });
+    const expected = operation === 'append' ? 'total: 10total: 20' : 'total: 20';
+    for (const id of ['3', '4']) {
+      expect(mock.calls.at(-1)!.messages.find(m => m.role === 'tool' && m.tool_call_id === id)?.content).toBe(expected);
+    }
+    expect(snapshots[0]).toContain(operation === 'create' ? 'status="missing"' : 'total: 10');
+    expect(snapshots[2]).toContain(expected);
+    expect(snapshots[2]).not.toContain('status="missing"');
+    expect(mock.calls.at(-1)!.messages[0].content).toContain(expected);
+  });
+
+  it('revalidates pinned symlinks after a mutation instead of exposing another user file', async () => {
+    const mock = new MockProvider([]);
+    const { deps } = createDeps(mock);
+    const own = join(deps.config.workspace.dir, '.janus/users/u1/files');
+    const other = join(deps.config.workspace.dir, '.janus/users/u2/files');
+    await mkdir(own, { recursive: true });
+    await mkdir(other, { recursive: true });
+    await writeFile(join(own, 'state.md'), 'own state');
+    await writeFile(join(other, 'secret.md'), 'private other state');
+    vi.spyOn(deps.skills, 'loadAll').mockResolvedValue([{
+      name: 'state', description: '', version: '1', always: true,
+      pinned: ['state.md'], instructions: '', location: '/synthetic',
+    }]);
+    deps.tools.register(new ReadFileTool());
+    deps.tools.register({ name: 'swap_fixture', description: '', parameters: {}, execute: async () => {
+      await unlink(join(own, 'state.md'));
+      await symlink(join(other, 'secret.md'), join(own, 'state.md'));
+      return 'swapped';
+    } });
+    let calls = 0;
+    vi.spyOn(mock, 'chat').mockImplementation(async request => {
+      mock.calls.push(request);
+      const step = calls++;
+      return { content: 'Done', toolCalls: step < 2 ? [{ id: String(step), type: 'function',
+        function: { name: step === 0 ? 'swap_fixture' : 'read_file', arguments: JSON.stringify({ path: join(own, 'state.md') }) },
+      }] : [], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, finishReason: step < 2 ? 'tool_calls' : 'stop' };
+    });
+    await new AgentLoop(deps).processDirect('read', { user: { userId: 'u1' } });
+    const last = mock.calls.at(-1)!;
+    expect(last.messages.find(m => m.role === 'tool' && m.tool_call_id === '1')?.content).toMatch(/^Error:/);
+    expect(last.systemParts!.dynamicPart).not.toContain('own state');
+    expect(JSON.stringify(last)).not.toContain('private other state');
+  });
+
+  it('keeps messages appended while the summarizer is awaiting its response, including after restart', async () => {
+    const mock = new MockProvider([{ content: 'Old facts summarized.' }, { content: 'Done.' }]);
+    const { deps } = createDeps(mock);
+    deps.config.agent.contextWindow = 12_000;
+    deps.config.agent.context.keepRecentTokens = 100;
+    const key = 'main:test:snapshot';
+    await deps.sessions.append(key, [
+      { role: 'user', content: 'old request '.repeat(2000) },
+      { role: 'assistant', content: 'old answer' },
+      { role: 'user', content: 'old question' },
+      { role: 'assistant', content: 'old details '.repeat(2000) },
+      { role: 'user', content: 'keep this tail' },
+      { role: 'assistant', content: 'tail answer' },
+    ]);
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const original = mock.chat.bind(mock);
+    let first = true;
+    vi.spyOn(mock, 'chat').mockImplementation(async request => {
+      if (first) {
+        first = false;
+        entered();
+        await pending;
+      }
+      return original(request);
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const turn = new AgentLoop(deps).processDirect('current question', { channel: 'test', chatId: 'snapshot' });
+      await started;
+      const correction = { role: 'user' as const, content: 'new correction '.repeat(300) };
+      await deps.sessions.append(key, [correction, { role: 'assistant', content: 'new answer' }]);
+      release();
+      await turn;
+      expect(JSON.stringify(mock.calls[0].messages)).not.toContain('new correction');
+      expect(await deps.sessions.getHistory(key)).toContainEqual(correction);
+      const restarted = new SessionManager(deps.config);
+      expect(await restarted.getHistory(key)).toContainEqual(correction);
+      expect(await restarted.getHistory(key)).toEqual(await deps.sessions.getHistory(key));
+    } finally {
+      release();
       vi.clearAllTimers();
       vi.useRealTimers();
     }

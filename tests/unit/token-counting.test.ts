@@ -90,18 +90,18 @@ describe('Token counting and emergency compression', () => {
     expect(callCount).toBeGreaterThanOrEqual(2);
   });
 
-  it('should trigger summarization when token estimate exceeds threshold', async () => {
+  it.each(['background', 'pre-call'])('triggers %s summarization when the request exceeds its threshold', async mode => {
     // Summary must be >500 chars (~200 tokens) to avoid triggering fallback chain retry
     const mockSummary = '## Goal\nUser is testing the diet tracking system with Janus. Currently logging meals on the dedicated diet channel.\n\n## Constraints & Preferences\n- Low carb approach with IF window 10:00-22:00\n- Target: 1743 kcal/day, protein 130g, fat 120g, carbs 50g, fiber 25g\n- Gym 3x/week (Mon/Wed/Fri) with cardio\n\n## Established Facts\n- Starting weight: 80.8 kg on 2026-04-20\n- Target weight: 75 kg by 2026-06-27\n- BMR: 1800 kcal, TDEE with exercise: 2290 kcal\n\n## Progress\n### Done\n- Completed week 1 of diet tracking\n\n## Key Decisions\n- Decided on low carb approach based on past experience\n\n## Open TODOs\n- Track body measurements weekly\n\n## Critical Context\nDiet day 7. Cheat meal today (bread sandwich). BF trending down.\n\n## Identifiers\nNone';
     const mock = new MockProvider([
-      { content: 'Response' },
-      { content: mockSummary }, // summarization call
+      { content: mode === 'pre-call' ? mockSummary : 'Response' },
+      { content: mode === 'pre-call' ? 'Response' : mockSummary },
     ]);
 
     const config = createTestConfig({
       agent: {
         summarizationThreshold: 100, // high message count threshold
-        contextWindow: 20_000, // fits before the call, crosses the 50% background threshold
+        contextWindow: mode === 'pre-call' ? 5_000 : 20_000,
         context: { keepRecentTokens: 100 },
       },
       streaming: { enabled: false },
@@ -120,22 +120,25 @@ describe('Token counting and emergency compression', () => {
 
     const agent = new AgentLoop({ bus, llm: registry, tools, sessions, context, skills, config, learner });
 
-    // Four removable messages exceed the background threshold without overflowing
-    // the main request. The last short turn remains protected after compaction.
+    // Four removable messages trigger pre-call or background compaction depending
+    // on the budget. Both paths must save the summary and retain the short tail.
     const sessionKey = 'main:cli:token-sum-test';
     await sessions.append(sessionKey, [
       { role: 'user', content: 'x'.repeat(4000) },
       { role: 'assistant', content: 'y'.repeat(4000) },
       { role: 'user', content: 'x'.repeat(4000) },
       { role: 'assistant', content: 'y'.repeat(4000) },
+      { role: 'user', content: 'retained tail' },
+      { role: 'assistant', content: 'tail reply' },
     ]);
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       expect(await agent.processDirect('check summarization', { channel: 'cli', chatId: 'token-sum-test' })).toBe('Response');
       await vi.waitFor(async () => {
-        expect((await sessions.getOrCreate(sessionKey)).metadata.summary).toContain('Established Facts');
+        expect((await sessions.getOrCreate(sessionKey)).metadata.summary).toContain(mockSummary);
       });
       expect(mock.calls).toHaveLength(2);
+      expect(await sessions.getHistory(sessionKey)).toContainEqual({ role: 'user', content: 'retained tail' });
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();

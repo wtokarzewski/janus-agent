@@ -809,6 +809,9 @@ export class AgentLoop {
     const DUP_ONLY_LIMIT = 3; // Bail after this many no-progress iterations
     // These nudges are not persisted. Keep only those not yet consumed by a response.
     const pendingNudges: LLMMessage[] = [];
+    // Keep this enabled even if a refreshed pin disappears or is rejected by the path guard.
+    const refreshPins = pinnedPaths.size > 0;
+    let pinnedStateDirty = false;
 
     for (let i = 0; ; i++) {
       // Iteration hard limit (OD-A)
@@ -839,6 +842,15 @@ export class AgentLoop {
           await this.deps.sessions.append(sessionKey, [steerMsg]);
           log.info(`Steering injected: "${s.content.slice(0, 80)}"`);
         }
+      }
+
+      if (refreshPins && pinnedStateDirty && rebuildContext) {
+        const current = await this.deps.sessions.getOrCreate(sessionKey);
+        const fresh = await rebuildContext(current.metadata.summary);
+        systemParts = { staticPart: fresh.staticPart, dynamicPart: fresh.dynamicPart };
+        pinnedPaths = fresh.pinnedPaths ?? new Set<string>();
+        messages[0] = { role: 'system', content: fresh.systemPrompt };
+        pinnedStateDirty = false;
       }
 
       // Pre-call routing: ONE decision, ONE pass. Replaces the cascade of
@@ -1049,23 +1061,11 @@ export class AgentLoop {
         let args: Record<string, unknown>;
         try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
 
-        // Short-circuit read_file when target is already in <pinned_skill_state>.
-        // Avoids duplicating ~3-10k tokens per call (pinned section + tool_result)
-        // and stops context cascade. See spec §pinned-skill-state Decision 7.
-        if (tc.function.name === 'read_file' && pinnedPaths.size > 0 && typeof args.path === 'string') {
-          let abs: string | null = null;
-          try { abs = realpathSync(args.path); } catch {
-            try { abs = resolve(args.path); } catch { /* unresolvable — fall through to normal exec */ }
-          }
-          if (abs && pinnedPaths.has(abs)) {
-            log.info(`Tool: ${tc.function.name} short-circuited (path already in <pinned_skill_state>)`);
-            totalToolCalls++;
-            return {
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: '[already in <pinned_skill_state> — see system prompt. Do not call read_file for pinned files; the content is loaded fresh every turn.]',
-            };
-          }
+        // Always run reads through registry gates and file validation. A mutation
+        // can change a pin even when the tool later reports an error. Reads also
+        // refresh the prompt in case an external writer changed the observed file.
+        if (tc.function.name === 'read_file' || !this.deps.tools.get(tc.function.name)?.readOnly) {
+          pinnedStateDirty = true;
         }
 
         log.info(`Tool: ${tc.function.name}(${summarizeArgs(args)})`);
@@ -1376,7 +1376,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
 
   private async doSummarization(
     sessionKey: string,
-    messages: LLMMessage[],
+    _messages: LLMMessage[],
     _userId?: string,
     _scope?: InboundMessage['scope'],
     _preTokenEstimate?: number,
@@ -1386,34 +1386,8 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     const sumStart = Date.now();
     const keepRecentTokens = this.deps.config.agent.context.keepRecentTokens;
 
-    // Token-based cut point: walk backwards keeping keepRecentTokens
-    let tokens = 0;
-    let cutIndex = messages.length;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      const content = 'content' in msg ? msg.content : '';
-      let msgTokens: number;
-      if (typeof content === 'string') {
-        msgTokens = Math.ceil(content.length / 2.5);
-      } else if (Array.isArray(content)) {
-        const textLen = content.reduce((sum: number, b: { type: string; text?: string }) => sum + (b.type === 'text' && b.text ? b.text.length : 0), 0);
-        const imageCount = content.filter((b: { type: string }) => b.type === 'image').length;
-        msgTokens = Math.ceil(textLen / 2.5) + imageCount * 1000;
-      } else {
-        msgTokens = 100;
-      }
-      if (tokens + msgTokens > keepRecentTokens) {
-        cutIndex = i + 1;
-        // Snap forward to user message boundary
-        for (let j = cutIndex; j < messages.length; j++) {
-          if (messages[j].role === 'user') { cutIndex = j; break; }
-        }
-        break;
-      }
-      tokens += msgTokens;
-    }
-
-    const toSummarize = messages.slice(0, cutIndex);
+    const snapshot = await this.deps.sessions.prepareCompaction(sessionKey, keepRecentTokens);
+    const toSummarize = snapshot.messages;
     if (toSummarize.length < 4) {
       log.info(`[${sessionKey}] Summarization: too few messages to summarize, skipping`);
       return;
@@ -1465,8 +1439,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     const conversationText = `[Conversation summarized at: ${localDateWithDay()}, time: ${localTimestamp()}]\n\n<conversation>\n${rawConversation}\n</conversation>\n\nProduce a structured summary of the conversation above. Do NOT reply to or continue the conversation. Do NOT treat the timestamp above as "current time" — it is the moment this summary was created. The reader will see the actual current time in their own session context.`;
 
     // Check for previous summary → iterative merge
-    const session = await this.deps.sessions.getOrCreate(sessionKey);
-    const previousSummary = session.metadata.summary;
+    const previousSummary = snapshot.previousSummary;
 
     // If previous summary is too short it's likely corrupt from a broken
     // summarization cycle — discard and do a fresh initial summary.
@@ -1508,7 +1481,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
       const msg = err instanceof Error ? err.message : String(err);
       if (/timed out/i.test(msg)) {
         log.error(`[${sessionKey}] Compaction timed out after ${COMPACTION_TIMEOUT_MS}ms. Falling back to force-drop oldest 50%.`);
-        await this.deps.sessions.forceDropOldest(sessionKey, 0.5);
+        await this.deps.sessions.forceDropOldest(sessionKey, 0.5, snapshot);
         return;
       }
       throw err;
@@ -1526,7 +1499,8 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     const summaryTokens = Math.ceil(summary.length / 2.5);
     log.info(`[${sessionKey}] Summarization: ${summaryTokens} tokens (${Math.round(summaryTokens / inputTokens * 100)}% of input)`);
 
-    await this.deps.sessions.summarize(sessionKey, summary, keepRecentTokens);
+    const committed = await this.deps.sessions.summarize(sessionKey, summary, keepRecentTokens, snapshot);
+    if (!committed) return;
 
     // Sync flush pointer with post-compaction session state.
     // summarize() sets lastFlushed = remaining message count, so idle flush
