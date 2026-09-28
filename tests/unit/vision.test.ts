@@ -42,3 +42,22 @@ describe('provider image conversion', () => {
     });
   });
 });
+
+describe('inbound conversion', () => {
+  it('keeps text, source, reply and image together for channel input', async () => {
+    const { toUserMessage } = await import('../../src/agent/inbound-message.js');
+    const message = toUserMessage({
+      id: 'msg-17', channel: 'test', chatId: 'chat', author: 'alice',
+      timestamp: new Date(), channelMessageId: 17, content: 'caption',
+      replyContext: 'previous message', user: { userId: 'alice', name: 'Alice' },
+      images: [{ data: 'YWJj', mimeType: 'image/png' }],
+    });
+    expect(message.role).toBe('user');
+    expect(message.content).toEqual([
+      { type: 'text', text: expect.stringContaining('[Reply to previous message]\n\ncaption') },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'YWJj' } },
+    ]);
+    expect(JSON.stringify(message)).toContain('msg-17');
+    expect(JSON.stringify(message)).toContain('Alice');
+  });
+});
