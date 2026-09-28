@@ -3,7 +3,7 @@
  * No external API calls.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { AgentLoop, type AgentDeps } from '../../src/agent/agent-loop.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import { ProviderRegistry } from '../../src/llm/provider-registry.js';
@@ -61,6 +61,94 @@ function createDeps(mockProvider: MockProvider): { deps: AgentDeps; learnerStora
 }
 
 describe('AgentLoop integration', () => {
+  it('reloads the new summary and includes the current question once after compaction', async () => {
+    const mock = new MockProvider([
+      { content: 'The revised limit is 37 units.' },
+      { content: 'The limit is 37.' },
+    ]);
+    const { deps } = createDeps(mock);
+    deps.config.agent.contextWindow = 12_000;
+    deps.config.agent.context.keepRecentTokens = 100;
+    const key = 'main:test:compact';
+    await deps.sessions.append(key, [
+      { role: 'user', content: 'old request '.repeat(2000) },
+      { role: 'assistant', content: 'old answer' },
+      { role: 'user', content: 'another old request' },
+      { role: 'assistant', content: 'old details '.repeat(2000) },
+      { role: 'user', content: 'The revised limit is 37 units.' },
+      { role: 'assistant', content: 'Understood.' },
+    ]);
+    (await deps.sessions.getOrCreate(key)).metadata.summary = 'Obsolete limit: 12 units.';
+    // Compaction currently leaves its timeout pending (covered separately by JL-15).
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await new AgentLoop(deps).processDirect('What is the current limit?', { channel: 'test', chatId: 'compact' });
+      const request = mock.calls[1];
+      expect(request.messages[0].content).toContain('The revised limit is 37 units.');
+      expect(request.systemParts?.dynamicPart).toContain('The revised limit is 37 units.');
+      expect(request.messages[0].content).not.toContain('Obsolete limit');
+      expect(request.systemParts?.dynamicPart).not.toContain('Obsolete limit');
+      expect(request.messages.filter(m => m.role === 'user' && m.content === 'What is the current limit?')).toHaveLength(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([1, 2])('preserves %i tool result(s), steering and pending reflection after compaction', async (count) => {
+    const toolCalls = Array.from({ length: count }, (_, i) => ({
+      id: `compact-tool-${i}`, type: 'function' as const,
+      function: { name: 'probe', arguments: JSON.stringify({ index: i }) },
+    }));
+    const mock = new MockProvider([
+      { content: '', toolCalls },
+      { content: 'Keep the agreed budget of 37.' },
+      { content: 'Done.' },
+    ]);
+    const { deps } = createDeps(mock);
+    deps.config.agent.context.keepRecentTokens = 500;
+    const key = 'main:test:tool-compact';
+    await deps.sessions.append(key, [
+      { role: 'user', content: 'old question' },
+      { role: 'assistant', content: 'old answer' },
+      { role: 'user', content: 'old request' },
+      { role: 'assistant', content: 'old detail '.repeat(2000) },
+    ]);
+    deps.tools.register({
+      name: 'probe', description: 'Probe', parameters: { type: 'object', properties: {} },
+      execute: async args => {
+        deps.config.agent.contextWindow = 12_000;
+        if (count === 2 && args.index === 0) {
+          deps.bus.pushSteering({
+            id: 'correction', channel: 'test', chatId: 'tool-compact',
+            content: 'Use the revised budget.', author: 'user', timestamp: new Date(),
+          });
+        }
+        return `result ${args.index}`;
+      },
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await new AgentLoop(deps).processDirect('Check the budget.', { channel: 'test', chatId: 'tool-compact' });
+      const request = mock.calls[2];
+      expect(request.systemParts?.dynamicPart).toContain('Keep the agreed budget of 37.');
+      const results = request.messages.filter(m => m.role === 'tool');
+      expect(results).toHaveLength(count);
+      for (const call of toolCalls) {
+        expect(results.filter(m => m.tool_call_id === call.id)).toHaveLength(1);
+        expect(request.messages.filter(m => m.role === 'assistant' && m.tool_calls?.some(tc => tc.id === call.id))).toHaveLength(1);
+      }
+      expect(request.messages.filter(m => m.role === 'user' && m.content === 'Check the budget.')).toHaveLength(1);
+      expect(request.messages.filter(m => m.content === 'Use the revised budget.')).toHaveLength(count === 2 ? 1 : 0);
+      const isReflection = (m: { content: unknown }) => typeof m.content === 'string' && m.content.startsWith('[Reflect on');
+      expect(request.messages.filter(isReflection)).toHaveLength(count === 2 ? 1 : 0);
+      expect((await deps.sessions.getHistory(key)).filter(isReflection)).toHaveLength(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('should process a simple message and return response', async () => {
     const mock = new MockProvider([
       { content: 'Hello! I am Janus.' },
