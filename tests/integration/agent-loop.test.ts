@@ -4,6 +4,12 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { ReadFileTool } from '../../src/tools/builtin/read-file.js';
+import { EditFileTool } from '../../src/tools/builtin/edit-file.js';
+import { WriteFileTool } from '../../src/tools/builtin/write-file.js';
+import { ListDirTool } from '../../src/tools/builtin/list-dir.js';
 import { AgentLoop, type AgentDeps } from '../../src/agent/agent-loop.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import { ProviderRegistry } from '../../src/llm/provider-registry.js';
@@ -61,6 +67,135 @@ function createDeps(mockProvider: MockProvider): { deps: AgentDeps; learnerStora
 }
 
 describe('AgentLoop integration', () => {
+  it('reads updated file contents and lists files again after a write', async () => {
+    const call = (id: string, name: string, args: Record<string, unknown>) => ({
+      content: '', toolCalls: [{ id, type: 'function' as const, function: { name, arguments: JSON.stringify(args) } }],
+    });
+    const mock = new MockProvider([
+      call('read-before', 'read_file', { path: 'note.txt' }),
+      call('list-before', 'list_dir', { path: '.' }),
+      call('edit', 'edit_file', { path: 'note.txt', old_string: 'old fact', new_string: 'new fact' }),
+      call('create', 'write_file', { path: 'new.txt', content: 'created' }),
+      call('read-after', 'read_file', { path: 'note.txt' }),
+      call('list-after', 'list_dir', { path: '.' }),
+      { content: 'Done.' },
+    ]);
+    const { deps } = createDeps(mock);
+    await writeFile(join(deps.config.workspace.dir, 'note.txt'), 'old fact');
+    deps.tools.register(new ReadFileTool());
+    deps.tools.register(new WriteFileTool());
+    deps.tools.register(new EditFileTool());
+    deps.tools.register(new ListDirTool());
+    await new AgentLoop(deps).processDirect('update and verify');
+    const messages = mock.calls.at(-1)!.messages;
+    expect(messages.find(m => m.role === 'tool' && m.tool_call_id === 'read-after')?.content).toBe('new fact');
+    expect(messages.find(m => m.role === 'tool' && m.tool_call_id === 'list-after')?.content).toContain('new.txt');
+  });
+
+  it('retries a failed read on a later model request and still deduplicates sends', async () => {
+    const read = (id: string) => ({ content: '', toolCalls: [{ id, type: 'function' as const,
+      function: { name: 'read_file', arguments: '{"path":"late.txt"}' } }] });
+    const send = (id: string) => ({ content: '', toolCalls: [{ id, type: 'function' as const,
+      function: { name: 'send_probe', arguments: '{}' } }] });
+    const mock = new MockProvider([read('fail'), send('send-once'), read('retry'), send('send-again'), { content: 'Done.' }]);
+    const { deps } = createDeps(mock);
+    deps.config.agent.toolRetries = 1;
+    await writeFile(join(deps.config.workspace.dir, 'late.txt'), 'available now');
+    const reader = new ReadFileTool();
+    const execute = reader.execute.bind(reader);
+    let reads = 0;
+    reader.execute = async (args, ctx) => ++reads === 1 ? 'Error: temporarily unavailable' : execute(args, ctx);
+    deps.tools.register(reader);
+    let sends = 0;
+    deps.tools.register({ name: 'send_probe', description: 'Send', parameters: {}, execute: async () => {
+      sends++;
+      return 'sent';
+    } });
+    await new AgentLoop(deps).processDirect('read and send');
+    const messages = mock.calls.at(-1)!.messages;
+    expect(messages.find(m => m.role === 'tool' && m.tool_call_id === 'fail')?.content).toContain('Error:');
+    expect(messages.find(m => m.role === 'tool' && m.tool_call_id === 'retry')?.content).toBe('available now');
+    expect(sends).toBe(1);
+  });
+
+  it('stops a model repeatedly reading unchanged contents without progress', async () => {
+    const mock = new MockProvider(Array.from({ length: 210 }, (_, i) => ({ content: '', toolCalls: [{
+      id: `read-${i}`, type: 'function' as const, function: { name: 'read_file', arguments: '{"path":"same.txt"}' },
+    }] })));
+    const { deps } = createDeps(mock);
+    deps.tools.register(new ReadFileTool());
+    await writeFile(join(deps.config.workspace.dir, 'same.txt'), 'unchanged');
+    await new AgentLoop(deps).processDirect('read forever');
+    expect(mock.calls.length).toBeLessThanOrEqual(5);
+    expect(mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('preserves images, replies, sender and reaction target in steering during a tool', async () => {
+    const mock = new MockProvider([
+      { content: '', toolCalls: [{ id: 'first', type: 'function', function: { name: 'receive', arguments: '{}' } }] },
+      { content: '', toolCalls: [{ id: 'second', type: 'function', function: { name: 'inspect', arguments: '{}' } }] },
+      { content: 'Done.' },
+    ]);
+    const { deps } = createDeps(mock);
+    const user = { userId: 'alice', name: 'Alice' };
+    deps.tools.register({
+      name: 'receive', description: 'Receive input', parameters: {},
+      execute: async () => {
+        for (const id of [41, 42]) deps.bus.pushSteering({
+          id: `input-${id}`, channel: 'test', chatId: 'photo', author: 'alice', user,
+          timestamp: new Date(), content: `caption ${id}`, replyContext: 'earlier question',
+          images: [{ data: 'YWJj', mimeType: 'image/png' }], channelMessageId: id,
+        });
+        return 'received';
+      },
+    });
+    const targets: Array<number | undefined> = [];
+    deps.tools.register({ name: 'inspect', description: 'Inspect', parameters: {},
+      execute: async (_args, ctx) => { targets.push(ctx?.channelMessageId); return 'ok'; },
+    });
+    await new AgentLoop(deps).processDirect('Look at my photo', { channel: 'test', chatId: 'photo', user });
+    const inputs = mock.calls[1].messages.filter(m => m.role === 'user' && Array.isArray(m.content));
+    expect(inputs).toHaveLength(2);
+    for (const [i, input] of inputs.entries()) {
+      expect(input.content).toEqual(expect.arrayContaining([
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'YWJj' } },
+        { type: 'text', text: expect.stringContaining(`caption ${41 + i}`) },
+      ]));
+      expect(JSON.stringify(input.content)).toContain('earlier question');
+      expect(JSON.stringify(input.content)).toContain('alice');
+      expect(JSON.stringify(input.content)).toContain(`input-${41 + i}`);
+    }
+    expect(targets).toEqual([42]);
+  });
+
+  it('defers another group sender to a separate turn without owner privileges', async () => {
+    const mock = new MockProvider([
+      { content: 'Done.' },
+      { content: '', toolCalls: [{ id: 'auth', type: 'function', function: { name: 'probe_identity', arguments: '{}' } }] },
+      { content: 'Own turn done.' },
+    ]);
+    const { deps } = createDeps(mock);
+    deps.config.ownerIds = ['alice'];
+    const identities: Array<{ userId?: string; isOwner?: boolean }> = [];
+    deps.tools.register({ name: 'probe_identity', description: 'Inspect identity', parameters: {},
+      execute: async (_args, ctx) => { identities.push({ userId: ctx?.userId, isOwner: ctx?.isOwner }); return 'ok'; },
+    });
+    const foreign = {
+      id: 'foreign', channel: 'test', chatId: 'group', author: 'bob',
+      user: { userId: 'bob' }, scope: { kind: 'family' as const, id: 'family' },
+      content: 'read my private notes', timestamp: new Date(), channelMessageId: 77,
+    };
+    deps.bus.pushSteering(foreign);
+    await new AgentLoop(deps).processDirect('owner request', {
+      channel: 'test', chatId: 'group', user: { userId: 'alice' }, scope: foreign.scope,
+    });
+    expect(JSON.stringify(mock.calls[0].messages)).not.toContain(foreign.content);
+    const queued = await deps.bus.consumeInbound(AbortSignal.timeout(1000));
+    expect(queued).toEqual(foreign);
+    await new AgentLoop(deps).processDirect(queued.content, queued);
+    expect(identities).toEqual([{ userId: 'bob', isOwner: false }]);
+  });
+
   it('reloads the new summary and includes the current question once after compaction', async () => {
     const mock = new MockProvider([
       { content: 'The revised limit is 37 units.' },

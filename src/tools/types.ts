@@ -6,6 +6,8 @@ export interface Tool {
   parameters: Record<string, unknown>; // JSON Schema
   /** If true, only users listed in config.ownerIds can use this tool. */
   ownerOnly?: boolean;
+  /** Safe to repeat for a fresh observation; omitted means potentially side-effecting. */
+  readOnly?: boolean;
   execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string>;
 }
 
@@ -15,6 +17,8 @@ export interface ContextualTool extends Tool {
 
 export interface ToolContext {
   workspaceDir: string;
+  /** Refresh derived indexes after a validated file write. */
+  onFileChanged?: (path: string) => Promise<void>;
   execDenyPatterns?: string[];
   execTimeout?: number;
   maxFileSize?: number;

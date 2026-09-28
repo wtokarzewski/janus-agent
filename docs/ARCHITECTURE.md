@@ -103,6 +103,8 @@ Providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Groq (OpenAI-compatible API)
 - **Temporal decay** — 30-day half-life; MEMORY.md chunks are evergreen
 - **Vector search** (opt-in) — local embeddings via `@xenova/transformers` (all-MiniLM-L6-v2, 384-dim)
 - **Hybrid search** — Reciprocal Rank Fusion (RRF) combining FTS5 + vector results
+- **Index freshness** — MemoryStore writes and validated write/edit/append tools update FTS in their own user/chat/isolated-agent/global scope. Before searching, stat versions in that scope detect external changes; unchanged files are not reread or reindexed. Empty and deleted files remove prior chunks, including after restart. Symlinked memory directories/files are excluded.
+- **Background vectors** — changed files queue embeddings without delaying writes; row/content/scope checks prevent stale inference from attaching to replacement rows. Startup discovers isolated-agent memory too. HISTORY.md and MEMORY backups are excluded from current search to avoid importing mixed-scope logs or superseded facts.
 
 ### Memory Flush
 Before summarization discards old messages, LLM extracts key facts → `appendDaily()`.
