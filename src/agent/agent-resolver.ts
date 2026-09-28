@@ -106,18 +106,21 @@ export class AgentResolver {
    * DMs vary by dmScope: main, per-peer (cross-platform), per-channel-peer (default).
    */
   resolveSessionKey(agentId: string, msg: InboundMessage): string {
-    // Group chats (Telegram groups have negative chatId or contain ':')
-    const isGroup = msg.chatId.startsWith('-') || msg.chatId.includes(':');
-    if (isGroup) {
-      return `${agentId}:${msg.channel}:${msg.chatId}`;
-    }
+    // System jobs/children must not alias a DM (and deadlock behind their parent).
+    if (msg.channel === 'system') return `${agentId}:system:${msg.chatId}`;
+    const chatId = msg.topicId !== undefined && !msg.chatId.includes('/')
+      ? `${msg.chatId}/${msg.topicId}` : msg.chatId;
+    const isGroup = msg.chatId.startsWith('-') || msg.chatId.includes(':') || msg.topicId !== undefined;
+    if (isGroup) return `${agentId}:${msg.channel}:${chatId}`;
 
     switch (this.dmScope) {
       case 'main':
         return `${agentId}:main`;
       case 'per-peer': {
-        const channelIdentity = `${msg.channel}:${msg.user?.userId ?? msg.chatId}`;
-        const canonical = this.identityMap.get(channelIdentity) ?? msg.user?.userId ?? msg.chatId;
+        const identities = [msg.user?.channelUserId, msg.user?.userId, msg.chatId];
+        const linked = identities.map(id => id === undefined ? undefined : this.identityMap.get(`${msg.channel}:${id}`))
+          .find(id => id !== undefined);
+        const canonical = linked ?? msg.user?.userId ?? msg.chatId;
         return `${agentId}:direct:${canonical}`;
       }
       case 'per-channel-peer':
