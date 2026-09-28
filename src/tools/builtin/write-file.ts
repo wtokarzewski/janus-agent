@@ -16,9 +16,11 @@ export class WriteFileTool implements ContextualTool {
   };
 
   private workspaceDir = process.cwd();
+  private onFileChanged?: ToolContext['onFileChanged'];
 
   setContext(ctx: ToolContext): void {
     this.workspaceDir = ctx.workspaceDir;
+    this.onFileChanged = ctx.onFileChanged;
   }
 
   async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
@@ -37,6 +39,7 @@ export class WriteFileTool implements ContextualTool {
     try {
       await mkdir(dirname(fullPath), { recursive: true });
       await writeFile(fullPath, content, 'utf-8');
+      await this.onFileChanged?.(fullPath);
       return `File written: ${filePath}`;
     } catch (err) {
       return `Error: ${err instanceof Error ? err.message : String(err)}`;

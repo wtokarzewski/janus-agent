@@ -17,6 +17,8 @@ export interface ContextualTool extends Tool {
 
 export interface ToolContext {
   workspaceDir: string;
+  /** Refresh derived indexes after a validated file write. */
+  onFileChanged?: (path: string) => Promise<void>;
   execDenyPatterns?: string[];
   execTimeout?: number;
   maxFileSize?: number;
