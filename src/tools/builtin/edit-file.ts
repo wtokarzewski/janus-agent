@@ -33,9 +33,11 @@ export class EditFileTool implements ContextualTool {
   };
 
   private workspaceDir = process.cwd();
+  private onFileChanged?: ToolContext['onFileChanged'];
 
   setContext(ctx: ToolContext): void {
     this.workspaceDir = ctx.workspaceDir;
+    this.onFileChanged = ctx.onFileChanged;
   }
 
   async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
@@ -75,6 +77,7 @@ export class EditFileTool implements ContextualTool {
       }
 
       await writeFile(fullPath, content, 'utf-8');
+      await this.onFileChanged?.(fullPath);
       return edits.length > 1
         ? `File edited: ${filePath} (${edits.length} edits applied)`
         : `File edited: ${filePath}`;
