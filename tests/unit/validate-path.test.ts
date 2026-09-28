@@ -26,6 +26,16 @@ describe('validatePath', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
+  it.skipIf(isWindows)('preserves user isolation through a symlinked workspace', () => {
+    const wsLink = join(workspace, '..', 'ws-link');
+    symlinkSync(workspace, wsLink);
+    mkdirSync(join(workspace, '.janus/users/bob/files'), { recursive: true });
+    writeFileSync(join(workspace, '.janus/users/bob/files/secret.md'), 'private');
+    const path = validatePath(wsLink, '.janus/users/bob/files/secret.md');
+    expect(() => validateUserFileAccess(wsLink, path, 'alice', undefined, 'read')).toThrow('Access denied');
+    expect(() => validateUserFileAccess(wsLink, path, 'bob', undefined, 'read')).not.toThrow();
+  });
+
   it('allows normal paths within workspace', () => {
     const result = validatePath(workspace, 'file.txt');
     expect(result).toBe(join(realpathSync(workspace), 'file.txt'));

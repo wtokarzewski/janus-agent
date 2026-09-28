@@ -56,6 +56,13 @@ Assembles system prompt from multiple sources:
 | 8 | Memory | FTS5 + vector hybrid search with scope filtering | ❌ skipped |
 | 9 | Learner | Recommendations from similar past executions | ❌ skipped |
 
+Pinned skill files are snapshots for the current model request. After file reads
+or potentially mutating tools, a turn with pins rebuilds its context before the
+next request, updating both the system message and cached-provider system parts.
+This also covers failed tools that wrote before failing and formerly missing files.
+Explicit reads always use normal tool gates and path/user validation; they never
+redirect the model to a stale snapshot. Rebuilds use the existing symlink guard.
+
 Subagents use **minimal mode** (identity + skills + session only) to save tokens.
 
 ### 4. ProviderRegistry (`src/llm/provider-registry.ts`)
