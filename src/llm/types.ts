@@ -45,6 +45,8 @@ export interface ToolDefinition {
 
 export interface ChatRequest {
   model: string;
+  /** Local prompt-budget cap, never an advertised model capability. */
+  contextWindow?: number;
   messages: LLMMessage[];
   tools?: ToolDefinition[];
   toolChoice?: 'auto' | 'none' | 'required';
@@ -92,6 +94,8 @@ export interface ProviderEntry {
    */
   providerName: string;
   provider: LLMProvider;
+  /** Explicit windows indexed by the actual model ID. */
+  contextWindows?: Record<string, number>;
   model: string;
   purpose: string[];
   priority: number;

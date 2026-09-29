@@ -101,7 +101,8 @@ describe('Token counting and emergency compression', () => {
     const config = createTestConfig({
       agent: {
         summarizationThreshold: 100, // high message count threshold
-        contextWindow: mode === 'pre-call' ? 5_000 : 20_000,
+        // Leave real room for the response and the compacted system prompt.
+        contextWindow: mode === 'pre-call' ? 10_000 : 20_000,
         context: { keepRecentTokens: 100 },
       },
       streaming: { enabled: false },

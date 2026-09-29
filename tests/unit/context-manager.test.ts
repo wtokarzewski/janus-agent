@@ -8,7 +8,6 @@ import {
   estimateReducibleToolTokens,
   DEFAULT_TRANSFORM_SETTINGS,
   RESERVED_OUTPUT_TOKENS_DEFAULT,
-  CONTEXT_WINDOW_HARD_MIN_TOKENS,
 } from '../../src/context/context-manager.js';
 import type { LLMMessage } from '../../src/llm/types.js';
 import { stripOrphanSurrogates } from '../../src/utils/sanitize.js';
@@ -38,9 +37,9 @@ describe('resolveBudget', () => {
     expect(b.source).toBe('default');
   });
 
-  it('clamps effective to hard min', () => {
+  it('returns no input capacity when output reservation exceeds the window', () => {
     const b = resolveBudget({ configOverride: 1_000 });
-    expect(b.effective).toBe(CONTEXT_WINDOW_HARD_MIN_TOKENS);
+    expect(b.effective).toBe(0);
   });
 
   it('respects custom reservedForOutput', () => {
