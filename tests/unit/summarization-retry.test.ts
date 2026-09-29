@@ -11,10 +11,7 @@ describe('Summarization implementation', () => {
     expect(source).not.toContain('isTooShort');
   });
 
-  it('should discard corrupt previous summaries and use initial prompt', () => {
-    expect(source).toContain('MIN_USABLE_SUMMARY_TOKENS');
-    expect(source).toContain('using initial prompt instead');
-  });
+  // Short-summary preservation is covered by summary-validation.test.ts.
 
   it('should include tool results in summarization input', () => {
     expect(source).toContain('TOOL_RESULT_MAX');
