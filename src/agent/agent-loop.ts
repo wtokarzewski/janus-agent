@@ -27,13 +27,12 @@ import type { AgentResolver, AgentContext } from './agent-resolver.js';
 import type { CronService } from '../services/cron-service.js';
 import { ensureAgentDir } from '../users/user-resolver.js';
 import {
-  resolveBudget,
   routeCall,
   softTrimOldToolResults,
   hardClearOldToolResults,
   estimateMessagesTokens,
   estimateRequestTokens,
-  DEFAULT_TRANSFORM_SETTINGS,
+  resolveTransformSettings,
 } from '../context/context-manager.js';
 
 const THINKING_LEVEL_BUDGETS: Record<string, number> = {
@@ -534,7 +533,7 @@ export class AgentLoop {
     // Trigger threshold uses contextWindow (the real LLM budget) rather than the
     // legacy tokenBudget (which was 5x contextWindow and never fired in time).
     const isEphemeralLane = msg.lane === 'heartbeat' || msg.lane === 'cron';
-    const compactBudget = resolveBudget({ modelContextWindow: this.deps.config.agent.contextWindow, reservedForOutput: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens });
+    const compactBudget = this.deps.llm.getContextBudget({ contextWindow: this.deps.config.agent.contextWindow, maxTokens: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens }, llmPurpose);
     const compactTokenThreshold = compactBudget.effective * 0.5;
     if (iterResult.outcome === 'success' && !isEphemeralLane && (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
         || sessionTokenEstimate > compactTokenThreshold)) {
@@ -859,17 +858,18 @@ export class AgentLoop {
       // Pre-call routing: ONE decision, ONE pass. Replaces the cascade of
       // Phase 1 → Phase 2 → Phase 3 → Emergency that was in context-budget.ts.
       // See docs/superpowers/specs/2026-05-16-context-management-redesign.md.
-      const budget = resolveBudget({
-        modelContextWindow: this.deps.config.agent.contextWindow,
-        reservedForOutput: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens,
-      });
+      const budget = this.deps.llm.getContextBudget({
+        contextWindow: this.deps.config.agent.contextWindow,
+        maxTokens: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens,
+      }, llmPurpose);
+      const transformSettings = resolveTransformSettings(this.deps.config.agent.context);
       const systemPromptText = typeof messages[0].content === 'string' ? messages[0].content : '';
-      const router = routeCall({ messages, systemPrompt: systemPromptText, tools, budget });
+      const router = routeCall({ messages, systemPrompt: systemPromptText, tools, budget, transformSettings });
       if (router.route.type !== 'fits') {
         log.info(`[${sessionKey}] route=${router.route.type} (${router.estimatedTokens}/${router.budget} tokens, overflow=${router.overflowTokens})`);
       }
       if (router.route.type === 'truncate_only') {
-        messages = softTrimOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
+        messages = softTrimOldToolResults(messages, transformSettings);
       } else if (router.route.type === 'compact_only' || router.route.type === 'compact_then_truncate') {
         // Persisted input (including steering and tool results) is already in the tail.
         // Rebuild both provider representations of the prompt with the new summary.
@@ -883,14 +883,14 @@ export class AgentLoop {
         }
         messages = [messages[0], ...repairToolMessages(reloaded.messages), ...pendingNudges];
         if (router.route.type === 'compact_then_truncate') {
-          messages = softTrimOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
+          messages = softTrimOldToolResults(messages, transformSettings);
         }
       }
 
       // A transform is only an attempt: pinned/system/schema costs and a protected
       // tail may still exceed the budget. Recheck once, without a compaction loop.
       if (estimateRequestTokens({ messages, tools }) > budget.effective) {
-        messages = hardClearOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
+        messages = hardClearOldToolResults(messages, transformSettings);
         const remaining = estimateRequestTokens({ messages, tools });
         if (remaining > budget.effective) {
           log.warn(`[${sessionKey}] Request still exceeds context budget (${remaining}/${budget.effective})`);
@@ -908,6 +908,7 @@ export class AgentLoop {
       // Model is empty — ProviderRegistry fills it from the registered entry
       const chatRequest = {
         model: '',
+        contextWindow: this.deps.config.agent.contextWindow,
         messages,
         tools: tools.length > 0 ? tools : undefined,
         temperature: agentCtx?.params?.temperature
@@ -945,7 +946,7 @@ export class AgentLoop {
           if (estTokens > budget.effective * 0.7) {
             contextRetries++;
             log.warn(`[${sessionKey}] LLM timeout with high context (${estTokens}/${budget.effective}), hard-clearing old tool results`);
-            messages = hardClearOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
+            messages = hardClearOldToolResults(messages, transformSettings);
             continue;
           }
         }
@@ -953,7 +954,7 @@ export class AgentLoop {
         if (isContextError && contextRetries < 2) {
           contextRetries++;
           log.warn(`Context overflow (attempt ${contextRetries}), hard-clearing old tool results`);
-          messages = hardClearOldToolResults(messages, DEFAULT_TRANSFORM_SETTINGS);
+          messages = hardClearOldToolResults(messages, transformSettings);
           continue;
         }
 

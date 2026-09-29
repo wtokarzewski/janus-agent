@@ -43,6 +43,10 @@ export async function loadConfig(overrides?: Partial<RawJanusConfig>): Promise<J
 
   const merged = deepMerge(userConfig, workspaceConfig, envConfig, overrides ?? {});
 
+  const context = (merged.agent as { context?: Record<string, unknown> } | undefined)?.context;
+  for (const option of ['reserveTokens', 'toolResultMaxShare', 'toolResultHardMax', 'compactionThresholds', 'emergencyThreshold']) {
+    if (context && option in context) log.warn(`Deprecated agent.context.${option} is ignored; see docs/ARCHITECTURE.md for current budget controls`);
+  }
   const raw = JanusConfigSchema.parse(merged);
   const resolved = resolveLLM(raw);
   return { ...raw, resolved };

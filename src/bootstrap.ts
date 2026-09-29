@@ -89,7 +89,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   // 2. Core components
   const bus = new MessageBus();
 
-  const llm = new ProviderRegistry(new ProviderCircuitBreaker(config.llm.circuitBreaker));
+  const llm = new ProviderRegistry(new ProviderCircuitBreaker(config.llm.circuitBreaker), { contextWindow: config.agent.contextWindow, maxTokens: config.resolved.maxTokens });
   const { resolved } = config;
   if (resolved.providers.length > 0) {
     const sharedTokenStore = new FileTokenStore();
@@ -112,6 +112,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
             apiBase: rp.apiBase, auth: rp.auth, tokenStore: isOAuth ? sharedTokenStore : undefined,
           }),
           model: entry.model,
+          contextWindows: config.llm.contextWindows?.[entry.provider],
           purpose: [],
           priority: rp.priority,
           logLevel: rp.logLevel,
@@ -141,6 +142,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
               apiBase: rp.apiBase, auth: rp.auth, tokenStore: isOAuth ? sharedTokenStore : undefined,
             }),
             model: entry.model,
+            contextWindows: config.llm.contextWindows?.[entry.provider],
             purpose: ['background', 'summarize', 'cron', 'heartbeat'],
             priority: rp.priority,
             logLevel: rp.logLevel,
