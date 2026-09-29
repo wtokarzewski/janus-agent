@@ -8,13 +8,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Conversation continuity regression scenarios spanning repeated compaction, corrections, restart, provider failover, pinned edits/sums, image steering, concurrent users and cancellation (JL-18); behavioral retry/flush tests replace source-string assertions (JL-19).
 - **Telegram reactions** — a reaction now reaches the agent with the message it refers to (`[Reaction 👍 to your message: "…"]`; in groups, a reaction to someone else's message names its author), routed to the right forum topic; new `react` tool lets Janus answer with an emoji alone. Groups deliver reactions only when the bot is an admin.
 - **New models** — Opus 5.5 and Fable 5.1 (`opus`/`fable` aliases now point at them, pins `opus-5-5`/`fable-5-1`); the GPT-6 family replaces GPT-5.6 in the Codex menu and fallback list, with Sol as the default (Astra flagship, Luna cheapest). `@openai/codex-sdk` 0.104 → 0.155, since GPT-6 Astra needs Codex CLI 0.153+
 
 ### Changed
+- Multi-user `exec` requires owner identity, including delegated turns; single-user mode and `execEnabled` remain supported. Shell cwd/regex checks are not a sandbox (JL-16–17).
+- Per-provider/model `llm.contextWindows`, complete-request accounting and output reservations govern fallback dispatch. Legacy context reserve/cap/threshold settings are deprecated (JL-11–12).
 - Subscription (OAuth) requests identify as `claude-cli/2.1.280` (was 2.1.195), now kept in one constant
 
 ### Fixed
+- Summary restoration and snapshot-based compaction preserve new arrivals and previous facts; archives precede replacement, incomplete/length-limited summaries are rejected with one retry, and short prior summaries remain available (JL-01–05).
+- Durable flush cursors survive rotation/restart and acknowledge only successful note writes/checkpoints. Scoped memory indexes and pinned files refresh after changes; steering retains sender/reply/image metadata and fresh reads remain possible (JL-03, JL-06–10).
+- Per-session turn ownership, provider/tool cancellation and deadline cleanup prevent overlapping turns, late continuations and lingering wait timers. Child sessions inherit restrictions, depth, parent IDs and cancellation (JL-13–16).
 - **Heartbeat schedule parsing** — `parseHeartbeatMd` now accepts an optional case-insensitive `cron ` prefix (e.g. `schedule: cron 0 7 * * *`); several users' weekly/daily tasks were written that way, following AGENTS.md's own wording ("cron expression"), and silently never ran. Unrecognized schedule formats now log at warn instead of debug, so a typo doesn't disappear silently again.
 - **stock-watcher data source** — replaced Google Finance scraping with the Yahoo Finance chart API: Google 302-redirects EU/PL IPs to a consent page, and the scraper was parsing that page into fake or empty quotes. `summarize_performance.py` now prints a stderr WARNING and exits non-zero when fetches fail, instead of failing silently; see `skills/stock-watcher/KNOWN_ISSUES.md`.
 
