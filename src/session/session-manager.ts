@@ -18,13 +18,21 @@ export interface SessionMetadata {
   updated: string;
   messageCount: number;
   summary?: string;
-  lastFlushed?: number;
+  lastFlushed?: number; // Legacy positional cursor; not trusted after migration.
+  flushEpoch?: string;
+  messageOffset?: number;
+  flushedThrough?: number;
 }
 
 /** Detached summary input; its commit boundary is owned by this manager. */
 export interface CompactionSnapshot {
   messages: LLMMessage[];
   previousSummary?: string;
+}
+
+export interface MemoryFlushSnapshot {
+  messages: LLMMessage[];
+  summary?: string;
 }
 
 export interface Session {
@@ -42,6 +50,7 @@ export class SessionManager {
   private cache = new Map<string, Session>();
   private locks = new Map<string, Promise<void>>();
   private generations = new WeakMap<Session, number>();
+  private flushSnapshots = new WeakMap<MemoryFlushSnapshot, { key: string; epoch: string; through: number }>();
   private snapshots = new WeakMap<CompactionSnapshot, {
     key: string; session: Session; generation: number; cutIndex: number; prefix: string;
   }>();
@@ -100,6 +109,7 @@ export class SessionManager {
           created: new Date().toISOString(),
           updated: new Date().toISOString(),
           messageCount: 0,
+          flushEpoch: randomUUID(), messageOffset: 0, flushedThrough: 0,
         },
         messages: [],
       };
@@ -139,6 +149,43 @@ export class SessionManager {
     return this.withLock(key, async () => {
       const session = await this.getOrCreateInner(key);
       return session.messages;
+    });
+  }
+
+  /** Absolute sequence numbers survive rotation; only clear starts a new epoch. */
+  async prepareMemoryFlush(key: string): Promise<MemoryFlushSnapshot> {
+    return this.withLock(key, async () => {
+      const session = await this.getOrCreateInner(key);
+      session.metadata.flushEpoch ??= randomUUID();
+      const offset = session.metadata.messageOffset ?? 0;
+      const from = Math.max(0, (session.metadata.flushedThrough ?? 0) - offset);
+      const snapshot = { messages: structuredClone(session.messages.slice(from)), summary: session.metadata.summary };
+      this.flushSnapshots.set(snapshot, {
+        key, epoch: session.metadata.flushEpoch, through: offset + session.messages.length,
+      });
+      return snapshot;
+    });
+  }
+
+  async pendingMemoryCount(key: string): Promise<number> {
+    return this.withLock(key, async () => {
+      const session = await this.getOrCreateInner(key);
+      return Math.max(0, session.messages.length - Math.max(0,
+        (session.metadata.flushedThrough ?? 0) - (session.metadata.messageOffset ?? 0)));
+    });
+  }
+
+  /** Call only after all note writes succeed. A failed checkpoint remains retryable. */
+  async completeMemoryFlush(key: string, snapshot: MemoryFlushSnapshot): Promise<boolean> {
+    return this.withLock(key, async () => {
+      const session = await this.getOrCreateInner(key);
+      const record = this.flushSnapshots.get(snapshot);
+      if (!record || record.key !== key || record.epoch !== session.metadata.flushEpoch) return false;
+      if ((session.metadata.flushedThrough ?? 0) >= record.through) return true;
+      const metadata = { ...session.metadata, flushedThrough: record.through };
+      await this.save(key, { ...session, metadata }, true);
+      session.metadata = metadata;
+      return true;
     });
   }
 
@@ -210,7 +257,7 @@ export class SessionManager {
         ...session.metadata,
         summary: summaryText,
         messageCount: tailMessages.length,
-        lastFlushed: tailMessages.length, // post-compaction tail is considered already flushed
+        messageOffset: (session.metadata.messageOffset ?? 0) + cutIndex,
         updated: new Date().toISOString(),
       };
 
@@ -307,7 +354,7 @@ export class SessionManager {
       session.messages = session.messages.slice(dropCount);
       session.metadata.summary = `[compaction failed; force-dropped oldest ${droppedCount} messages at ${new Date().toISOString()}]`;
       session.metadata.messageCount = session.messages.length;
-      session.metadata.lastFlushed = session.messages.length;
+      session.metadata.messageOffset = (session.metadata.messageOffset ?? 0) + droppedCount;
       session.metadata.updated = new Date().toISOString();
 
       await this.save(key, session);
@@ -324,6 +371,9 @@ export class SessionManager {
       session.metadata.summary = undefined;
       session.metadata.messageCount = 0;
       session.metadata.lastFlushed = 0;
+      session.metadata.flushEpoch = randomUUID();
+      session.metadata.messageOffset = 0;
+      session.metadata.flushedThrough = 0;
       session.metadata.updated = new Date().toISOString();
       await this.save(key, session);
     });
@@ -363,7 +413,7 @@ export class SessionManager {
     }
   }
 
-  private async save(key: string, session: Session): Promise<void> {
+  private async save(key: string, session: Session, throwOnError = false): Promise<void> {
     try {
       const path = this.sessionPath(key);
       await mkdir(dirname(path), { recursive: true });
@@ -379,6 +429,7 @@ export class SessionManager {
       await rename(tempPath, path);
     } catch (err) {
       log.error(`Session save failed for ${key}: ${err instanceof Error ? err.message : err}`);
+      if (throwOnError) throw err;
     }
   }
 
@@ -419,6 +470,11 @@ export class SessionManager {
       }
     }
 
+    // Old lastFlushed could have been advanced by compaction without a note write.
+    // Replay the retained legacy tail rather than silently skip it.
+    metadata.flushEpoch = typeof first.flushEpoch === 'string' ? first.flushEpoch : randomUUID();
+    metadata.messageOffset = Number.isSafeInteger(first.messageOffset) && Number(first.messageOffset) >= 0 ? Number(first.messageOffset) : 0;
+    metadata.flushedThrough = Number.isSafeInteger(first.flushedThrough) && Number(first.flushedThrough) >= 0 ? Number(first.flushedThrough) : 0;
     metadata.messageCount = messages.length;
     return { metadata, messages };
   }
