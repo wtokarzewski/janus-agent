@@ -52,6 +52,7 @@ describe('Summary commit validation', () => {
     expect(previous.length / 2.5).toBeLessThan(100);
     await run();
     expect(chat).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
     expect(chat.mock.calls[0][0].messages[0].content).toContain(previous);
     expect((await new SessionManager(config).getOrCreate('test')).metadata.summary).toBe(valid);
   });
