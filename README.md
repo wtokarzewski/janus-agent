@@ -47,18 +47,28 @@ Run `npm start -- setup` to (re)configure or re-login (OAuth opens a browser), o
 ## Key Features
 
 - **8 LLM providers** with multi-provider failover and streaming
-- **14 built-in tools** — exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update, invite
+- **Built-in tools** — exec, read/write/edit/append-file, list-dir, message, spawn_agent, cron, web_fetch, web_search, heartbeat, self_update, invite
 - **Hybrid memory search** — FTS5 + vector (local embeddings, all-MiniLM-L6-v2) + temporal decay
 - **Safety gates** — Pattern-based confirmation before destructive commands
 - **Persistent cron** — SQLite-backed scheduler with heartbeat tasks
-- **Subagent spawning** — Child agents with minimal prompts for parallel work
+- **Subagent spawning** — Separate child sessions inherit user permissions, agent rules and cancellation
 - **Learner** — Execution metrics with keyword-based recommendations
 - **MCP server** — Expose tools to editors via JSON-RPC over stdio
 - **Multi-user** — Per-user profiles, memory scoping, tool/skill restrictions
 - **Invite links** — Existing users generate Telegram deep links to onboard new users
 - **Lazy skills** — SKILL.md files loaded on demand to save tokens
 
-See [FEATURES.md](FEATURES.md) for the full verified feature list.
+See [FEATURES.md](FEATURES.md) for the feature list and automated validation scope.
+
+## Conversation continuity and permissions
+
+Sessions retain a structured summary plus recent transcript across compaction and restart. Compaction archives the old transcript, preserves messages arriving during summarization and rejects incomplete generated summaries. Pinned files refresh during a turn; memory search refreshes changed files in the correct scope. A resolved session processes turns in order, and cancellation prevents late replies from starting new tools.
+
+Memory extraction appends history and scoped daily notes after 20 pending retained messages or at shutdown. It does not rewrite curated MEMORY.md. Old session files remain readable; crash recovery can replay notes, so storage is not exactly-once.
+
+With configured users, the unisolated `exec` shell is owner-only, including through subagents. `tools.execEnabled: false` disables it. Cwd checks and command patterns are not a sandbox; non-owner shell access needs a separate sandbox implementation.
+
+See [Architecture](docs/ARCHITECTURE.md#remaining-limits-and-validation-scope) for budgets, compatibility and known limitations. The repair suite uses synthetic conversations and mock providers; it does not constitute a production conversation test.
 
 ## Memory & Vector Search
 
