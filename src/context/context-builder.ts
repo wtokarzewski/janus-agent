@@ -114,17 +114,17 @@ export class ContextBuilder {
       staticParts.push(`<chat_files>\n${chatFilesDir}/\n</chat_files>`);
     }
 
+    // 3. Agents (AGENTS.md — agent path override + per-user override)
+    if (opts.agentCtx?.agentsFilePath !== null) {
+      const agents = await this.loadAgents(opts.user?.userId, opts.agentCtx?.agentsFilePath);
+      if (agents) staticParts.push(agents);
+    }
+
     if (!minimal) {
       // 2. Ego (EGO.md — agent path override: null=skip, undefined=global)
       if (opts.agentCtx?.egoPath !== null) {
         const ego = await this.loadEgo(opts.agentCtx?.egoPath);
         if (ego) staticParts.push(ego);
-      }
-
-      // 3. Agents (AGENTS.md — agent path override + per-user override)
-      if (opts.agentCtx?.agentsFilePath !== null) {
-        const agents = await this.loadAgents(opts.user?.userId, opts.agentCtx?.agentsFilePath);
-        if (agents) staticParts.push(agents);
       }
 
       // 4. Heartbeat (HEARTBEAT.md — agent path override + per-user) — skip in background mode
