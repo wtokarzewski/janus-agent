@@ -47,7 +47,7 @@ describe('ContextBuilder mode', () => {
     expect(prompt).toContain('<identity>');
   });
 
-  it('minimal mode skips agents, project, heartbeat, and memory sections', async () => {
+  it('minimal mode retains mandatory agents rules and skips project, heartbeat, and memory', async () => {
     const { builder } = createBuilder(tempDir);
 
     const { staticPart, dynamicPart } = await builder.build({
@@ -58,7 +58,7 @@ describe('ContextBuilder mode', () => {
     });
     const prompt = staticPart + '\n\n---\n\n' + dynamicPart;
 
-    expect(prompt).not.toContain('<agents>');
+    expect(prompt).toContain('<agents>');
     expect(prompt).not.toContain('<project>');
     expect(prompt).not.toContain('<heartbeat>');
     expect(prompt).not.toContain('<memory>');

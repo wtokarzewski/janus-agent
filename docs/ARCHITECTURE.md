@@ -83,7 +83,7 @@ This also covers failed tools that wrote before failing and formerly missing fil
 Explicit reads always use normal tool gates and path/user validation; they never
 redirect the model to a stale snapshot. Rebuilds use the existing symlink guard.
 
-Subagents use **minimal mode** (identity + skills + session only) to save tokens.
+Subagents use **minimal mode**, retaining configured AGENTS.md rules (including user overrides), identity, skills and session context. Trusted request context carries user/scope/agent, owner status and tool filters into a separate UUID session. Child permissions cannot exceed the parent; missing identity is rejected in multi-user delegation. Each child increments depth, registers its parent run ID and combines parent cancellation with its own controller. Execution limits come from the same agent configuration.
 
 ### 4. ProviderRegistry (`src/llm/provider-registry.ts`)
 

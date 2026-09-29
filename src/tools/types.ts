@@ -1,3 +1,4 @@
+import type { InboundMessage } from '../bus/types.js';
 import type { ToolDefinition } from '../llm/types.js';
 
 export interface Tool {
@@ -34,6 +35,12 @@ export interface ToolContext {
 
 /** Per-request context — passed to execute(), not shared across lanes. */
 export interface RequestContext {
+  /** Trusted execution identity; never populated from model tool arguments. */
+  user?: InboundMessage['user'];
+  scope?: InboundMessage['scope'];
+  agentId?: string;
+  runId?: string;
+  spawnDepth?: number;
   signal?: AbortSignal;
   chatId?: string;
   /** Channel of the conversation being handled (e.g. "telegram", "cli"). */

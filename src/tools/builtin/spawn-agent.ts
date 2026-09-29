@@ -1,4 +1,4 @@
-import type { Tool } from '../types.js';
+import type { Tool, RequestContext } from '../types.js';
 import type { AgentDeps } from '../../agent/agent-loop.js';
 import type { SubagentRegistry } from '../../agent/subagent-registry.js';
 import { spawnSubagent } from '../../agent/subagent.js';
@@ -33,24 +33,14 @@ export class SpawnAgentTool implements Tool {
     this.parentId = parentId;
   }
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
     const task = String(args.task ?? '');
     if (!task) return 'Error: No task provided';
-
-    const limits = this.deps.config.agent.subagents;
-
-    // Children-per-parent limit
-    if (this.registry && this.parentId) {
-      const childCount = this.registry.childrenCount(this.parentId);
-      if (childCount >= limits.maxChildrenPerAgent) {
-        return `Error: Maximum children per agent (${limits.maxChildrenPerAgent}) reached. Wait for existing subagents to finish.`;
-      }
-    }
 
     try {
       const { id, result } = await spawnSubagent(
         this.deps,
-        { task, depth: this.depth },
+        { task, parentContext: reqCtx, depth: reqCtx?.spawnDepth ?? this.depth, parentId: reqCtx?.runId ?? this.parentId, signal: reqCtx?.signal },
         this.registry,
       );
       return `[subagent:${id}]\n${result}`;
