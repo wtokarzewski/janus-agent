@@ -69,6 +69,41 @@ function createDeps(mockProvider: MockProvider): { deps: AgentDeps; learnerStora
 }
 
 describe('AgentLoop integration', () => {
+  it('retries failed note writes and persists the flush cursor across rotation and restart', async () => {
+    const mock = new MockProvider([{ content: 'answer' }]);
+    const { deps } = createDeps(mock);
+    const memory = new MemoryStore(deps.config);
+    deps.memory = memory;
+    const agent = new AgentLoop(deps);
+    await agent.processDirect('original fact', { chatId: 'cursor' });
+    const key = 'main:cli:cursor';
+    for (let i = 0; i < 5; i++) await deps.sessions.append(key, [
+      { role: 'user', content: `fact ${i} ` + 'x'.repeat(100) },
+      { role: 'assistant', content: 'answer ' + 'x'.repeat(100) },
+    ]);
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const flush = vi.spyOn(mock, 'chat').mockImplementation(async () => {
+      await held;
+      return { content: '<summary>events</summary><facts>fact</facts>', toolCalls: [], finishReason: 'stop', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+    });
+    const notes = vi.spyOn(memory, 'appendDaily').mockRejectedValueOnce(new Error('note write failed')).mockResolvedValue(undefined);
+    vi.spyOn(memory, 'appendHistory').mockResolvedValue(undefined);
+    const first = agent.flushAllSessions();
+    await vi.waitFor(() => expect(flush).toHaveBeenCalledOnce());
+    await deps.sessions.summarize(key, 'summary', 100);
+    release();
+    await first;
+    expect(await deps.sessions.pendingMemoryCount(key)).toBe(2);
+    await agent.flushAllSessions();
+    expect(notes).toHaveBeenCalledTimes(2);
+    expect(await new SessionManager(deps.config).pendingMemoryCount(key)).toBe(0);
+    await deps.sessions.append(key, [{ role: 'user', content: 'new correction' }]);
+    await agent.flushAllSessions();
+    expect(flush.mock.calls.at(-1)![0].messages.at(-1)!.content).toBe('New messages to process:\nuser: new correction');
+    expect(await new SessionManager(deps.config).pendingMemoryCount(key)).toBe(0);
+  });
+
   it.each(['same', 'linked', 'separate loops'])('serializes %s direct sessions while another session proceeds', async mode => {
     const mock = new MockProvider([]);
     const { deps } = createDeps(mock);
