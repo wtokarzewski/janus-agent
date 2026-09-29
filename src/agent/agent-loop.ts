@@ -1,3 +1,4 @@
+import { withAbort } from '../utils/abort.js';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -285,14 +286,14 @@ export class AgentLoop {
         };
         const runCtrl = new AbortController();
         // processTurn combines this with its per-session controller after acquiring ownership.
-        (msg as InboundMessage & { signal?: AbortSignal }).signal = runCtrl.signal;
+        msg.signal = AbortSignal.any([signal, runCtrl.signal, ...(msg.signal ? [msg.signal] : [])]);
         const timeoutMs = this.deps.config.agent.laneTimeoutMs;
         const watchdog = setTimeout(() => {
           log.error(`Lane "${lane}": run ${msg.channel}:${msg.chatId} still active after ${Math.round(timeoutMs / 1000)}s — aborting run and releasing slot (watchdog)`);
           runCtrl.abort();
           releaseOnce();
         }, timeoutMs);
-        this.processTurn(msg, () => this.processLaneMessage(msg, signal))
+        this.processTurn(msg, () => this.processLaneMessage(msg, msg.signal!))
           .catch(err => {
             if (!signal.aborted) {
               log.error(`Lane "${lane}" message error: ${err instanceof Error ? err.message : String(err)}`);
@@ -403,6 +404,7 @@ export class AgentLoop {
     ];
 
     const reqCtx: RequestContext = {
+      signal: msg.signal,
       chatId: msg.chatId,
       channel: msg.channel,
       channelMessageId: msg.channelMessageId,
@@ -453,6 +455,7 @@ export class AgentLoop {
 
     log.info(`[${sessionKey}] Context built in ${Date.now() - t0}ms`);
 
+    msg.signal?.throwIfAborted();
     // 4. Save user message to session BEFORE iteration
     await this.deps.sessions.append(sessionKey, [userMessage]);
 
@@ -474,6 +477,8 @@ export class AgentLoop {
 
     const systemParts = { staticPart, dynamicPart };
     const iterResult = await this.iterate(messages, toolDefs, sessionKey, streamCtx, (msg as InboundMessage & { signal?: AbortSignal }).signal, msg.chatId, reqCtx, agentCtx, llmPurpose, msg.lane, systemParts, pinnedPaths ?? new Set<string>(), buildContext, msg);
+
+    msg.signal?.throwIfAborted();
 
     // 6. Save final assistant message — unless the turn produced no text (e.g. a
     // reply made only with a reaction). An empty assistant message mid-history is
@@ -540,7 +545,7 @@ export class AgentLoop {
       if (this.summarizing.has(sessionKey)) {
         log.debug(`[${sessionKey}] Skipping summarization — already in progress`);
       } else {
-        this.triggerSummarization(sessionKey, fullSession.messages, msg.user?.userId, msg.scope, sessionTokenEstimate, pinnedPaths ?? new Set<string>()).catch(err => {
+        this.triggerSummarization(sessionKey, fullSession.messages, msg.user?.userId, msg.scope, sessionTokenEstimate, pinnedPaths ?? new Set<string>(), msg.signal).catch(err => {
           log.warn(`Summarization failed: ${err instanceof Error ? err.message : String(err)}`);
         });
       }
@@ -565,6 +570,8 @@ export class AgentLoop {
 
     // Process as a regular message but with system session key
     const response = await this.processMessage(msg, { sentTargets });
+
+    msg.signal?.throwIfAborted();
 
     // Suppress no-op / internal summary responses from heartbeat/cron
     const trimmed = response.content.trim();
@@ -604,7 +611,7 @@ export class AgentLoop {
                   ...response,
                   channel: identity.channel,
                   chatId: identity.channelUserId,
-                }, new AbortController().signal).catch(() => {});
+                }, msg.signal).catch(() => {});
               }
             }
             return;
@@ -628,7 +635,7 @@ export class AgentLoop {
         return;
       }
 
-      await this.deps.bus.publishOutbound(response, new AbortController().signal).catch(err => {
+      await this.deps.bus.publishOutbound(response, msg.signal).catch(err => {
         log.warn(`Failed to publish system message response: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
@@ -644,6 +651,7 @@ export class AgentLoop {
           log.warn(`[${sessionKey}] Cron session reached ~${Math.round(estimate / 1000)}K tokens`);
         }
         log.info(`[${sessionKey}] Cron session cleared (~${Math.round(estimate / 1000)}K tokens)`);
+        msg.signal?.throwIfAborted();
         await this.deps.sessions.clear(sessionKey);
       } catch (err) {
         log.warn(`Failed to clear cron session: ${err instanceof Error ? err.message : String(err)}`);
@@ -873,7 +881,8 @@ export class AgentLoop {
       } else if (router.route.type === 'compact_only' || router.route.type === 'compact_then_truncate') {
         // Persisted input (including steering and tool results) is already in the tail.
         // Rebuild both provider representations of the prompt with the new summary.
-        await this.triggerCompactionSync(sessionKey, pinnedPaths ?? new Set<string>());
+        await this.triggerCompactionSync(sessionKey, pinnedPaths ?? new Set<string>(), signal);
+        signal?.throwIfAborted();
         const reloaded = await this.deps.sessions.getOrCreate(sessionKey);
         if (rebuildContext) {
           const fresh = await rebuildContext(reloaded.metadata.summary);
@@ -906,7 +915,9 @@ export class AgentLoop {
       const thinkingEnabled = thinkingLevel ? thinkingLevel !== 'off' : thinkingConfig?.enabled;
       const thinkingBudget = thinkingLevel ? (THINKING_LEVEL_BUDGETS[thinkingLevel] ?? 10000) : (thinkingConfig?.budgetTokens ?? 10000);
       // Model is empty — ProviderRegistry fills it from the registered entry
+      signal?.throwIfAborted();
       const chatRequest = {
+        signal,
         model: '',
         contextWindow: this.deps.config.agent.contextWindow,
         messages,
@@ -927,15 +938,17 @@ export class AgentLoop {
         if (streamingEnabled && streamCtx) {
           // Use streaming — chunks go to the channel in real-time
           const onChunk = (chunk: string) => {
-            this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'chunk', chunk);
+            if (!signal?.aborted) this.deps.bus.streamTo(streamCtx.channel, streamCtx.chatId, 'chunk', chunk);
           };
           response = await this.deps.llm.chatStream(chatRequest, onChunk, llmPurpose);
         } else {
           response = await this.deps.llm.chat(chatRequest, llmPurpose);
         }
+        signal?.throwIfAborted();
         log.info(`[${sessionKey}] LLM call done in ${Date.now() - llmStart}ms (tokens=${response.usage.totalTokens})`);
         logTokenUsage(lane ?? 'chat', response.usage, response.provider, response.model);
       } catch (err) {
+        signal?.throwIfAborted();
         const errorText = err instanceof Error ? err.message : String(err);
         const isContextError = isContextLengthError(err instanceof Error ? err : new Error(errorText));
         const isTimeout = /timeout|timed out|ETIMEDOUT|ECONNRESET/i.test(errorText);
@@ -1062,6 +1075,7 @@ export class AgentLoop {
 
       // Execute unique tool calls (parallel when >1)
       const executeOne = async (tc: typeof uniqueCalls[0]): Promise<LLMMessage> => {
+        signal?.throwIfAborted();
         let args: Record<string, unknown>;
         try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
 
@@ -1076,11 +1090,14 @@ export class AgentLoop {
         totalToolCalls++;
         const maxRetries = this.deps.config.agent.toolRetries;
         let rawResult = await this.deps.tools.execute(tc.function.name, args, reqCtx);
+        signal?.throwIfAborted();
 
         for (let attempt = 1; attempt < maxRetries && rawResult.startsWith('Error:') && !isDeterministicError(rawResult); attempt++) {
           log.warn(`Tool "${tc.function.name}" failed (attempt ${attempt}/${maxRetries}), retrying...`);
           await sleep(500 * attempt, signal);
+          signal?.throwIfAborted();
           rawResult = await this.deps.tools.execute(tc.function.name, args, reqCtx);
+          signal?.throwIfAborted();
         }
 
         // Error recovery: ask user whether to continue after persistent failure
@@ -1110,12 +1127,15 @@ export class AgentLoop {
         return { role: 'tool', tool_call_id: tc.id, content: parseToolResult(rawResult) };
       };
 
-      const toolResults = uniqueCalls.length > 1
-        ? await Promise.all(uniqueCalls.map(executeOne))
-        : uniqueCalls.length === 1
-          ? [await executeOne(uniqueCalls[0])]
-          : [];
+      // Keep session ownership until every started tool settles, even on cancellation.
+      const settledTools = await Promise.allSettled(uniqueCalls.map(executeOne));
+      signal?.throwIfAborted();
+      const toolResults = settledTools.map(result => {
+        if (result.status === 'rejected') throw result.reason;
+        return result.value;
+      });
 
+      signal?.throwIfAborted();
       // Append results in original order (preserves determinism)
       for (const toolMsg of toolResults) {
         messages.push(toolMsg);
@@ -1339,20 +1359,21 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
    * we MUST shrink the session before the LLM call, else it'll fail with
    * context overflow.
    */
-  private async triggerCompactionSync(sessionKey: string, pinnedPaths: Set<string>): Promise<void> {
+  private async triggerCompactionSync(sessionKey: string, pinnedPaths: Set<string>, signal?: AbortSignal): Promise<void> {
     // If another summarization is already in progress, wait for it.
     if (this.summarizing.has(sessionKey)) {
       let waited = 0;
       const POLL_MS = 250;
       const MAX_WAIT_MS = 16 * 60 * 1000; // slightly over compaction timeout
       while (this.summarizing.has(sessionKey) && waited < MAX_WAIT_MS) {
-        await sleep(POLL_MS);
+        signal?.throwIfAborted();
+        await sleep(POLL_MS, signal);
         waited += POLL_MS;
       }
       return;
     }
     const session = await this.deps.sessions.getOrCreate(sessionKey);
-    await this.triggerSummarization(sessionKey, session.messages, undefined, undefined, undefined, pinnedPaths);
+    await this.triggerSummarization(sessionKey, session.messages, undefined, undefined, undefined, pinnedPaths, signal);
   }
 
   private async triggerSummarization(
@@ -1362,11 +1383,12 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     scope?: InboundMessage['scope'],
     preTokenEstimate?: number,
     pinnedPaths: Set<string> = new Set(),
+    signal?: AbortSignal,
   ): Promise<void> {
     // Double-fire guard (C2)
     this.summarizing.add(sessionKey);
     try {
-      await this.doSummarization(sessionKey, messages, userId, scope, preTokenEstimate, pinnedPaths);
+      await this.doSummarization(sessionKey, messages, userId, scope, preTokenEstimate, pinnedPaths, signal);
     } finally {
       this.summarizing.delete(sessionKey);
     }
@@ -1379,11 +1401,13 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     _scope?: InboundMessage['scope'],
     _preTokenEstimate?: number,
     pinnedPaths: Set<string> = new Set(),
+    signal?: AbortSignal,
   ): Promise<void> {
     log.info(`[${sessionKey}] Summarization: start`);
     const sumStart = Date.now();
     const keepRecentTokens = this.deps.config.agent.context.keepRecentTokens;
 
+    signal?.throwIfAborted();
     const snapshot = await this.deps.sessions.prepareCompaction(sessionKey, keepRecentTokens);
     const toSummarize = snapshot.messages;
     if (toSummarize.length < 4) {
@@ -1459,7 +1483,8 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     const MAX_SUMMARY_ATTEMPTS = 2;
     for (let attempt = 0; attempt < MAX_SUMMARY_ATTEMPTS; attempt++) {
       try {
-        const summaryResponse = await withTimeout(this.deps.llm.chat({
+        const summaryResponse = await withAbort(withTimeout(this.deps.llm.chat({
+          signal,
           model: '',
           messages: [
             { role: 'system', content: systemContent },
@@ -1470,12 +1495,14 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
           ],
           temperature: 0.3,
           maxTokens: summaryMaxTokens,
-        }, 'summarize'), COMPACTION_TIMEOUT_MS, 'Summarization LLM call timed out');
+        }, 'summarize'), COMPACTION_TIMEOUT_MS, 'Summarization LLM call timed out'), signal);
+        signal?.throwIfAborted();
         logTokenUsage('summarize', summaryResponse.usage, summaryResponse.provider, summaryResponse.model);
         summary = validatedSummary(summaryResponse);
         if (summary) break;
         log.warn(`[${sessionKey}] Rejecting incomplete summary (attempt ${attempt + 1}/${MAX_SUMMARY_ATTEMPTS})`);
       } catch (err) {
+        signal?.throwIfAborted();
         const msg = err instanceof Error ? err.message : String(err);
         if (attempt > 0) {
           this.rejectedSummaries.set(sessionKey, fingerprint);
@@ -1504,6 +1531,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     const summaryTokens = Math.ceil(summary.length / 2.5);
     log.info(`[${sessionKey}] Summarization: ${summaryTokens} tokens (${Math.round(summaryTokens / inputTokens * 100)}% of input)`);
 
+    signal?.throwIfAborted();
     const committed = await this.deps.sessions.summarize(sessionKey, summary, keepRecentTokens, snapshot);
     if (!committed) return;
 

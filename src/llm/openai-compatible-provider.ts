@@ -127,13 +127,14 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     let response: OpenAI.ChatCompletion;
     try {
-      response = await this.client.chat.completions.create(params);
+      response = await this.client.chat.completions.create(params, { signal: request.signal });
     } catch (err) {
+      request.signal?.throwIfAborted();
       // Fallback: if tool_choice rejected, retry without it (L14)
       if (params.tool_choice && err instanceof Error && /tool_choice|tool choice/i.test(err.message)) {
         log.warn(`${this.name}: tool_choice rejected, retrying without it`);
         delete params.tool_choice;
-        response = await this.client.chat.completions.create(params);
+        response = await this.client.chat.completions.create(params, { signal: request.signal });
       } else {
         throw err;
       }
@@ -194,7 +195,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       (params as unknown as Record<string, unknown>).reasoning_effort = request.reasoningEffort;
     }
 
-    const stream = await this.client.chat.completions.create(params);
+    const stream = await this.client.chat.completions.create(params, { signal: request.signal });
 
     let content = '';
     const toolCallsMap = new Map<number, { id: string; name: string; args: string }>();
@@ -203,6 +204,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     let completionTokens = 0;
 
     for await (const chunk of stream) {
+      request.signal?.throwIfAborted();
       const choice = chunk.choices[0];
       if (!choice) continue;
 

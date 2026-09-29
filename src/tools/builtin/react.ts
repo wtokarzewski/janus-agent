@@ -32,6 +32,7 @@ export class ReactTool implements Tool {
 
     const reactTo = typeof args.message_id === 'number' ? args.message_id : reqCtx.channelMessageId;
 
+    reqCtx?.signal?.throwIfAborted();
     await this.bus.publishOutbound({
       channel: reqCtx.channel,
       chatId: reqCtx.chatId,
@@ -39,7 +40,7 @@ export class ReactTool implements Tool {
       timestamp: new Date(),
       type: 'reaction',
       reactTo,
-    });
+    }, reqCtx?.signal);
     return `Reacted ${emoji}`;
   }
 }

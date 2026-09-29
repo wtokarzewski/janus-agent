@@ -67,7 +67,7 @@ export class CodexOAuthProvider implements LLMProvider {
 
     let stream;
     try {
-      stream = await client.responses.create(params);
+      stream = await client.responses.create(params, { signal: request.signal });
     } catch (err: unknown) {
       logApiError('stream', err);
       throw err;
@@ -81,6 +81,7 @@ export class CodexOAuthProvider implements LLMProvider {
     const itemMeta = new Map<string, { callId: string; name: string }>();
 
     for await (const event of stream) {
+      request.signal?.throwIfAborted();
       if (event.type === 'response.output_text.delta') {
         content += event.delta;
         onChunk(event.delta);

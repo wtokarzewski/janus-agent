@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { resolve, relative } from 'node:path';
-import type { ContextualTool, ToolContext } from '../types.js';
+import type { ContextualTool, ToolContext, RequestContext } from '../types.js';
 import { getShellConfig, killProcessTree } from '../../utils/shell.js';
 import { stripInvisibleChars, safeSlice } from '../../utils/sanitize.js';
 
@@ -61,7 +61,8 @@ export class ExecTool implements ContextualTool {
     }
   }
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
+    reqCtx?.signal?.throwIfAborted();
     const raw = String(args.command ?? '');
     if (!raw) return 'Error: No command provided';
     // Strip invisible Unicode chars to prevent deny-pattern bypass (S4)
@@ -98,6 +99,7 @@ export class ExecTool implements ContextualTool {
       let stdout = '';
       let stderr = '';
       let killed = false;
+      let cancelled = false;
       let settled = false;
 
       child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
@@ -108,12 +110,13 @@ export class ExecTool implements ContextualTool {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        reqCtx?.signal?.removeEventListener('abort', abort);
 
         let output = '';
         if (stdout) output += stdout;
         if (stderr) output += (output ? '\n' : '') + stderr;
         if (killed) {
-          const note = `Command timed out after ${this.timeoutMs}ms`;
+          const note = cancelled ? 'Command cancelled' : `Command timed out after ${this.timeoutMs}ms`;
           output = output ? `${output}\n${note}` : note;
         }
 
@@ -137,12 +140,23 @@ export class ExecTool implements ContextualTool {
         finish();
       }, this.timeoutMs);
 
+      const abort = () => {
+        cancelled = true;
+        killed = true;
+        if (child.pid) killProcessTree(child.pid, { graceMs: 0 });
+        child.unref();
+        finish();
+      };
+      reqCtx?.signal?.addEventListener('abort', abort, { once: true });
+      if (reqCtx?.signal?.aborted) abort();
+
       child.on('close', finish);
 
       child.on('error', (err) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        reqCtx?.signal?.removeEventListener('abort', abort);
         resolveP(`Error: ${err.message}`);
       });
     });

@@ -8,6 +8,7 @@ export interface ImageAttachment {
 }
 
 export interface InboundMessage {
+  signal?: AbortSignal;
   id: string;
   channel: string;
   chatId: string;

@@ -53,13 +53,15 @@ export class CodexProvider implements LLMProvider {
     const codex = new Codex();
     const thread = codex.startThread({ model });
 
-    const turnOptions: Record<string, unknown> = {};
+    const turnOptions: Record<string, unknown> = { signal: request.signal };
     if (hasTools) {
       turnOptions.outputSchema = buildToolCallSchema(request.tools!);
     }
 
+    request.signal?.throwIfAborted();
     const turn = await thread.run(fullPrompt, turnOptions);
 
+    request.signal?.throwIfAborted();
     const resultText = turn.finalResponse ?? '';
     const sdkUsage = {
       input_tokens: turn.usage?.input_tokens ?? 0,

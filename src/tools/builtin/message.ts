@@ -41,12 +41,13 @@ export class MessageTool implements Tool {
     if (!chatId) return 'Error: No chat_id provided';
     if (!content) return 'Error: No content provided';
 
+    reqCtx?.signal?.throwIfAborted();
     await this.bus.publishOutbound({
       channel,
       chatId,
       content,
       timestamp: new Date(),
-    });
+    }, reqCtx?.signal);
 
     reqCtx?.sentTargets?.push({ channel, chatId });
 

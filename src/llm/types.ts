@@ -44,6 +44,7 @@ export interface ToolDefinition {
 }
 
 export interface ChatRequest {
+  signal?: AbortSignal;
   model: string;
   /** Local prompt-budget cap, never an advertised model capability. */
   contextWindow?: number;

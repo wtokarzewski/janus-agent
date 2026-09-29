@@ -24,6 +24,7 @@ export class AppendFileTool implements ContextualTool {
   }
 
   async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
+    reqCtx?.signal?.throwIfAborted();
     const filePath = String(args.path ?? '');
     const content = String(args.content ?? '');
     if (!filePath) return 'Error: No path provided';
@@ -38,6 +39,7 @@ export class AppendFileTool implements ContextualTool {
 
     try {
       await mkdir(dirname(fullPath), { recursive: true });
+      reqCtx?.signal?.throwIfAborted();
       await appendFile(fullPath, content, 'utf-8');
       await this.onFileChanged?.(fullPath);
       return `Content appended to: ${filePath}`;
