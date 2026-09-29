@@ -1,7 +1,7 @@
-import { withAbort } from '../utils/abort.js';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
+import { sleep, withDeadline } from '../utils/abort.js';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
 import type { LLMMessage, ToolCall, ToolContentBlock, UserContentBlock } from '../llm/types.js';
@@ -239,21 +239,22 @@ export class AgentLoop {
     const waiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
 
     const acquire = (signal: AbortSignal): Promise<void> => {
+      if (signal.aborted) return Promise.reject(signal.reason ?? new Error('Aborted'));
       if (active < concurrency) {
         active++;
         return Promise.resolve();
       }
       return new Promise<void>((resolve, reject) => {
-        const entry = { resolve, reject };
+        const entry = { resolve: () => { signal.removeEventListener('abort', abort); resolve(); }, reject };
         waiters.push(entry);
-        // If abort fires while waiting for a slot, reject so the loop can break
-        signal.addEventListener('abort', () => {
+        const abort = () => {
           const idx = waiters.indexOf(entry);
           if (idx !== -1) {
             waiters.splice(idx, 1);
             reject(new Error('Aborted'));
           }
-        }, { once: true });
+        };
+        signal.addEventListener('abort', abort, { once: true });
       });
     };
 
@@ -293,6 +294,9 @@ export class AgentLoop {
           runCtrl.abort();
           releaseOnce();
         }, timeoutMs);
+        const shutdown = () => { clearTimeout(watchdog); releaseOnce(); };
+        signal.addEventListener('abort', shutdown, { once: true });
+        if (signal.aborted) shutdown();
         this.processTurn(msg, () => this.processLaneMessage(msg, msg.signal!))
           .catch(err => {
             if (!signal.aborted) {
@@ -301,6 +305,7 @@ export class AgentLoop {
           })
           .finally(() => {
             clearTimeout(watchdog);
+            signal.removeEventListener('abort', shutdown);
             releaseOnce();
           });
       } catch (err) {
@@ -1265,7 +1270,7 @@ export class AgentLoop {
       const flushInputTokens = Math.ceil(flushInputChars / 2.5);
       const flushMaxTokens = Math.min(1024, Math.max(256, Math.floor(flushInputTokens * 0.3)));
 
-      const flushResponse = await withTimeout(this.deps.llm.chat({
+      const flushResponse = await withDeadline(this.deps.llm.chat({
         model: '',
         messages: [
           { role: 'system', content: `You are a memory manager. Extract and preserve important information from conversation messages.
@@ -1338,16 +1343,12 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     if (toFlush.length === 0) return;
     log.info(`Flushing memory for ${toFlush.length} session(s)...`);
 
-    const timeout = AbortSignal.timeout(30_000);
     const promises = toFlush.map(([sessionKey, state]) =>
       this.flushMemory(sessionKey, state.userId, state.chatId),
     );
 
     try {
-      await Promise.race([
-        Promise.allSettled(promises),
-        new Promise((_, reject) => timeout.addEventListener('abort', () => reject(new Error('Flush timeout')))),
-      ]);
+      await withDeadline(Promise.allSettled(promises), 30_000, 'Session-end flush timed out');
     } catch {
       log.warn('Session-end flush timed out (30s)');
     }
@@ -1483,7 +1484,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     const MAX_SUMMARY_ATTEMPTS = 2;
     for (let attempt = 0; attempt < MAX_SUMMARY_ATTEMPTS; attempt++) {
       try {
-        const summaryResponse = await withAbort(withTimeout(this.deps.llm.chat({
+        const summaryResponse = await withDeadline(this.deps.llm.chat({
           signal,
           model: '',
           messages: [
@@ -1495,7 +1496,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
           ],
           temperature: 0.3,
           maxTokens: summaryMaxTokens,
-        }, 'summarize'), COMPACTION_TIMEOUT_MS, 'Summarization LLM call timed out'), signal);
+        }, 'summarize'), COMPACTION_TIMEOUT_MS, 'Summarization LLM call timed out', signal);
         signal?.throwIfAborted();
         logTokenUsage('summarize', summaryResponse.usage, summaryResponse.provider, summaryResponse.model);
         summary = validatedSummary(summaryResponse);
@@ -1633,21 +1634,6 @@ function simpleHash(str: string): string {
     hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
   }
   return (hash >>> 0).toString(36);
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise(resolve => {
-    if (signal?.aborted) { resolve(); return; }
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
-  });
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
-  ]);
 }
 
 /** Errors that will never resolve by retrying with the same arguments. */
