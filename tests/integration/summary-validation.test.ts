@@ -25,7 +25,7 @@ async function fixture(responses: Array<Partial<ChatResponse>>) {
   }));
   // Exercise the compaction boundary without running unrelated tool/turn logic.
   const loop = new AgentLoop({ config, sessions, bus: new MessageBus(), llm: { chat } } as unknown as AgentDeps);
-  const run = () => (loop as unknown as { triggerCompactionSync(key: string, paths: Set<string>): Promise<void> }).triggerCompactionSync('test', new Set());
+  const run = (signal?: AbortSignal) => (loop as unknown as { triggerCompactionSync(key: string, paths: Set<string>, signal?: AbortSignal): Promise<void> }).triggerCompactionSync('test', new Set(), signal);
   return { config, sessions, chat, run, previous };
 }
 
@@ -64,6 +64,21 @@ describe('Summary commit validation', () => {
     await run();
     await run();
     expect(chat).toHaveBeenCalledTimes(2);
+    expect(await sessions.getOrCreate('test')).toEqual(before);
+  });
+
+  it('cancels an ignored summarizer request without committing its late result', async () => {
+    const { sessions, chat, run } = await fixture([]);
+    const before = structuredClone(await sessions.getOrCreate('test'));
+    let release!: (response: ChatResponse) => void;
+    chat.mockImplementation(() => new Promise<ChatResponse>(resolve => { release = resolve; }));
+    const ctrl = new AbortController();
+    const running = run(ctrl.signal);
+    await vi.waitFor(() => expect(chat).toHaveBeenCalledOnce());
+    ctrl.abort();
+    await expect(running).rejects.toThrow();
+    release({ content: structuredSummary(), toolCalls: [], finishReason: 'stop', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } });
+    await Promise.resolve();
     expect(await sessions.getOrCreate('test')).toEqual(before);
   });
 

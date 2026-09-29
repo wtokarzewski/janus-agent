@@ -145,6 +145,7 @@ export class ProviderRegistry implements LLMProvider {
     const messages = sanitizeRequestMessages(request.messages);
 
     for (const entry of candidates) {
+      request.signal?.throwIfAborted();
       const budget = this.candidateBudget(entry, request);
       if (budget.effective === 0 || estimateRequestTokens({ messages, tools: request.tools }) > budget.effective) {
         lastError = new Error(`Context length exceeds the budget for ${request.model || entry.model} (${budget.effective} prompt tokens)`);
@@ -154,11 +155,13 @@ export class ProviderRegistry implements LLMProvider {
         const req = { ...request, messages, model: request.model || entry.model, maxTokens: budget.reservedForOutput };
         log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} request`);
         const result = await entry.provider.chat(req);
+        request.signal?.throwIfAborted();
         this.breaker?.recordSuccess(entry.providerName);
         result.provider = entry.name;
         result.model = req.model;
         return result;
       } catch (err) {
+        request.signal?.throwIfAborted();
         lastError = err instanceof Error ? err : new Error(String(err));
         logProviderError(entry, 'chat', lastError, request);
 
@@ -187,6 +190,7 @@ export class ProviderRegistry implements LLMProvider {
     const messages = sanitizeRequestMessages(request.messages);
 
     for (const entry of candidates) {
+      request.signal?.throwIfAborted();
       const budget = this.candidateBudget(entry, request);
       if (budget.effective === 0 || estimateRequestTokens({ messages, tools: request.tools }) > budget.effective) {
         lastError = new Error(`Context length exceeds the budget for ${request.model || entry.model} (${budget.effective} prompt tokens)`);
@@ -197,7 +201,8 @@ export class ProviderRegistry implements LLMProvider {
         log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} stream request`);
 
         if (entry.provider.chatStream) {
-          const result = await entry.provider.chatStream(req, onChunk);
+          const result = await entry.provider.chatStream(req, chunk => { if (!request.signal?.aborted) onChunk(chunk); });
+          request.signal?.throwIfAborted();
           this.breaker?.recordSuccess(entry.providerName);
           result.provider = entry.name;
           result.model = req.model;
@@ -206,6 +211,7 @@ export class ProviderRegistry implements LLMProvider {
 
         // Fallback: non-streaming chat, then deliver content as single chunk
         const response = await entry.provider.chat(req);
+        request.signal?.throwIfAborted();
         this.breaker?.recordSuccess(entry.providerName);
         response.provider = entry.name;
         response.model = req.model;
@@ -214,6 +220,7 @@ export class ProviderRegistry implements LLMProvider {
         }
         return response;
       } catch (err) {
+        request.signal?.throwIfAborted();
         lastError = err instanceof Error ? err : new Error(String(err));
         logProviderError(entry, 'stream', lastError, request);
 

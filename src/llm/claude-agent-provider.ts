@@ -130,42 +130,52 @@ export class ClaudeAgentProvider implements LLMProvider {
 
     log.debug(`LLM [claude-agent]: model=${model}, messages=${request.messages.length}, tools=${request.tools?.length ?? 0}`);
 
-    const q = query({ prompt, options: options as never });
+    request.signal?.throwIfAborted();
+    const abortController = new AbortController();
+    const abort = () => abortController.abort(request.signal?.reason);
+    request.signal?.addEventListener('abort', abort, { once: true });
+    const q = query({ prompt, options: { ...options, abortController } as never });
 
     let resultText = '';
     let sdkUsage = { input_tokens: 0, output_tokens: 0 };
     let lastAssistantText = '';
 
-    for await (const msg of q) {
-      log.debug(`LLM [claude-agent] event: type=${msg.type} subtype=${'subtype' in msg ? msg.subtype : '-'}`);
+    try {
+      for await (const msg of q) {
+        request.signal?.throwIfAborted();
+        log.debug(`LLM [claude-agent] event: type=${msg.type} subtype=${'subtype' in msg ? msg.subtype : '-'}`);
 
-      if (msg.type === 'assistant') {
-        const text = this.extractAssistantText(msg);
-        if (text) lastAssistantText = text;
-      }
+        if (msg.type === 'assistant') {
+          const text = this.extractAssistantText(msg);
+          if (text) lastAssistantText = text;
+        }
 
-      if (msg.type === 'result') {
-        const result = msg as {
-          subtype: string;
-          structured_output?: unknown;
-          result?: string;
-          usage?: { input_tokens: number; output_tokens: number };
-        };
+        if (msg.type === 'result') {
+          const result = msg as {
+            subtype: string;
+            structured_output?: unknown;
+            result?: string;
+            usage?: { input_tokens: number; output_tokens: number };
+          };
 
-        if (result.usage) sdkUsage = result.usage;
+          if (result.usage) sdkUsage = result.usage;
 
-        if (result.subtype === 'success') {
-          resultText = result.structured_output
-            ? JSON.stringify(result.structured_output)
-            : result.result ?? '';
-        } else {
-          log.warn(`LLM [claude-agent]: result subtype=${result.subtype}, using last assistant text (len=${lastAssistantText.length})`);
-          resultText = result.result ?? lastAssistantText;
+          if (result.subtype === 'success') {
+            resultText = result.structured_output
+              ? JSON.stringify(result.structured_output)
+              : result.result ?? '';
+          } else {
+            log.warn(`LLM [claude-agent]: result subtype=${result.subtype}, using last assistant text (len=${lastAssistantText.length})`);
+            resultText = result.result ?? lastAssistantText;
+          }
         }
       }
-    }
 
-    return this.buildResponse(resultText, sdkUsage, hasTools);
+      request.signal?.throwIfAborted();
+      return this.buildResponse(resultText, sdkUsage, hasTools);
+    } finally {
+      request.signal?.removeEventListener('abort', abort);
+    }
   }
 
   async chatStream(request: ChatRequest, onChunk: StreamCallback): Promise<ChatResponse> {
@@ -175,65 +185,75 @@ export class ClaudeAgentProvider implements LLMProvider {
 
     log.debug(`LLM [claude-agent] stream: model=${model}, messages=${request.messages.length}, tools=${request.tools?.length ?? 0}`);
 
-    const q = query({ prompt, options: options as never });
+    request.signal?.throwIfAborted();
+    const abortController = new AbortController();
+    const abort = () => abortController.abort(request.signal?.reason);
+    request.signal?.addEventListener('abort', abort, { once: true });
+    const q = query({ prompt, options: { ...options, abortController } as never });
 
     let resultText = '';
     let sdkUsage = { input_tokens: 0, output_tokens: 0 };
     let lastAssistantText = '';
 
-    for await (const msg of q) {
-      const msgType = msg.type;
-      const msgSubtype = 'subtype' in msg ? msg.subtype : '-';
-      log.info(`LLM [claude-agent] event: type=${msgType} subtype=${msgSubtype} keys=${Object.keys(msg).join(',')}`);
+    try {
+      for await (const msg of q) {
+        request.signal?.throwIfAborted();
+        const msgType = msg.type;
+        const msgSubtype = 'subtype' in msg ? msg.subtype : '-';
+        log.info(`LLM [claude-agent] event: type=${msgType} subtype=${msgSubtype} keys=${Object.keys(msg).join(',')}`);
 
-      // Stream text chunks to caller
-      if (msgType === 'stream_event') {
-        const event = (msg as { event?: { type?: string; delta?: { type?: string; text?: string } } }).event;
-        log.info(`LLM [claude-agent] stream_event: event.type=${event?.type} delta.type=${event?.delta?.type} text="${event?.delta?.text?.slice(0, 50) ?? ''}"`);
-        if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
-          onChunk(event.delta.text);
-        }
-      }
-
-      // Also extract text from assistant messages (SDK may send complete text here instead of stream_events)
-      if (msgType === 'assistant') {
-        const text = this.extractAssistantText(msg);
-        log.info(`LLM [claude-agent] assistant text (${text.length} chars): "${text.slice(0, 100)}"`);
-        if (text) {
-          // If we haven't streamed anything yet, emit the full text as a chunk
-          if (!lastAssistantText && text) {
-            onChunk(text);
+        // Stream text chunks to caller
+        if (msgType === 'stream_event') {
+          const event = (msg as { event?: { type?: string; delta?: { type?: string; text?: string } } }).event;
+          log.info(`LLM [claude-agent] stream_event: event.type=${event?.type} delta.type=${event?.delta?.type} text="${event?.delta?.text?.slice(0, 50) ?? ''}"`);
+          if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
+            onChunk(event.delta.text);
           }
-          lastAssistantText = text;
+        }
+
+        // Also extract text from assistant messages (SDK may send complete text here instead of stream_events)
+        if (msgType === 'assistant') {
+          const text = this.extractAssistantText(msg);
+          log.info(`LLM [claude-agent] assistant text (${text.length} chars): "${text.slice(0, 100)}"`);
+          if (text) {
+            // If we haven't streamed anything yet, emit the full text as a chunk
+            if (!lastAssistantText && text) {
+              onChunk(text);
+            }
+            lastAssistantText = text;
+          }
+        }
+
+        if (msgType === 'result') {
+          const r = msg as Record<string, unknown>;
+          log.info(`LLM [claude-agent] result: subtype=${msgSubtype} result="${String(r.result ?? '').slice(0, 100)}"`);
+        }
+
+        if (msg.type === 'result') {
+          const result = msg as {
+            subtype: string;
+            structured_output?: unknown;
+            result?: string;
+            usage?: { input_tokens: number; output_tokens: number };
+          };
+
+          if (result.usage) sdkUsage = result.usage;
+
+          if (result.subtype === 'success') {
+            resultText = result.structured_output
+              ? JSON.stringify(result.structured_output)
+              : result.result ?? '';
+          } else {
+            log.warn(`LLM [claude-agent] stream: result subtype=${result.subtype}, using last assistant text (len=${lastAssistantText.length})`);
+            resultText = result.result ?? lastAssistantText;
+          }
         }
       }
 
-      if (msgType === 'result') {
-        const r = msg as Record<string, unknown>;
-        log.info(`LLM [claude-agent] result: subtype=${msgSubtype} result="${String(r.result ?? '').slice(0, 100)}"`);
-      }
-
-      if (msg.type === 'result') {
-        const result = msg as {
-          subtype: string;
-          structured_output?: unknown;
-          result?: string;
-          usage?: { input_tokens: number; output_tokens: number };
-        };
-
-        if (result.usage) sdkUsage = result.usage;
-
-        if (result.subtype === 'success') {
-          resultText = result.structured_output
-            ? JSON.stringify(result.structured_output)
-            : result.result ?? '';
-        } else {
-          log.warn(`LLM [claude-agent] stream: result subtype=${result.subtype}, using last assistant text (len=${lastAssistantText.length})`);
-          resultText = result.result ?? lastAssistantText;
-        }
-      }
+      request.signal?.throwIfAborted();
+      return this.buildResponse(resultText, sdkUsage, hasTools);
+    } finally {
+      request.signal?.removeEventListener('abort', abort);
     }
-
-    return this.buildResponse(resultText, sdkUsage, hasTools);
   }
 }

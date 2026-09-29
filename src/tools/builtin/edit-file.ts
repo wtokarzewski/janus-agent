@@ -41,6 +41,7 @@ export class EditFileTool implements ContextualTool {
   }
 
   async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
+    reqCtx?.signal?.throwIfAborted();
     const filePath = String(args.path ?? '');
     if (!filePath) return 'Error: No path provided';
 
@@ -76,6 +77,7 @@ export class EditFileTool implements ContextualTool {
         content = content.replace(old_string, new_string);
       }
 
+      reqCtx?.signal?.throwIfAborted();
       await writeFile(fullPath, content, 'utf-8');
       await this.onFileChanged?.(fullPath);
       return edits.length > 1

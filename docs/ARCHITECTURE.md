@@ -119,6 +119,10 @@ Providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Groq (OpenAI-compatible API)
 
 **Gates:** Pattern-based confirmation before destructive commands (rm, git push, etc.).
 
+### Cancellation
+
+The session controller, caller signal, lane watchdog and shutdown signal combine into one turn signal. It reaches provider SDK requests/streams, compaction and RequestContext. Registry failover/retries and stream callbacks stop after abort; late responses cannot start tools or publish final output. Tool gates recheck immediately before execution. File writes recheck after preparatory awaits; exec kills its process tree and web tools pass cancellation into fetch. Already-issued side effects are not rolled back. Parallel tools retain session ownership until every started operation settles, including tools that ignore cancellation. The watchdog frees a lane slot once but does not unlock a still-running session.
+
 ### Context budget configuration
 
 `llm.contextWindows` maps provider names to exact model IDs and their verified context limits (for example, `{"test-provider":{"small-test-model":16000}}` in a synthetic setup). The selected candidate, including an operator pin or fallback, is checked immediately before each chat/stream call. Unknown models use the existing conservative 200,000-token fallback; configure smaller limits explicitly. `agent.contextWindow` is a global cap and cannot enlarge a model limit. Actual `maxTokens` is reserved; a reservation at or above the window leaves zero prompt capacity. A fallback too small for the request is skipped without a network call or circuit-breaker penalty. This is a character-based estimate, not an exact tokenizer.

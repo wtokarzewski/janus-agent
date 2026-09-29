@@ -1,4 +1,4 @@
-import type { ContextualTool, ToolContext } from '../types.js';
+import type { ContextualTool, ToolContext, RequestContext } from '../types.js';
 import * as log from '../../utils/logger.js';
 import { checkSsrf } from '../../utils/ssrf-guard.js';
 import { safeSlice } from '../../utils/sanitize.js';
@@ -57,7 +57,8 @@ export class WebFetchTool implements ContextualTool {
     this.maxBytes = ctx.webFetchMaxBytes ?? DEFAULT_MAX_BYTES;
   }
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
+    reqCtx?.signal?.throwIfAborted();
     const url = String(args.url ?? '');
     if (!url) return 'Error: No URL provided';
 
@@ -69,7 +70,7 @@ export class WebFetchTool implements ContextualTool {
 
     // Jina Reader — clean text extraction via r.jina.ai (T1)
     if (reader === 'jina') {
-      return this.fetchViaJina(url);
+      return this.fetchViaJina(url, reqCtx?.signal);
     }
 
     const headers = (args.headers && typeof args.headers === 'object')
@@ -79,7 +80,7 @@ export class WebFetchTool implements ContextualTool {
     log.info(`web_fetch: ${url}`);
 
     try {
-      return await this.fetchWithRetry(url, headers);
+      return await this.fetchWithRetry(url, headers, reqCtx?.signal);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('abort')) {
@@ -90,9 +91,10 @@ export class WebFetchTool implements ContextualTool {
   }
 
   /** Fetch with retry on 403/429/CAPTCHA — rotates User-Agent and adds browser-like headers. */
-  private async fetchWithRetry(url: string, customHeaders: Record<string, string>): Promise<string> {
+  private async fetchWithRetry(url: string, customHeaders: Record<string, string>, signal?: AbortSignal): Promise<string> {
     const maxAttempts = 2;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      signal?.throwIfAborted();
       const ua = BROWSER_USER_AGENTS[attempt % BROWSER_USER_AGENTS.length];
       const fetchHeaders: Record<string, string> = {
         'User-Agent': ua,
@@ -101,6 +103,7 @@ export class WebFetchTool implements ContextualTool {
       };
 
       const { response, finalUrl } = await fetchWithRedirectLimit(url, {
+        signal,
         timeoutMs: this.timeoutMs,
         maxRedirects: MAX_REDIRECTS,
         headers: fetchHeaders,
@@ -186,12 +189,12 @@ export class WebFetchTool implements ContextualTool {
     };
   }
 
-  private async fetchViaJina(url: string): Promise<string> {
+  private async fetchViaJina(url: string, signal?: AbortSignal): Promise<string> {
     const jinaUrl = `https://r.jina.ai/${url}`;
     log.info(`web_fetch (jina): ${url}`);
     try {
       const response = await fetch(jinaUrl, {
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
         headers: { Accept: 'text/plain' },
       });
       if (!response.ok) {
@@ -221,7 +224,7 @@ export class WebFetchTool implements ContextualTool {
 /** Fetch with a manual redirect limit (native fetch follows indefinitely). */
 async function fetchWithRedirectLimit(
   url: string,
-  opts: { timeoutMs: number; maxRedirects: number; headers: Record<string, string> },
+  opts: { signal?: AbortSignal; timeoutMs: number; maxRedirects: number; headers: Record<string, string> },
 ): Promise<{ response: Response; finalUrl: string }> {
   let currentUrl = url;
   let redirectCount = 0;
@@ -231,8 +234,9 @@ async function fetchWithRedirectLimit(
 
   try {
     while (true) {
+      opts.signal?.throwIfAborted();
       const response = await fetch(currentUrl, {
-        signal: controller.signal,
+        signal: opts.signal ? AbortSignal.any([opts.signal, controller.signal]) : controller.signal,
         headers: opts.headers,
         redirect: 'manual',
       });
