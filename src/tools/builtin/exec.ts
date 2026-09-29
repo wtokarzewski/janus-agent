@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import type { JanusConfig } from '../../config/schema.js';
 import { resolve, relative } from 'node:path';
 import type { ContextualTool, ToolContext, RequestContext } from '../types.js';
 import { getShellConfig, killProcessTree } from '../../utils/shell.js';
@@ -27,6 +28,14 @@ const DEFAULT_DENY_PATTERNS = [
 
 export class ExecTool implements ContextualTool {
   name = 'exec';
+  readonly ownerOnly: boolean;
+  private readonly enabled: boolean;
+
+  constructor(config?: Pick<JanusConfig, 'users' | 'tools'>) {
+    this.ownerOnly = (config?.users.length ?? 0) > 0;
+    this.enabled = config?.tools.execEnabled ?? true;
+  }
+
   description = 'Execute a shell command. Use for running scripts, installing packages, git operations, etc.';
   parameters = {
     type: 'object',
@@ -63,6 +72,9 @@ export class ExecTool implements ContextualTool {
 
   async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
     reqCtx?.signal?.throwIfAborted();
+    if (!this.enabled) return 'Error: Shell execution is disabled.';
+    // Enforce at the execution boundary too, even if called without ToolRegistry.
+    if (this.ownerOnly && reqCtx?.isOwner !== true) return 'Error: Tool "exec" is owner-only in multi-user mode.';
     const raw = String(args.command ?? '');
     if (!raw) return 'Error: No command provided';
     // Strip invisible Unicode chars to prevent deny-pattern bypass (S4)
@@ -80,7 +92,7 @@ export class ExecTool implements ContextualTool {
       ? resolve(this.workspaceDir, String(args.working_dir))
       : resolve(this.workspaceDir);
 
-    // Safety: restrict to workspace — working_dir must be inside workspace
+    // Validate the initial cwd only; this does not sandbox the shell or its filesystem access.
     const rel = relative(resolve(this.workspaceDir), workingDir);
     if (rel.startsWith('..') || resolve(workingDir) !== workingDir && rel.startsWith('/')) {
       return `Error: working_dir must be inside workspace. Got: ${args.working_dir}`;

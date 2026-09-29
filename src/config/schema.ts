@@ -330,7 +330,7 @@ const FamilySchema = z.object({
 });
 
 const ToolsSchema = z.object({
-  /** Master switch for exec tool. When false, exec is not registered and cron jobs cannot run commands. */
+  /** Master switch for exec. When false it is not registered. With users configured, only owners may use this unisolated shell. */
   execEnabled: z.boolean().default(true),
   execTimeout: z.number().default(30_000),
   execDenyPatterns: z.array(z.string()).default([
