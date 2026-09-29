@@ -70,6 +70,49 @@ function createDeps(mockProvider: MockProvider): { deps: AgentDeps; learnerStora
 }
 
 describe('AgentLoop integration', () => {
+  it.each(['chat', 'stream'])('prevents late %s output from invoking tools after stop', async mode => {
+    const mock = new MockProvider([]);
+    const { deps } = createDeps(mock);
+    deps.config.streaming.enabled = mode === 'stream';
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let signal: AbortSignal | undefined;
+    let entered = false;
+    const late = { content: 'late', toolCalls: [{ id: 'late', type: 'function' as const, function: { name: 'side_effect', arguments: '{}' } }], finishReason: 'tool_calls' as const, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+    vi.spyOn(mock, 'chat').mockImplementation(async request => { entered = true; signal = request.signal; await held; return late; });
+    vi.spyOn(mock, 'chatStream').mockImplementation(async (request, onChunk) => { entered = true; signal = request.signal; await held; onChunk('late'); return late; });
+    const effect = vi.fn(async () => 'done');
+    deps.tools.register({ name: 'side_effect', description: '', parameters: {}, execute: effect });
+    const stream = vi.spyOn(deps.bus, 'streamTo');
+    const agent = new AgentLoop(deps);
+    const running = agent.processDirect('work', { channel: 'telegram', chatId: 'cancel' });
+    await vi.waitFor(() => expect(entered).toBe(true));
+    agent.stop('main:telegram:cancel');
+    release();
+    await running;
+    expect(signal?.aborted).toBe(true);
+    expect(effect).not.toHaveBeenCalled();
+    expect(stream.mock.calls.some(call => call[2] === 'chunk' && call[3] === 'late')).toBe(false);
+    expect((await deps.sessions.getHistory('main:telegram:cancel')).some(m => m.content === 'late')).toBe(false);
+  });
+
+  it('passes cancellation to a running tool and never retries it after stop', async () => {
+    const mock = new MockProvider([{ content: '', toolCalls: [{ id: 'run', type: 'function', function: { name: 'slow', arguments: '{}' } }] }]);
+    const { deps } = createDeps(mock);
+    let toolSignal: AbortSignal | undefined;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const execute = vi.fn(async (_args, ctx) => { toolSignal = ctx?.signal; await held; return 'Error: transient'; });
+    deps.tools.register({ name: 'slow', description: '', parameters: {}, execute });
+    const agent = new AgentLoop(deps);
+    const running = agent.processDirect('work');
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+    agent.stop(); release(); await running;
+    expect(toolSignal?.aborted).toBe(true);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(mock.calls).toHaveLength(1);
+  });
+
   it('preserves prior facts and an archived transcript when the summarizer times out', async () => {
     const mock = new MockProvider([{ content: 'Done.' }]);
     const { deps } = createDeps(mock);

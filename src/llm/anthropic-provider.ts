@@ -211,13 +211,14 @@ export class AnthropicProvider implements LLMProvider {
 
     let response: Anthropic.Message;
     try {
-      response = await this.client.messages.create(params);
+      response = await this.client.messages.create(params, { signal: request.signal });
     } catch (err) {
+      request.signal?.throwIfAborted();
       // Fallback: if tool_choice rejected, retry without it (L14)
       if (params.tool_choice && err instanceof Error && /tool_choice|tool choice/i.test(err.message)) {
         log.warn(`Anthropic: tool_choice rejected, retrying without it`);
         delete params.tool_choice;
-        response = await this.client.messages.create(params);
+        response = await this.client.messages.create(params, { signal: request.signal });
       } else if (
         err instanceof Error
         && /assistant message prefill|must end with a user message/i.test(err.message)
@@ -229,7 +230,7 @@ export class AnthropicProvider implements LLMProvider {
         // that depend on the prefill text (e.g. summarization) prepend it back themselves.
         log.warn(`Anthropic: assistant prefill rejected, retrying without it`);
         params.messages = params.messages.slice(0, -1);
-        response = await this.client.messages.create(params);
+        response = await this.client.messages.create(params, { signal: request.signal });
       } else {
         throw err;
       }
@@ -352,10 +353,10 @@ export class AnthropicProvider implements LLMProvider {
     applyCacheToPenultimateMessage(params.messages);
     trimLastAssistantWhitespace(params.messages);
 
-    const stream = this.client.messages.stream(params);
+    const stream = this.client.messages.stream(params, { signal: request.signal });
 
     stream.on('text', (delta) => {
-      onChunk(delta);
+      if (!request.signal?.aborted) onChunk(delta);
     });
 
     const finalMessage = await stream.finalMessage();

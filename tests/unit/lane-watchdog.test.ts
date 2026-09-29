@@ -4,7 +4,7 @@
  * held by a hung run, the lane silently stopped consuming its queue.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { AgentLoop, type AgentDeps } from '../../src/agent/agent-loop.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import { ProviderRegistry } from '../../src/llm/provider-registry.js';
@@ -20,9 +20,11 @@ import type { OutboundMessage } from '../../src/bus/types.js';
 /** First call hangs forever; subsequent calls answer immediately. */
 class HangThenAnswerProvider implements LLMProvider {
   private callCount = 0;
+  firstRequest?: ChatRequest;
 
   async chat(_request: ChatRequest): Promise<ChatResponse> {
     this.callCount++;
+    this.firstRequest ??= _request;
     if (this.callCount === 1) {
       return new Promise<ChatResponse>(() => {}); // never settles
     }
@@ -49,7 +51,27 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 describe('lane watchdog', () => {
-  it('releases a leaked slot after laneTimeoutMs so the lane keeps consuming', async () => {
+  it('propagates shutdown to a running request without waiting for the watchdog', async () => {
+    const config = createTestConfig({ agent: { laneTimeoutMs: 60_000 } });
+    const bus = new MessageBus();
+    const provider = new HangThenAnswerProvider();
+    const registry = new ProviderRegistry();
+    registry.register({ name: 'mock', providerName: 'mock', provider, model: 'test', priority: 0, purpose: [] });
+    const sessions = new SessionManager(config);
+    const skills = new SkillLoader(config);
+    const memory = new MemoryStore(config);
+    const context = new ContextBuilder({ config, skills, memory });
+    const agent = new AgentLoop({ config, bus, sessions, skills, context, tools: new ToolRegistry(), llm: registry });
+    const ctrl = new AbortController();
+    const running = agent.run(ctrl.signal);
+    await bus.publishInbound({ id: 'shutdown', channel: 'cli', chatId: 'shutdown', content: 'work', author: 'test', timestamp: new Date() });
+    await vi.waitFor(() => expect(provider.firstRequest).toBeDefined());
+    ctrl.abort();
+    await running;
+    expect(provider.firstRequest?.signal?.aborted).toBe(true);
+  });
+
+  it.each(['cli', 'system'])('cancels %s runs and releases the leaked slot once', async channel => {
     const config = createTestConfig({
       agent: {
         summarizationThreshold: 100,
@@ -60,10 +82,11 @@ describe('lane watchdog', () => {
 
     const bus = new MessageBus();
     const registry = new ProviderRegistry();
+    const provider = new HangThenAnswerProvider();
     registry.register({
       name: 'mock',
       providerName: 'mock',
-      provider: new HangThenAnswerProvider(),
+      provider,
       model: 'test-model',
       purpose: [],
       priority: 0,
@@ -91,7 +114,7 @@ describe('lane watchdog', () => {
     // First message hangs inside the LLM call and holds the only user-lane slot
     await bus.publishInbound({
       id: 'msg-hang',
-      channel: 'cli',
+      channel,
       chatId: 'chat-a',
       content: 'this one hangs',
       author: 'test',
@@ -101,7 +124,7 @@ describe('lane watchdog', () => {
     // Second message must still be processed once the watchdog frees the slot
     await bus.publishInbound({
       id: 'msg-ok',
-      channel: 'cli',
+      channel,
       chatId: 'chat-b',
       content: 'hello',
       author: 'test',
@@ -115,6 +138,7 @@ describe('lane watchdog', () => {
       ctrl.abort();
     }
     expect(out.chatId).toBe('chat-b');
+    expect(provider.firstRequest?.signal?.aborted).toBe(true);
 
     await running.catch(() => {});
   });

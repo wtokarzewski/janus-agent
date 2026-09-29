@@ -34,6 +34,7 @@ export interface ToolContext {
 
 /** Per-request context — passed to execute(), not shared across lanes. */
 export interface RequestContext {
+  signal?: AbortSignal;
   chatId?: string;
   /** Channel of the conversation being handled (e.g. "telegram", "cli"). */
   channel?: string;

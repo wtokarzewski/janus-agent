@@ -49,6 +49,7 @@ export class ToolRegistry {
   }
 
   async execute(name: string, args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
+    reqCtx?.signal?.throwIfAborted();
     const tool = this.tools.get(name);
     if (!tool) {
       return `Error: Unknown tool "${name}". Available tools: ${this.names().join(', ')}`;
@@ -91,9 +92,11 @@ export class ToolRegistry {
     log.debug(`Executing tool: ${name}`, coerced);
 
     try {
+      reqCtx?.signal?.throwIfAborted();
       const result = await tool.execute(coerced, reqCtx);
       return result;
     } catch (err) {
+      reqCtx?.signal?.throwIfAborted();
       const msg = err instanceof Error ? err.message : String(err);
       log.error(`Tool "${name}" failed: ${msg}`);
       return `Error: ${msg}\n\n[Analyze the error above. Try a different approach if the same command failed before.]`;

@@ -62,6 +62,15 @@ describe('ExecTool', () => {
     expect(Date.now() - started).toBeLessThan(1500);
   }, 30_000);
 
+  it('cancels a running process before its normal timeout', async () => {
+    const tool = makeTool({ timeout: 10_000 });
+    const ctrl = new AbortController();
+    const command = process.platform === 'win32' ? 'ping -n 60 127.0.0.1' : 'sleep 60';
+    const pending = tool.execute({ command }, { signal: ctrl.signal });
+    ctrl.abort();
+    expect(await pending).toContain('cancelled');
+  });
+
   it('returns no output marker for silent commands', async () => {
     const tool = makeTool();
     const result = await tool.execute({ command: 'true' });

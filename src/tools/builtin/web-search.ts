@@ -1,4 +1,4 @@
-import type { ContextualTool, ToolContext } from '../types.js';
+import type { ContextualTool, ToolContext, RequestContext } from '../types.js';
 import * as log from '../../utils/logger.js';
 import { getCache, setCache } from './web-cache.js';
 
@@ -38,7 +38,8 @@ export class WebSearchTool implements ContextualTool {
     this.timeoutMs = ctx.webFetchTimeoutMs ?? 10_000;
   }
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>, reqCtx?: RequestContext): Promise<string> {
+    reqCtx?.signal?.throwIfAborted();
     const query = String(args.query ?? '');
     if (!query) return 'Error: No search query provided';
 
@@ -62,7 +63,7 @@ export class WebSearchTool implements ContextualTool {
 
       const url = `${BRAVE_SEARCH_URL}?q=${encodeURIComponent(query)}&count=${count}`;
       const response = await fetch(url, {
-        signal: controller.signal,
+        signal: reqCtx?.signal ? AbortSignal.any([reqCtx.signal, controller.signal]) : controller.signal,
         headers: {
           'Accept': 'application/json',
           'Accept-Encoding': 'gzip',
