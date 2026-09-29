@@ -69,6 +69,35 @@ function createDeps(mockProvider: MockProvider): { deps: AgentDeps; learnerStora
 }
 
 describe('AgentLoop integration', () => {
+  it('preserves prior facts and an archived transcript when the summarizer times out', async () => {
+    const mock = new MockProvider([{ content: 'Done.' }]);
+    const { deps } = createDeps(mock);
+    deps.config.agent.contextWindow = 12_000;
+    deps.config.agent.context.keepRecentTokens = 100;
+    const key = 'main:test:timeout-recovery';
+    await deps.sessions.append(key, Array.from({ length: 12 }, (_, i) => ({
+      role: i % 2 ? 'assistant' as const : 'user' as const, content: 'old fact '.repeat(100),
+    })));
+    await deps.sessions.summarize(key, 'Previous constraint: limit 17.', 100);
+    await deps.sessions.append(key, [
+      { role: 'user', content: 'request '.repeat(3000) },
+      { role: 'assistant', content: 'answer '.repeat(3000) },
+      { role: 'user', content: 'more facts '.repeat(3000) },
+      { role: 'assistant', content: 'details' },
+      { role: 'user', content: 'tail' },
+      { role: 'assistant', content: 'tail answer' },
+    ]);
+    vi.spyOn(mock, 'chat').mockRejectedValueOnce(new Error('Summarization LLM call timed out'));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await new AgentLoop(deps).processDirect('current question', { channel: 'test', chatId: 'timeout-recovery' });
+      const session = await new SessionManager(deps.config).getOrCreate(key);
+      expect(session.metadata.summary).toBe('Previous constraint: limit 17.');
+      expect(session.metadata.compactionFailure).toContain('archive:');
+      expect(session.messages).toContainEqual({ role: 'user', content: 'current question' });
+    } finally { vi.clearAllTimers(); vi.useRealTimers(); }
+  });
+
   it('retries failed note writes and persists the flush cursor across rotation and restart', async () => {
     const mock = new MockProvider([{ content: 'answer' }]);
     const { deps } = createDeps(mock);

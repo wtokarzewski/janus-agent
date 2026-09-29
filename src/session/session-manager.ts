@@ -1,6 +1,7 @@
-import { readFile, writeFile, appendFile, mkdir, rename } from 'node:fs/promises';
+import { readFile, writeFile, appendFile, mkdir, rename, copyFile } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { randomUUID, randomInt } from 'node:crypto';
 import type { LLMMessage } from '../llm/types.js';
 import type { JanusConfig } from '../config/schema.js';
 import * as log from '../utils/logger.js';
@@ -18,6 +19,7 @@ export interface SessionMetadata {
   updated: string;
   messageCount: number;
   summary?: string;
+  compactionFailure?: string;
   lastFlushed?: number; // Legacy positional cursor; not trusted after migration.
   flushEpoch?: string;
   messageOffset?: number;
@@ -243,19 +245,13 @@ export class SessionManager {
       if (cutIndex < 4) return false;
 
       const path = this.sessionPath(key);
-      const archivePath = `${path}.${Date.now()}.jsonl`;
-
-      // Archive current file (best-effort — if rename fails, we still write the new one)
-      try {
-        await rename(path, archivePath);
-      } catch (err) {
-        log.warn(`[session ${key}] Archive rename failed (proceeding without): ${err instanceof Error ? err.message : String(err)}`);
-      }
+      const archivePath = await this.archive(key);
 
       const tailMessages = session.messages.slice(cutIndex);
       const newMetadata: SessionMetadata = {
         ...session.metadata,
         summary: summaryText,
+        compactionFailure: undefined,
         messageCount: tailMessages.length,
         messageOffset: (session.metadata.messageOffset ?? 0) + cutIndex,
         updated: new Date().toISOString(),
@@ -274,8 +270,8 @@ export class SessionManager {
         await rename(tempPath, path);
       } catch (err) {
         log.error(`[session ${key}] Rotation write failed: ${err instanceof Error ? err.message : err}`);
-        // We've already archived; cache stays in old state until next successful save
-        return false;
+        // The original live file and cache remain intact until the atomic replacement.
+        throw err;
       }
 
       // Update cache atomically
@@ -350,16 +346,29 @@ export class SessionManager {
       // A delayed failure must not discard any input outside its captured prefix.
       if (dropCount > boundary) return;
       const droppedCount = dropCount;
+      const archivePath = await this.archive(key);
+      const messages = session.messages.slice(dropCount);
+      const metadata: SessionMetadata = {
+        ...session.metadata,
+        compactionFailure: `force-dropped oldest ${droppedCount} messages at ${new Date().toISOString()}; archive: ${archivePath}`,
+        messageCount: messages.length,
+        messageOffset: (session.metadata.messageOffset ?? 0) + droppedCount,
+        updated: new Date().toISOString(),
+      };
+      await this.save(key, { metadata, messages }, true);
       this.advanceGeneration(session);
-      session.messages = session.messages.slice(dropCount);
-      session.metadata.summary = `[compaction failed; force-dropped oldest ${droppedCount} messages at ${new Date().toISOString()}]`;
-      session.metadata.messageCount = session.messages.length;
-      session.metadata.messageOffset = (session.metadata.messageOffset ?? 0) + droppedCount;
-      session.metadata.updated = new Date().toISOString();
-
-      await this.save(key, session);
+      session.messages = messages;
+      session.metadata = metadata;
       log.warn(`[session ${key}] force-dropped ${droppedCount} oldest messages (compaction fallback)`);
     });
+  }
+
+  private async archive(key: string): Promise<string> {
+    const path = this.sessionPath(key);
+    // Exclusive copy keeps the live file readable through crashes and failed writes.
+    const archivePath = `${path}.${Date.now()}${randomInt(100_000, 1_000_000)}.jsonl`;
+    await copyFile(path, archivePath, constants.COPYFILE_EXCL);
+    return archivePath;
   }
 
   /** Clear all messages from a session, preserving the session file. */
@@ -369,6 +378,7 @@ export class SessionManager {
       this.advanceGeneration(session);
       session.messages = [];
       session.metadata.summary = undefined;
+      session.metadata.compactionFailure = undefined;
       session.metadata.messageCount = 0;
       session.metadata.lastFlushed = 0;
       session.metadata.flushEpoch = randomUUID();
@@ -472,6 +482,7 @@ export class SessionManager {
 
     // Old lastFlushed could have been advanced by compaction without a note write.
     // Replay the retained legacy tail rather than silently skip it.
+    metadata.compactionFailure = typeof first.compactionFailure === 'string' ? first.compactionFailure : undefined;
     metadata.flushEpoch = typeof first.flushEpoch === 'string' ? first.flushEpoch : randomUUID();
     metadata.messageOffset = Number.isSafeInteger(first.messageOffset) && Number(first.messageOffset) >= 0 ? Number(first.messageOffset) : 0;
     metadata.flushedThrough = Number.isSafeInteger(first.flushedThrough) && Number(first.flushedThrough) >= 0 ? Number(first.flushedThrough) : 0;
