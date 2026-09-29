@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { sleep, withDeadline } from '../utils/abort.js';
 import type { MessageBus } from '../bus/message-bus.js';
@@ -176,6 +176,10 @@ export class AgentLoop {
     channel?: string;
     chatId?: string;
     contextMode?: 'full' | 'minimal' | 'background';
+    agentId?: string;
+    /** Internal delegation context, never accepted as model arguments. */
+    parentContext?: RequestContext;
+    runId?: string;
     user?: InboundMessage['user'];
     scope?: InboundMessage['scope'];
     signal?: AbortSignal;
@@ -188,13 +192,14 @@ export class AgentLoop {
       author: 'user',
       timestamp: new Date(),
       contextMode: opts?.contextMode,
+      agentId: opts?.agentId,
       user: opts?.user,
       scope: opts?.scope,
       signal: opts?.signal,
     } as InboundMessage & { signal?: AbortSignal };
 
     try {
-      const response = await this.processTurn(msg, () => this.processMessage(msg));
+      const response = await this.processTurn(msg, () => this.processMessage(msg, undefined, opts?.parentContext, opts?.runId));
       return response.content;
     } catch (err) {
       const errorText = err instanceof Error ? err.message : String(err);
@@ -346,7 +351,7 @@ export class AgentLoop {
     }
   }
 
-  private async processMessage(msg: InboundMessage, externalReqCtx?: Partial<RequestContext>): Promise<OutboundMessage & { streamed?: boolean }> {
+  private async processMessage(msg: InboundMessage, externalReqCtx?: Partial<RequestContext>, parentContext?: RequestContext, runId?: string): Promise<OutboundMessage & { streamed?: boolean }> {
     // LLM purpose routing: heartbeat → background (Haiku), everything else → default (Opus)
     const llmPurpose = msg.lane === 'heartbeat' ? 'heartbeat' : 'chat';
 
@@ -409,16 +414,23 @@ export class AgentLoop {
     ];
 
     const reqCtx: RequestContext = {
+      user: msg.user,
+      scope: msg.scope,
+      agentId,
+      runId: runId ?? randomUUID(),
+      spawnDepth: parentContext ? (parentContext.spawnDepth ?? 0) + 1 : 0,
       signal: msg.signal,
-      chatId: msg.chatId,
-      channel: msg.channel,
+      chatId: parentContext?.chatId ?? msg.chatId,
+      channel: parentContext?.channel ?? msg.channel,
       channelMessageId: msg.channelMessageId,
       userId: msg.user?.userId,
-      isOwner,
-      familyUserIds,
-      userToolAllow: mergedToolAllow,
-      userToolDeny: mergedToolDeny.length > 0 ? mergedToolDeny : undefined,
-      toolPolicy: userProfile?.tools?.policy,
+      isOwner: isOwner && (!parentContext || parentContext.isOwner === true),
+      familyUserIds: parentContext?.familyUserIds ?? familyUserIds,
+      userToolAllow: parentContext?.userToolAllow
+        ? parentContext.userToolAllow.filter(t => !mergedToolAllow || mergedToolAllow.includes(t))
+        : mergedToolAllow,
+      userToolDeny: [...mergedToolDeny, ...(parentContext?.userToolDeny ?? [])],
+      toolPolicy: parentContext?.toolPolicy ?? userProfile?.tools?.policy,
       sentTargets: externalReqCtx?.sentTargets ?? [],
     };
 
@@ -428,7 +440,7 @@ export class AgentLoop {
     const buildContext = (summary?: string) => this.deps.context.build({
       channel: msg.channel,
       chatId: msg.chatId,
-      tools: this.deps.tools.summaries(isOwner),
+      tools: this.deps.tools.summaries(reqCtx.isOwner),
       summary,
       userMessage: msg.content,
       mode: msg.contextMode,
