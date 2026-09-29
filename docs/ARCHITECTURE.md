@@ -12,7 +12,7 @@ CLI/Telegram → MessageBus → AgentLoop → ProviderRegistry → Tools → Res
                                              + Vector
 ```
 
-**Status (Phase 9):** ~13,200 LOC, 374 tests across 38 files, CI pipeline. See [FEATURES.md](../FEATURES.md) for full feature list.
+**Continuity validation (2026-09-29):** 1046 passing tests across 99 files and TypeScript checks. Synthetic sessions and mock model requests; no production conversation validation or deployment in this repair run. See [FEATURES.md](../FEATURES.md) for full feature list.
 
 ## Core Pipeline
 
@@ -31,12 +31,12 @@ Flat iteration loop:
 2. LLM call (with streaming if enabled)
 3. If tool_calls → execute each tool → append results → loop back to LLM
 4. If no tool_calls → save response → publish outbound
-5. Fire-and-forget: learner metrics, summarization (with memory flush)
+5. Independent post-turn work: learner metrics, count-triggered memory flush and background compaction
 
 Key behaviors:
-- **Emergency compression** — on context overflow, drop oldest 50%, retry up to 2x
-- **Token-based summarization** — when session tokens exceed 75% of budget, summarize
-- **Memory flush** — before summarization, LLM extracts key facts → daily notes
+- **Pre-call routing** — estimate the complete request, then fit, trim, compact or compact and trim; recheck before contacting the model
+- **Background compaction** — after a successful non-cron/non-heartbeat turn, trigger above 50% of the effective prompt budget or the configured message-count threshold
+- **Memory flush** — extract pending retained messages to append-only notes at 20 unflushed messages, or on shutdown; independent of compaction
 - **No-op suppression** — heartbeat/cron "HEARTBEAT_OK" responses not routed to user
 - **Subagent spawning** — `spawn_agent` tool creates child AgentLoop with minimal prompt
 
@@ -47,8 +47,12 @@ Controllers are registered only after acquiring the lock. Other sessions remain
 concurrent. DM identity links use channel identities (with legacy profile-ID
 links retained); channel/topic/agent boundaries remain distinct. System jobs and
 child sessions do not join a shared DM. Telegram steering uses the resolved
-session identity rather than a bare chat ID. End-to-end provider/tool cancellation
-and watchdog slot lifecycle remain follow-up work in JL-14.
+session identity rather than a bare chat ID. Steering requires the same sender,
+scope and resolved agent; another sender is deferred to a separate turn. Text,
+images, reply/source metadata and the latest reaction target are retained.
+Tool results are persisted before compaction and the next request reloads the
+retained transcript plus summary. Read-only tools may observe changed files;
+unchanged repeat results and repeated side effects have separate loop protection.
 
 Context routing, timeout recovery and background compaction thresholds use the
 same request estimator: system text once, message framing, tool-call arguments
@@ -58,7 +62,7 @@ safety margin are heuristics, not an exact tokenizer or a guaranteed upper bound
 After a transform the loop checks the whole request again, tries one hard clear
 of eligible old tool results, and stops with a budget message if it still cannot
 fit. It preserves the input and does not repeatedly compact an unchanged request.
-Provider-specific windows and legacy budget options remain separate follow-up work.
+Per-model limits and deprecated legacy options are described below.
 
 ### 3. ContextBuilder (`src/context/context-builder.ts`)
 
@@ -69,7 +73,7 @@ Assembles system prompt from multiple sources:
 | 1 | Identity | Built-in (timestamp, workspace, available tools) | ✅ |
 | 2 | User profile | Per-user PROFILE.md | ✅ |
 | 3 | Ego | `~/.janus/EGO.md` | ❌ skipped |
-| 4 | Agents | `./AGENTS.md` + per-user override | ❌ skipped |
+| 4 | Agents | Configured `AGENTS.md` + per-user override | ✅ |
 | 5 | Heartbeat | `./HEARTBEAT.md` + per-user override | ❌ skipped |
 | 6 | Project | `./JANUS.md` | ❌ skipped |
 | 7 | Skills | SKILL.md files (lazy stubs or full body) | ✅ |
@@ -88,7 +92,7 @@ Subagents use **minimal mode**, retaining configured AGENTS.md rules (including 
 ### 4. ProviderRegistry (`src/llm/provider-registry.ts`)
 
 Multi-provider LLM with failover:
-- Routes by purpose (`chat`, `summarize`, `flush`)
+- Routes by purpose (`chat`, `summarize`, `heartbeat`); memory extraction currently uses `summarize` too
 - Priority-based selection (lower = higher priority)
 - Automatic failover on provider error
 - Streaming support (`chatStream`)
@@ -97,11 +101,11 @@ Providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Groq (OpenAI-compatible API)
 
 ### 5. Tools (`src/tools/`)
 
-15 built-in tools:
+Built-in tools include:
 
 | Tool | Description |
 |------|-------------|
-| `exec` | Run shell commands (sandboxed, deny patterns) |
+| `exec` | Unisolated shell; owner-only in multi-user mode, with deny patterns |
 | `read_file` | Read file contents |
 | `write_file` | Write/create files |
 | `edit_file` | Find-and-replace in files |
@@ -129,7 +133,7 @@ Agent deadlines use a throwing helper that removes its timer and abort listener 
 
 ### Context budget configuration
 
-`llm.contextWindows` maps provider names to exact model IDs and their verified context limits (for example, `{"test-provider":{"small-test-model":16000}}` in a synthetic setup). The selected candidate, including an operator pin or fallback, is checked immediately before each chat/stream call. Unknown models use the existing conservative 200,000-token fallback; configure smaller limits explicitly. `agent.contextWindow` is a global cap and cannot enlarge a model limit. Actual `maxTokens` is reserved; a reservation at or above the window leaves zero prompt capacity. A fallback too small for the request is skipped without a network call or circuit-breaker penalty. This is a character-based estimate, not an exact tokenizer.
+`llm.contextWindows` maps provider names to exact model IDs and their verified context limits (for example, `{"test-provider":{"small-test-model":16000}}` in a synthetic setup). The selected candidate, including an operator pin or fallback, is checked immediately before each chat/stream call. Unknown models use the existing 200,000-token fallback (not a guarantee for an unknown model); configure smaller limits explicitly. `agent.contextWindow` is a global cap and cannot enlarge a model limit. The request's declared `maxTokens` is reserved; a reservation at or above the window leaves zero prompt capacity. A fallback too small for the request is skipped without a network call or circuit-breaker penalty. This is a character-based estimate, not an exact tokenizer.
 
 `agent.context.softTrimChars` and `protectedTailTurns` control trimming; zero protected turns allows all old tool results to be trimmed. `keepRecentTokens` controls the retained transcript. Legacy `reserveTokens`, `toolResultMaxShare`, `toolResultHardMax`, `compactionThresholds` and `emergencyThreshold` remain readable but are deprecated: config loading warns when explicitly supplied. Reservation now follows `maxTokens`; the unified tool-result cap and single router replace the old caps and staged thresholds. The example config omits these obsolete options.
 
@@ -137,7 +141,13 @@ Agent deadlines use a throwing helper that removes its timer and abort listener 
 
 ### Session compaction snapshots
 
-Before a summarizer request, SessionManager captures a detached prefix, its previous summary and a single cut boundary under the session lock. Commit reuses that boundary and preserves all messages appended while the model was running. Clear, rotation and force-drop invalidate older snapshots; stale responses and delayed timeout fallbacks cannot replace a newer session generation. A final assistant/tool group stays intact even if it exceeds the tail budget. Existing JSONL sessions remain readable without migration. Rotation first copies the live transcript to an exclusive archive, then atomically replaces the live file and finally publishes the cache. Archive/write/rename failures leave the old live state readable and propagate an error. Timeout fallback uses the same archive-before-replacement order, preserves the last summary and records a separate compactionFailure diagnostic; archives are never automatically deleted. Memory flush uses a persisted absolute message sequence and an epoch changed by clear. Rotation advances only the transcript offset, never the acknowledged cursor. Flush captures a detached input and acknowledges its boundary only after all note writes and the atomic cursor checkpoint succeed; newer messages remain pending across rotation and restart. Legacy positional cursors are not trusted: the retained tail may be replayed once. Note appends and the checkpoint are not one transaction, so a crash between them can duplicate notes. Archived prefixes are retained for recovery, not automatically replayed by flush.
+Before a summarizer request, SessionManager captures a detached prefix, its previous summary and a single cut boundary under the session lock. Commit reuses that boundary and preserves all messages appended while the model was running. Clear, rotation and force-drop invalidate older snapshots; stale responses and delayed timeout fallbacks cannot replace a newer session generation. A final assistant/tool group stays intact even if it exceeds the tail budget. Existing JSONL sessions remain readable without migration. Rotation first copies the live transcript to an exclusive archive, then atomically replaces the live file and finally publishes the cache. Archive/write/rename failures leave the old live state readable and propagate an error. Timeout fallback uses the same archive-before-replacement order, preserves the last summary and records a separate compactionFailure diagnostic; archives are never automatically deleted.
+
+### Durable flush cursor
+
+Memory flush uses a persisted absolute message sequence and an epoch changed by clear. Rotation advances only the transcript offset, never the acknowledged cursor. Flush captures a detached input and acknowledges its boundary only after all note writes and the atomic cursor checkpoint succeed; newer messages remain pending across rotation and restart. Legacy positional cursors are not trusted: the retained tail may be replayed once. Note appends and the checkpoint are not one transaction, so a crash between them can duplicate notes. Archived prefixes are retained for recovery, not automatically replayed by flush.
+
+### Summary validation
 
 Summary output is accepted only after a normal stop with every required template section populated. Empty, prefill-only, length-limited and structurally incomplete responses are rejected. At most two attempts use the same captured prefix; after both fail, identical input is suppressed for the lifetime of the loop instance. The previous summary and transcript remain intact. Short previous summaries are preserved in the update prompt. Structural validation cannot prove semantic completeness or recover facts already lost by older versions.
 
@@ -154,7 +164,15 @@ Summary output is accepted only after a normal stop with every required template
 - **Background vectors** — changed files queue embeddings without delaying writes; row/content/scope checks prevent stale inference from attaching to replacement rows. Startup discovers isolated-agent memory too. HISTORY.md and MEMORY backups are excluded from current search to avoid importing mixed-scope logs or superseded facts.
 
 ### Memory Flush
-Before summarization discards old messages, LLM extracts key facts → `appendDaily()`.
+A processed turn records its user/chat scope. At 20 pending retained messages, a background flush captures a detached snapshot; shutdown also flushes tracked sessions below the count threshold. There is no idle or pre-compaction flush. The prompt includes the current summary and MEMORY.md, but only HISTORY.md and scoped daily notes are appended: curated MEMORY.md remains agent-managed. An explicit NONE extraction can acknowledge the input; failed writes cannot advance the durable cursor. A flush request has a 90-second deadline and shutdown waits at most 30 seconds for all flushes.
+
+### Remaining limits and validation scope
+
+- Structural summary validation cannot establish that every semantic fact was preserved. The reported production summary cut in Constraints still needs a controlled runtime reproduction; the new validation rejects incomplete/length-limited outputs but cannot restore already lost content.
+- Anthropic extended thinking can raise its adapter output limit to `thinking.budgetTokens + 4096`. Aligning that effective value with the request budget reservation is a deferred follow-up; ordinary-response budget tests do not validate that combination.
+- Note writes and cursor checkpoints are not a single transaction. A crash can duplicate notes; archived prefixes are retained for recovery, without automatic replay. Atomic rename is not an explicit power-loss/fsync durability guarantee.
+- Cancellation prevents later continuations and passes signals to providers/tools; it cannot undo completed effects or force an uncooperative remote operation to stop. A still-running tool keeps its session turn owned until settlement.
+- The continuity suite uses synthetic files/users and mock summaries/providers. It validates the actual request and persistence boundaries, not live model quality, Telegram delivery or production deployment.
 
 ## Database (`src/db/`)
 

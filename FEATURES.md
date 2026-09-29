@@ -1,36 +1,36 @@
 # Features
 
-Canonical list of implemented, working features. Verified against source code and 597 passing tests.
+Implemented features, checked against source and automated tests. Continuity validation: 1046 passing tests in 99 files plus typecheck; synthetic users and mock providers, without production conversation testing.
 
-**Last updated:** 2026-04-20
+**Last updated:** 2026-09-29
 
 ---
 
 ## Agent Core
 
 - **Flat agent loop** — LLM decides what to do, tools execute, loop repeats until done. No rigid pipeline or pre-classification.
-- **Subagent spawning** — `spawn_agent` tool creates child AgentLoop with isolated session. Minimal prompt mode (identity + skills + session only) saves tokens. Partial progress on timeout: returns collected work instead of bare "Stopped." message.
-- **Emergency compression** — On context overflow, drops oldest 50% of messages and retries (up to 2x).
-- **Token-based summarization** — When session tokens exceed 75% of budget, triggers async summarization.
-- **Memory flush before compaction** — Before summarization discards old messages, pointer-based flush extracts ALL discarded messages (lastFlushed..discardUpTo) with context-aware LLM extraction. Triple output: HISTORY.md + daily notes + MEMORY.md holistic update. Preserves knowledge across compaction.
+- **Subagent spawning** — `spawn_agent` creates a UUID session with inherited user/scope/agent, owner status, tool filters and cancellation. Minimal mode retains configured AGENTS.md rules. Depth increments on nested spawns; parent IDs enforce child limits.
+- **Pre-call context routing** — One pre-call router chooses fit, trim, compact or both, then rechecks the full request. If it still cannot fit, the turn stops with a budget message.
+- **Token-based summarization** — After a successful non-ephemeral turn, background compaction starts above 50% of the effective prompt budget or the configured message count. Pre-call compaction blocks only when needed to fit a request.
+- **Independent memory flush** — Flush runs independently on a count threshold or shutdown; compaction archives the transcript before replacement.
 - **No-op suppression** — Heartbeat/cron responses like "HEARTBEAT_OK" are not routed to the user.
 - **LLM overload resilience** — 5-retry exponential backoff (1s→2s→4s→8s→16s), user notification on first retry, abort-aware sleep, clean error message after exhaustion.
-- **SDK timeout hardening** — Anthropic/OpenAI SDK timeout reduced from 10 min to 2 min per request. Background LLM calls (flush, summarization) have 90s hard cap via `Promise.race`.
-- **Graceful shutdown flush** — SIGTERM/SIGINT triggers session flush before abort (double-signal = force exit). `memoryFlushInterval` default lowered from 10 to 5 messages for more frequent persistence.
+- **SDK timeout hardening** — Provider requests receive cancellation signals. Agent wait deadlines are 90 seconds for memory extraction and 15 minutes per compaction request, with timer/listener cleanup on settlement.
+- **Graceful shutdown flush** — Tracked sessions flush on shutdown, including those below the 20-message threshold. Shutdown waits at most 30 seconds for these flushes; no idle flush timer.
 - **Diagnostic timing logs** — Full pipeline observability: Telegram incoming → lane semaphore → context build → LLM call → tool execution → flush → summarization, with durations.
 - **Leaked control token stripping** — Sanitizes LLM control tokens (`<|endoftext|>`, `[INST]`, `<<SYS>>`, `<s>`) from user-facing output before delivery.
 - **Invisible Unicode stripping** — Strips zero-width spaces, Mongolian vowel separators, and other invisible chars before gate/deny pattern checks. Prevents regex bypass.
 - **MAX_ITERATIONS hard limit** — Safety cap at 200 iterations per agent loop run. Prevents infinite loops even when all other safeguards fail.
 - **Cross-tool loop detection** — 6-call sliding window detects repeating tool call sequences (e.g., exec->fail->exec->fail). Injects system break message to redirect the agent.
-- **Proactive context overflow detection** — Monitors token budget usage after each tool call. At 90%, prunes old tool results (`pruneOldToolResults`). At 95%, triggers emergency compression. Prevents mid-task crashes.
-- **Context pruning (pruneOldToolResults)** — Tool results older than 8 messages automatically trimmed to 200 chars. Reclaims context space without waiting for emergency compression.
-- **Compaction hardening** — Double-fire guard (no concurrent compaction on same session), post-compaction sanity check (verifies token reduction), task-aware summarization (preserves active task context).
+- **Proactive context overflow detection** — System content, transcript, tool definitions/calls, text and images share one estimator. Each selected provider/model, including fallbacks, must fit its own window and declared output reservation.
+- **Context trimming** — Soft/hard tool-result transforms controlled by `softTrimChars` and `protectedTailTurns`. Estimates remain heuristic, not exact tokenizer bounds.
+- **Compaction hardening** — Detached prefix snapshots and generation checks preserve new arrivals. Archive-before-replacement retains recovery data; timeout fallback preserves prior summary and records a separate diagnostic. Summary structure/finishReason validation permits one retry and rejects incomplete output.
 - **Compaction notifications** — Silent background summarization with ⏳ status indicator.
 - **SSRF guard** — Blocks private/reserved IPs (localhost, 10.x, 172.16-31.x, 192.168.x, link-local, cloud metadata) and IPv6 private ranges (fc00::/7, fe80::/10, ff00::/8) in web_fetch and browser tools.
 - **Secret redaction in tool results** — Automatically masks secrets in tool output before sending to LLM: `KEY=`, `Bearer`, `sk-`/`ghp_`/`AKIA`/JWT patterns replaced with `[REDACTED]`.
 - **Token masking in logger** — Sensitive tokens and keys masked in log output to prevent credential leakage in logs.
 - **File logging (daily rotation)** — Opt-in mirroring of terminal output to daily files (`.janus/logs/YYYY-MM-DD.log`, same content minus ANSI colors, secrets masked). Configurable via `logging.file` (`enabled`, `dir`, `retentionDays`); old files auto-pruned on startup. Enables post-hoc debugging when running headless.
-- **Strict ownerIds** — Unknown userId is never treated as owner in multi-user mode. Only explicitly listed `ownerIds` have elevated privileges.
+- **Strict ownerIds** — Unknown userId is never treated as owner in multi-user mode. Owners come from `ownerIds`, or the first configured user when that list is empty.
 
 ## Multi-Agent
 
@@ -146,12 +146,13 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 ## Memory System
 
 - **Per-chat memory scoping** — Episodic memory (MEMORY.md + daily notes) is scoped by conversation: group/channel chats → `.janus/chats/{chatId}/memory/` (shared within the chat), direct/personal messages → `.janus/users/{userId}/memory/`, isolated agents → `.janus/agents/{agentId}/memory/`. `scopeForChat()` picks the key (the scope is NOT always the chat — DMs key by user). Both read paths — direct `getContext` and FTS5/vector `search` — scope strictly to the resolved key, so one chat's memory never bleeds into another (e.g. a dedicated "diet" chat stays out of the main chat). `PROFILE.md` stays per-user (stable facts, always loaded).
-- **MEMORY.md** — Persistent knowledge file. Agent reads/writes via tools. Evergreen in search ranking. Holistically updated by memory flush (not just appended — rewritten with full context).
+- **MEMORY.md** — Persistent curated knowledge, edited by the agent through tools; flush does not rewrite it. Evergreen in search ranking.
 - **HISTORY.md** — Append-only conversation log. Memory flush appends session extracts chronologically.
-- **Daily notes** — `memory/YYYY-MM-DD.md`. Auto-populated by memory flush. Part of triple output (HISTORY.md + daily notes + MEMORY.md).
-- **Pointer-based flush tracking** — `lastFlushed` index per session, persisted in JSONL metadata. Ensures every message is flushed exactly once, no gaps or duplicates.
-- **Context-aware extraction** — Flush prompt includes session summary + current MEMORY.md for informed extraction. LLM produces triple output: HISTORY.md entries, daily note entries, and holistic MEMORY.md update.
-- **3 flush triggers** — Token-aware (40% budget), pre-summarization (all discarded messages), shutdown.
+- **Daily notes** — Scoped `memory/YYYY-MM-DD.md`, appended by flush for extracted facts. HISTORY.md receives append-only session summaries.
+- **Durable flush tracking** — Epoch/absolute sequence cursors persist across rotation. Acknowledgment follows successful note writes and checkpointing; legacy positional cursors replay the retained tail conservatively. Crash duplicates remain possible.
+- **Context-aware extraction** — Flush receives the current summary and MEMORY.md for context, then appends history/daily notes. It does not claim exactly-once storage or semantic completeness.
+- **Flush triggers** — Two: 20 pending retained messages and shutdown. No pre-compaction or idle trigger.
+- **Index freshness** — Validated writes refresh scoped FTS immediately; search detects external changes and removes stale/empty/deleted chunks. Embeddings refresh asynchronously with version checks. HISTORY.md and MEMORY backups are excluded from current search.
 - **FTS5 search** — SQLite full-text search with BM25 ranking.
 - **Vector search** — Local embeddings via `@xenova/transformers` (all-MiniLM-L6-v2, 384-dim, ONNX). Zero API cost. Opt-in via `memory.vectorSearch` config.
 - **Hybrid search (RRF)** — Reciprocal Rank Fusion combining FTS5 + vector results.
@@ -273,8 +274,9 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 
 - **JSONL persistence** — Incremental append (new messages appended, not full rewrite). Post-compaction truncation reclaims disk space. First line = metadata.
 - **Agent-prefixed session keys** — Format `{agentId}:{channel}:{chatId}`. Each agent maintains isolated conversation history. Legacy key auto-migration (self-healing).
+- **Conversation continuity** — FIFO ownership per resolved session; same-user steering retains images/replies, while foreign senders get separate turns. Cancellation blocks late output/tools. Read-only tools can refresh observations without repeating side effects.
 - **Memory cache** — In-memory + file for performance.
-- **Summarization** — Async, non-blocking. Split-half strategy: keep last 4 messages, summarize the rest.
+- **Summarization** — Token-tail compaction preserves complete assistant/tool groups, latest summary and concurrent arrivals. Existing JSONL sessions remain readable; validation rejects truncated or incomplete generated summaries.
 - **Crash recovery** — Orphan tool messages stripped on load.
 
 ## Context Builder
@@ -286,7 +288,7 @@ Assembles system prompt from multiple sources:
 | 1 | Identity | Built-in (workspace, tools) | Static | Yes | Yes | Yes |
 | 2 | User profile | Per-user PROFILE.md | Dynamic | Yes | Yes | Yes |
 | 3 | Ego | `~/.janus/EGO.md` | Static | Yes | Yes | No |
-| 4 | Agents | `./AGENTS.md` + per-user override | Static | Yes | Yes | No |
+| 4 | Agents | Configured `AGENTS.md` + per-user override | Static | Yes | Yes | Yes |
 | 5 | Heartbeat | `./HEARTBEAT.md` + per-user override | Static | Yes | No | No |
 | 6 | Project | `./JANUS.md` | Static | Yes | No | No |
 | 7 | Skills | SKILL.md files (lazy stubs or full body) | Static | Yes | Yes | Yes |
@@ -332,8 +334,8 @@ Subagents use minimal mode. Cron/heartbeat use background mode.
 
 | Section | Key settings |
 |---------|-------------|
-| `llm` | providers (object), slots (default/background), maxTokens, temperature (default 0.3), thinking, reasoningEffort (none/low/medium/high/xhigh/max) |
-| `agent` | maxIterations (30), tokenBudget (750K), contextWindow (1M), summarizationThreshold (40), toolRetries, lanes, laneTimeoutMs (600000) |
+| `llm` | providers (object), slots (default/background), contextWindows (provider → model → limit), maxTokens, temperature (default 0.3), thinking, reasoningEffort (none/low/medium/high/xhigh/max) |
+| `agent` | contextWindow (global cap), context (keepRecentTokens/softTrimChars/protectedTailTurns), summarizationThreshold, toolRetries, lanes, laneTimeoutMs (600000) |
 | `workspace` | dir, memoryDir, sessionsDir, skillsDir |
 | `tools` | execEnabled, execTimeout, execDenyPatterns[], maxFileSize |
 | `database` | enabled, path |
@@ -383,3 +385,5 @@ npm start -- update          # Pull + install + test + per-user dirs
 npm start -- mcp-server     # MCP server (stdin/stdout JSON-RPC)
 npm start -- setup          # Configure LLM provider
 ```
+
+Continuity limits and configuration compatibility are documented in [Architecture](docs/ARCHITECTURE.md#remaining-limits-and-validation-scope), including crash duplicates, heuristic budgets, cooperative cancellation and deferred extended-thinking budget alignment. Deprecated context reserve/cap/threshold fields remain readable but are omitted from the example config.
