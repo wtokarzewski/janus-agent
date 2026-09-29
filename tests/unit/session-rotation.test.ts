@@ -235,7 +235,8 @@ describe('SessionManager rotation', () => {
       const session = await sm.getOrCreate(key);
       expect(session.messages.length).toBeLessThan(20);
       expect(session.messages.length).toBeGreaterThanOrEqual(8); // ~half kept
-      expect(session.metadata.summary).toContain('force-dropped');
+      expect(session.metadata.summary).toBeUndefined();
+      expect(session.metadata.compactionFailure).toContain('force-dropped');
     });
 
     it('skips when too few messages to drop', async () => {
