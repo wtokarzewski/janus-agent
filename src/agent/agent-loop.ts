@@ -5,6 +5,7 @@ import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
 import type { LLMMessage, ToolCall, ToolContentBlock, UserContentBlock } from '../llm/types.js';
 import { userContentText } from '../llm/types.js';
+import { validatedSummary } from './summary-validation.js';
 import { toUserMessage, sameSteeringIdentity } from './inbound-message.js';
 import type { ProviderRegistry } from '../llm/provider-registry.js';
 import { isContextLengthError, isNonRetryableClientError } from '../llm/retry.js';
@@ -132,6 +133,7 @@ export class AgentLoop {
   private _iterationControllers = new Map<string, AbortController>();
   /** Guard against concurrent summarization (C2) */
   private summarizing = new Set<string>();
+  private rejectedSummaries = new Map<string, string>();
 
   constructor(deps: AgentDeps) {
     this.deps = deps;
@@ -1388,6 +1390,9 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
       return;
     }
 
+    const fingerprint = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+    if (this.rejectedSummaries.get(sessionKey) === fingerprint) return;
+
     // Drop pinned-file reads from summarization input — they live in system prompt
     // and re-load fresh every call.
     const filteredForSummary = filterPinnedReadsFromSummarization(toSummarize, pinnedPaths);
@@ -1436,19 +1441,10 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     // Check for previous summary → iterative merge
     const previousSummary = snapshot.previousSummary;
 
-    // If previous summary is too short it's likely corrupt from a broken
-    // summarization cycle — discard and do a fresh initial summary.
-    const MIN_USABLE_SUMMARY_TOKENS = 100;
-    const prevTokens = previousSummary ? Math.ceil(previousSummary.length / 2.5) : 0;
-    let systemContent: string;
-    if (previousSummary && prevTokens >= MIN_USABLE_SUMMARY_TOKENS) {
-      systemContent = loadPrompt('summarization/update', { previousSummary });
-    } else {
-      if (previousSummary && prevTokens < MIN_USABLE_SUMMARY_TOKENS) {
-        log.warn(`[${sessionKey}] Previous summary too short (${prevTokens} tokens), using initial prompt instead`);
-      }
-      systemContent = loadPrompt('summarization/initial');
-    }
+    // A short prior summary can still contain the only copy of a critical fact.
+    const systemContent = previousSummary?.trim()
+      ? loadPrompt('summarization/update', { previousSummary }) + '\n\n' + loadPrompt('summarization/initial')
+      : loadPrompt('summarization/initial');
 
     // Scale maxTokens to input size: target ~15% of input, clamped to 1024–4096.
     // At 48K input tokens, 2048 maxTokens was producing 342 tokens (0.7%) — too little.
@@ -1458,34 +1454,47 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     log.info(`[${sessionKey}] Summarization: LLM call start (input ~${inputTokens} tokens, maxTokens=${summaryMaxTokens})`);
     const llmStart = Date.now();
     const COMPACTION_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes — was 90s, too tight for 100k+ inputs
-    let summaryResponse;
-    try {
-      summaryResponse = await withTimeout(this.deps.llm.chat({
-        model: '',
-        messages: [
-          { role: 'system', content: systemContent },
-          { role: 'user', content: conversationText },
-          // Assistant prefill forces the model into the template format from the first token,
-          // preventing it from echoing the conversation or emitting chain-of-thought.
-          { role: 'assistant', content: '## Goal\n' },
-        ],
-        temperature: 0.3,
-        maxTokens: summaryMaxTokens,
-      }, 'summarize'), COMPACTION_TIMEOUT_MS, 'Summarization LLM call timed out');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/timed out/i.test(msg)) {
-        log.error(`[${sessionKey}] Compaction timed out after ${COMPACTION_TIMEOUT_MS}ms. Falling back to force-drop oldest 50%.`);
-        await this.deps.sessions.forceDropOldest(sessionKey, 0.5, snapshot);
-        return;
+    let summary: string | null = null;
+    const MAX_SUMMARY_ATTEMPTS = 2;
+    for (let attempt = 0; attempt < MAX_SUMMARY_ATTEMPTS; attempt++) {
+      try {
+        const summaryResponse = await withTimeout(this.deps.llm.chat({
+          model: '',
+          messages: [
+            { role: 'system', content: systemContent },
+            { role: 'user', content: conversationText + (attempt ? '\nThe previous attempt was incomplete. Be concise and finish every required section within the output limit.' : '') },
+            // Assistant prefill forces the model into the template format from the first token,
+            // preventing it from echoing the conversation or emitting chain-of-thought.
+            { role: 'assistant', content: '## Goal\n' },
+          ],
+          temperature: 0.3,
+          maxTokens: summaryMaxTokens,
+        }, 'summarize'), COMPACTION_TIMEOUT_MS, 'Summarization LLM call timed out');
+        logTokenUsage('summarize', summaryResponse.usage, summaryResponse.provider, summaryResponse.model);
+        summary = validatedSummary(summaryResponse);
+        if (summary) break;
+        log.warn(`[${sessionKey}] Rejecting incomplete summary (attempt ${attempt + 1}/${MAX_SUMMARY_ATTEMPTS})`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt > 0) {
+          this.rejectedSummaries.set(sessionKey, fingerprint);
+          log.warn(`[${sessionKey}] Summary retry failed; retaining prior state: ${msg}`);
+          return;
+        }
+        if (/timed out/i.test(msg)) {
+          log.error(`[${sessionKey}] Compaction timed out after ${COMPACTION_TIMEOUT_MS}ms. Falling back to force-drop oldest 50%.`);
+          await this.deps.sessions.forceDropOldest(sessionKey, 0.5, snapshot);
+          return;
+        }
+        throw err;
       }
-      throw err;
     }
     log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
-    logTokenUsage('summarize', summaryResponse.usage, summaryResponse.provider, summaryResponse.model);
-
-    // Prepend the prefill text that was consumed by the assistant message
-    let summary = '## Goal\n' + summaryResponse.content;
+    if (!summary) {
+      this.rejectedSummaries.set(sessionKey, fingerprint);
+      return;
+    }
+    this.rejectedSummaries.delete(sessionKey);
 
     // Debug: log first 200 chars of summary + conversation text size to diagnose short output
     log.info(`[${sessionKey}] Summarization: output preview (${summary.length} chars): ${summary.slice(0, 200).replace(/\n/g, '\\n')}`);

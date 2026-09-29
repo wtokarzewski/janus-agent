@@ -21,6 +21,7 @@ import { MemoryStore } from '../../src/memory/memory-store.js';
 import { SkillLoader } from '../../src/skills/skill-loader.js';
 import { ContextBuilder } from '../../src/context/context-builder.js';
 import { SkillLearner } from '../../src/learner/learner.js';
+import { structuredSummary } from '../helpers/summary.js';
 import { MockProvider } from '../helpers/mock-llm.js';
 import { createTestConfig } from '../helpers/test-fixtures.js';
 import { PatternGate } from '../../src/gates/pattern-gate.js';
@@ -367,7 +368,7 @@ describe('AgentLoop integration', () => {
   });
 
   it('keeps messages appended while the summarizer is awaiting its response, including after restart', async () => {
-    const mock = new MockProvider([{ content: 'Old facts summarized.' }, { content: 'Done.' }]);
+    const mock = new MockProvider([{ content: structuredSummary('Old facts summarized.') }, { content: 'Done.' }]);
     const { deps } = createDeps(mock);
     deps.config.agent.contextWindow = 12_000;
     deps.config.agent.context.keepRecentTokens = 100;
@@ -545,7 +546,7 @@ describe('AgentLoop integration', () => {
 
   it('reloads the new summary and includes the current question once after compaction', async () => {
     const mock = new MockProvider([
-      { content: 'The revised limit is 37 units.' },
+      { content: structuredSummary('The revised limit is 37 units.') },
       { content: 'The limit is 37.' },
     ]);
     const { deps } = createDeps(mock);
@@ -584,7 +585,7 @@ describe('AgentLoop integration', () => {
     }));
     const mock = new MockProvider([
       { content: '', toolCalls },
-      { content: 'Keep the agreed budget of 37.' },
+      { content: structuredSummary('Keep the agreed budget of 37.') },
       { content: 'Done.' },
     ]);
     const { deps } = createDeps(mock);
