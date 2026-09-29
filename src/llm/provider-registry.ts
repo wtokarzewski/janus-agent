@@ -1,4 +1,5 @@
 import type { LLMProvider, ChatRequest, ChatResponse, ProviderEntry, StreamCallback, LLMMessage } from './types.js';
+import { resolveBudget, estimateRequestTokens, type ContextBudget } from '../context/context-manager.js';
 import { isFailoverCandidate } from './retry.js';
 import type { ProviderCircuitBreaker } from './circuit-breaker.js';
 import { stripOrphanSurrogates } from '../utils/sanitize.js';
@@ -56,7 +57,10 @@ export class ProviderRegistry implements LLMProvider {
   private pinned?: string;
 
   /** Without a breaker the registry re-walks the full priority ladder on every call. */
-  constructor(private readonly breaker?: ProviderCircuitBreaker) {}
+  constructor(
+    private readonly breaker?: ProviderCircuitBreaker,
+    private readonly budgetDefaults: { contextWindow?: number; maxTokens?: number } = {},
+  ) {}
 
   /**
    * Send traffic to `providerName` first, regardless of priority or breaker
@@ -110,6 +114,21 @@ export class ProviderRegistry implements LLMProvider {
     return [...this.entries];
   }
 
+  getContextBudget(request: { model?: string; maxTokens?: number; contextWindow?: number }, purpose?: string): ContextBudget {
+    return this.candidateBudget(this.getCandidates(purpose)[0], request);
+  }
+
+  private candidateBudget(entry: ProviderEntry | undefined, request: { model?: string; maxTokens?: number; contextWindow?: number }): ContextBudget {
+    const model = request.model || entry?.model || '';
+    const window = entry?.contextWindows?.[model] ?? resolveBudget({}).contextWindow;
+    const cap = request.contextWindow ?? this.budgetDefaults.contextWindow;
+    return resolveBudget({
+      modelContextWindow: window,
+      ...(cap && cap < window ? { configOverride: cap } : {}),
+      reservedForOutput: request.maxTokens ?? this.budgetDefaults.maxTokens ?? 4096,
+    });
+  }
+
   /**
    * Send a chat request with purpose-based routing and failover.
    * If purpose is specified, filters to providers that match (or have no purpose = all).
@@ -126,13 +145,18 @@ export class ProviderRegistry implements LLMProvider {
     const messages = sanitizeRequestMessages(request.messages);
 
     for (const entry of candidates) {
+      const budget = this.candidateBudget(entry, request);
+      if (budget.effective === 0 || estimateRequestTokens({ messages, tools: request.tools }) > budget.effective) {
+        lastError = new Error(`Context length exceeds the budget for ${request.model || entry.model} (${budget.effective} prompt tokens)`);
+        continue; // Local budget mismatch does not demote a healthy provider.
+      }
       try {
-        const req = { ...request, messages, model: request.model || entry.model };
+        const req = { ...request, messages, model: request.model || entry.model, maxTokens: budget.reservedForOutput };
         log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} request`);
         const result = await entry.provider.chat(req);
         this.breaker?.recordSuccess(entry.providerName);
         result.provider = entry.name;
-        result.model = entry.model;
+        result.model = req.model;
         return result;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
@@ -163,15 +187,20 @@ export class ProviderRegistry implements LLMProvider {
     const messages = sanitizeRequestMessages(request.messages);
 
     for (const entry of candidates) {
+      const budget = this.candidateBudget(entry, request);
+      if (budget.effective === 0 || estimateRequestTokens({ messages, tools: request.tools }) > budget.effective) {
+        lastError = new Error(`Context length exceeds the budget for ${request.model || entry.model} (${budget.effective} prompt tokens)`);
+        continue; // Local budget mismatch does not demote a healthy provider.
+      }
       try {
-        const req = { ...request, messages, model: request.model || entry.model };
+        const req = { ...request, messages, model: request.model || entry.model, maxTokens: budget.reservedForOutput };
         log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} stream request`);
 
         if (entry.provider.chatStream) {
           const result = await entry.provider.chatStream(req, onChunk);
           this.breaker?.recordSuccess(entry.providerName);
           result.provider = entry.name;
-          result.model = entry.model;
+          result.model = req.model;
           return result;
         }
 
@@ -179,7 +208,7 @@ export class ProviderRegistry implements LLMProvider {
         const response = await entry.provider.chat(req);
         this.breaker?.recordSuccess(entry.providerName);
         response.provider = entry.name;
-        response.model = entry.model;
+        response.model = req.model;
         if (response.content) {
           onChunk(response.content);
         }

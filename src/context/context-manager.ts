@@ -5,7 +5,6 @@ import { safeSlice } from '../utils/sanitize.js';
 // Replaces the 7-mechanism / 12-threshold system that accumulated 20+ patch PRs
 // since 2026-04-01. See docs/superpowers/specs/2026-05-16-context-management-redesign.md.
 
-export const CONTEXT_WINDOW_HARD_MIN_TOKENS = 4_000;
 export const RESERVED_OUTPUT_TOKENS_DEFAULT = 8_000;
 export const SAFETY_MARGIN = 1.2;
 export const CHARS_PER_TOKEN_ESTIMATE = 2.5;
@@ -48,7 +47,7 @@ export function resolveBudget(params: ResolveBudgetParams): ContextBudget {
     source = 'default';
   }
   const reservedForOutput = params.reservedForOutput ?? RESERVED_OUTPUT_TOKENS_DEFAULT;
-  const effective = Math.max(CONTEXT_WINDOW_HARD_MIN_TOKENS, contextWindow - reservedForOutput);
+  const effective = Math.max(0, contextWindow - reservedForOutput);
   return { contextWindow, reservedForOutput, effective, source };
 }
 
@@ -115,6 +114,15 @@ export const DEFAULT_TRANSFORM_SETTINGS: TransformSettings = {
   hardClear: { enabled: true, placeholder: '[old tool result cleared to free context budget]' },
 };
 
+export function resolveTransformSettings(config: { softTrimChars: number; protectedTailTurns: number }): TransformSettings {
+  const maxChars = Math.max(1, Math.floor(config.softTrimChars));
+  return {
+    ...DEFAULT_TRANSFORM_SETTINGS,
+    keepLastAssistants: Math.max(0, Math.floor(config.protectedTailTurns)),
+    softTrim: { maxChars, headChars: Math.floor(maxChars * 0.375), tailChars: Math.floor(maxChars * 0.375) },
+  };
+}
+
 /**
  * Index of the oldest message in the "protected tail" — the last N assistant turns
  * plus any tool messages that follow them. Messages BEFORE this index are eligible
@@ -123,6 +131,7 @@ export const DEFAULT_TRANSFORM_SETTINGS: TransformSettings = {
  * Returns null if there aren't enough assistant turns to define a tail.
  */
 function findProtectedTailStartIndex(messages: LLMMessage[], keepLastAssistants: number): number | null {
+  if (keepLastAssistants === 0) return messages.length;
   let seen = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'assistant') {

@@ -66,6 +66,9 @@ const LLMSchema = z.object({
   /** @deprecated Use providers object + slots instead */
   legacyProviders: z.array(LegacyProviderSpecSchema).optional(),
 
+  /** Explicit provider -> model -> context tokens. Unknown models use 200k. */
+  contextWindows: z.record(z.string(), z.record(z.string(), z.number().int().positive())).optional(),
+
   // Shared LLM settings (format-independent)
   maxTokens: z.number().default(4096),
   temperature: z.number().default(0.3),
@@ -123,11 +126,16 @@ const SubagentsSchema = z.object({
 
 const ContextSchema = z.object({
   keepRecentTokens: z.number().default(20_000),
+  /** @deprecated Output reservation comes from the actual maxTokens. */
   reserveTokens: z.number().default(20_000),
+  /** @deprecated Unified tool-result cap replaces this option. */
   toolResultMaxShare: z.number().min(0.01).max(1.0).default(0.3),
+  /** @deprecated Unified tool-result cap replaces this option. */
   toolResultHardMax: z.number().default(400_000),
   softTrimChars: z.number().default(4000),
+  /** @deprecated The single router replaces staged thresholds. */
   compactionThresholds: z.tuple([z.number(), z.number(), z.number()]).default([0.75, 0.80, 0.85]),
+  /** @deprecated The single router replaces emergency thresholds. */
   emergencyThreshold: z.number().default(0.95),
   protectedTailTurns: z.number().min(0).default(3),
 });
@@ -135,9 +143,8 @@ const ContextSchema = z.object({
 const AgentSchema = z.object({
   summarizationThreshold: z.number().default(40),
   /**
-   * Model context window in tokens. The single knob that drives compaction and
-   * transcript rotation — `resolveBudget()` derives everything else from it.
-   * (The old `tokenBudget` field is gone: nothing read it after Phase 15.)
+   * Global input/output window cap. Model-specific windows are configured in
+   * llm.contextWindows; this cap can lower but never raise a candidate's limit.
    */
   contextWindow: z.number().default(1_000_000),
   toolRetries: z.number().default(2),
