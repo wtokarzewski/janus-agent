@@ -605,7 +605,7 @@ describe('AgentLoop integration', () => {
       { role: 'assistant', content: 'Understood.' },
     ]);
     (await deps.sessions.getOrCreate(key)).metadata.summary = 'Obsolete limit: 12 units.';
-    // Compaction currently leaves its timeout pending (covered separately by JL-15).
+    // Fake timers keep compaction/retry assertions deterministic.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       await new AgentLoop(deps).processDirect('What is the current limit?', { channel: 'test', chatId: 'compact' });
