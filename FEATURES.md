@@ -102,7 +102,7 @@ Three auth modes (mutually exclusive):
 
 | Tool | Description |
 |------|-------------|
-| `exec` | Shell commands. Deny patterns (rm -rf, mkfs, fork bomb, etc.). Configurable timeout. |
+| `exec` | Unisolated shell; owner-only when users are configured. Deny patterns and timeout remain active. |
 | `read_file` | Read file contents with size limit. |
 | `write_file` | Create/overwrite files with atomic writes. |
 | `edit_file` | Find-and-replace in files. |
@@ -122,6 +122,7 @@ Three auth modes (mutually exclusive):
 ### Tool Infrastructure
 
 - **Tool registry** — Centralized tool registration with per-user allow/deny lists.
+- **Multi-user shell authorization** — Non-owners, unknown users and system turns without an owner identity cannot use `exec`, including through subagents or a tool allowlist. Owners still pass gates and deny patterns. With no configured users, local single-user execution is retained. `working_dir` and regex patterns are not a sandbox; shell access for non-owners requires a separate sandbox implementation.
 - **Exec master switch** — `tools.execEnabled` config flag disables exec tool entirely when set to `false`. Overrides all other exec permissions.
 - **Owner-only tools** — `ownerOnly` flag on tool definitions. `ownerIds` in config (defaults to first user). Enforced in ToolRegistry + filtered from system prompt for non-owners.
 - **Gate integration** — Pattern-based confirmation before destructive commands.

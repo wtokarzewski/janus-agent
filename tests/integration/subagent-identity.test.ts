@@ -72,9 +72,9 @@ it('uses distinct IDs in the same millisecond, enforces parent limits, and combi
   const registry = new SubagentRegistry();
   const tool = new SpawnAgentTool(deps, registry);
   const releases: Array<() => void> = [];
-  const signals: AbortSignal[] = [];
+  const signals = new Map<string, AbortSignal>();
   vi.spyOn(mock, 'chat').mockImplementation(async req => {
-    signals.push(req.signal!);
+    signals.set(String(req.messages.find(m => m.role === 'user')?.content), req.signal!);
     await new Promise<void>(resolve => releases.push(resolve));
     return { content: 'late', toolCalls: [], finishReason: 'stop', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
   });
@@ -89,13 +89,13 @@ it('uses distinct IDs in the same millisecond, enforces parent limits, and combi
     expect(new Set(children.map(c => c.id)).size).toBe(2);
     expect(children.every(c => c.parentId === 'parent')).toBe(true);
     expect(await tool.execute({ task: 'third' }, parent)).toContain('Maximum children');
-    registry.cancel(children[0].id);
-    expect(signals[0].aborted).toBe(true);
-    expect(signals[1].aborted).toBe(false);
+    registry.cancel(children.find(c => c.task === 'first')!.id);
+    expect(signals.get('first')!.aborted).toBe(true);
+    expect(signals.get('second')!.aborted).toBe(false);
     ctrl.abort();
-    expect(signals[1].aborted).toBe(true);
+    expect(signals.get('second')!.aborted).toBe(true);
     releases.forEach(release => release());
     expect((await Promise.all([first, second])).every(result => !result.includes('late'))).toBe(true);
     expect(registry.size).toBe(0);
-  } finally { now.mockRestore(); releases.forEach(release => release()); }
+  } finally { ctrl.abort(); now.mockRestore(); releases.forEach(release => release()); }
 });
