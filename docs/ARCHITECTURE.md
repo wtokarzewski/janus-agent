@@ -117,7 +117,9 @@ Providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Groq (OpenAI-compatible API)
 | `self_update` | Check/apply updates (git pull, test, restart) |
 | `invite` | Generate Telegram invite links for new users |
 
-**Gates:** Pattern-based confirmation before destructive commands (rm, git push, etc.).
+**Shell authorization:** `exec` is owner-only when `users` is nonempty, enforced by ToolRegistry and ExecTool. Unknown users and identity-free system jobs are denied; delegated turns retain parent restrictions. Single-user mode remains available. `tools.execEnabled: false` disables registration and execution. Cwd validation and regex deny patterns do not isolate the process; a real sandbox is required before granting shell access to non-owners.
+
+**Gates:** Pattern-based confirmation before destructive commands (rm, git push, etc.), applied after owner authorization.
 
 ### Cancellation
 

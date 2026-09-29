@@ -155,7 +155,7 @@ export async function createApp(config: JanusConfig): Promise<AppDeps> {
   // 3. Tools
   const tools = new ToolRegistry();
   if (config.tools.execEnabled) {
-    tools.register(new ExecTool());
+    tools.register(new ExecTool(config));
   }
   tools.register(new ReadFileTool());
   tools.register(new WriteFileTool());
