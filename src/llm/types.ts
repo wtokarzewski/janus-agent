@@ -82,6 +82,8 @@ export interface TokenUsage {
 export type StreamCallback = (chunk: string) => void;
 
 export interface LLMProvider {
+  /** Output tokens actually sent by this adapter, including any thinking allowance. */
+  getOutputTokenLimit?(request: Pick<ChatRequest, 'maxTokens' | 'thinking'>): number;
   chat(request: ChatRequest): Promise<ChatResponse>;
   chatStream?(request: ChatRequest, onChunk: StreamCallback): Promise<ChatResponse>;
 }
@@ -97,6 +99,8 @@ export interface ProviderEntry {
   provider: LLMProvider;
   /** Explicit windows indexed by the actual model ID. */
   contextWindows?: Record<string, number>;
+  /** Optional verified output caps indexed by model ID. */
+  maxOutputTokens?: Record<string, number>;
   model: string;
   purpose: string[];
   priority: number;

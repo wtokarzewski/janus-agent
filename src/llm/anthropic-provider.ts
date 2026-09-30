@@ -64,12 +64,20 @@ export function modelRejectsSamplingParams(model: string): boolean {
   );
 }
 
+const DEFAULT_MAX_TOKENS = 4_096;
+
 /**
  * Anthropic Messages API provider using official SDK.
  * Built-in retry, proper TypeScript types, streaming-ready.
  * Supports both API key and OAuth token authentication.
  */
 export class AnthropicProvider implements LLMProvider {
+  getOutputTokenLimit(request: Pick<ChatRequest, 'maxTokens' | 'thinking'>): number {
+    const limit = request.maxTokens ?? DEFAULT_MAX_TOKENS;
+    // Preserve the adapter's existing allowance: thinking plus room for a reply.
+    return request.thinking ? Math.max(limit, request.thinking.budgetTokens + DEFAULT_MAX_TOKENS) : limit;
+  }
+
   private client: Anthropic;
   private defaultModel: string;
   private tokenStore?: TokenStore;
@@ -133,16 +141,14 @@ export class AnthropicProvider implements LLMProvider {
 
     const params: Anthropic.MessageCreateParams = {
       model,
-      max_tokens: request.maxTokens ?? 4096,
+      max_tokens: this.getOutputTokenLimit(request),
       messages: toAnthropicMessages(nonSystemMsgs),
     };
 
     // Extended thinking requires temperature=1 and uses a dedicated budget
     if (request.thinking) {
-      (params as unknown as Record<string, unknown>).thinking = request.thinking;
+      params.thinking = { type: 'enabled', budget_tokens: request.thinking.budgetTokens };
       if (!modelRejectsSamplingParams(model)) params.temperature = 1;
-      // Ensure max_tokens accommodates thinking budget
-      params.max_tokens = Math.max(params.max_tokens, request.thinking.budgetTokens + 4096);
     } else if (!modelRejectsSamplingParams(model)) {
       params.temperature = request.temperature ?? 0.7;
     }
@@ -292,15 +298,14 @@ export class AnthropicProvider implements LLMProvider {
 
     const params: Anthropic.MessageCreateParams = {
       model,
-      max_tokens: request.maxTokens ?? 4096,
+      max_tokens: this.getOutputTokenLimit(request),
       messages: toAnthropicMessages(nonSystemMsgs),
       stream: true,
     };
 
     if (request.thinking) {
-      (params as unknown as Record<string, unknown>).thinking = request.thinking;
+      params.thinking = { type: 'enabled', budget_tokens: request.thinking.budgetTokens };
       if (!modelRejectsSamplingParams(model)) params.temperature = 1;
-      params.max_tokens = Math.max(params.max_tokens, request.thinking.budgetTokens + 4096);
     } else if (!modelRejectsSamplingParams(model)) {
       params.temperature = request.temperature ?? 0.7;
     }

@@ -5,6 +5,8 @@ import type { ProviderCircuitBreaker } from './circuit-breaker.js';
 import { stripOrphanSurrogates } from '../utils/sanitize.js';
 import * as log from '../utils/logger.js';
 
+type BudgetRequest = Partial<Pick<ChatRequest, 'model' | 'maxTokens' | 'contextWindow' | 'thinking'>>;
+
 /**
  * Defense-in-depth: strip orphan UTF-16 surrogates from all message content
  * before any provider sees it. A split surrogate pair (e.g. an emoji cut by
@@ -114,19 +116,25 @@ export class ProviderRegistry implements LLMProvider {
     return [...this.entries];
   }
 
-  getContextBudget(request: { model?: string; maxTokens?: number; contextWindow?: number }, purpose?: string): ContextBudget {
-    return this.candidateBudget(this.getCandidates(purpose)[0], request);
+  getContextBudget(request: BudgetRequest, purpose?: string): ContextBudget {
+    const candidates = this.getCandidates(purpose);
+    const budgets = candidates.map(entry => this.candidateBudget(entry, request));
+    return budgets.find(budget => budget.effective > 0) ?? budgets[0] ?? this.candidateBudget(undefined, request);
   }
 
-  private candidateBudget(entry: ProviderEntry | undefined, request: { model?: string; maxTokens?: number; contextWindow?: number }): ContextBudget {
+  private candidateBudget(entry: ProviderEntry | undefined, request: BudgetRequest): ContextBudget {
     const model = request.model || entry?.model || '';
     const window = entry?.contextWindows?.[model] ?? resolveBudget({}).contextWindow;
     const cap = request.contextWindow ?? this.budgetDefaults.contextWindow;
-    return resolveBudget({
+    const options = { ...request, maxTokens: request.maxTokens ?? this.budgetDefaults.maxTokens ?? 4096 };
+    const allowance = entry?.provider.getOutputTokenLimit?.(options) ?? options.maxTokens;
+    const budget = resolveBudget({
       modelContextWindow: window,
       ...(cap && cap < window ? { configOverride: cap } : {}),
-      reservedForOutput: request.maxTokens ?? this.budgetDefaults.maxTokens ?? 4096,
+      reservedForOutput: allowance,
     });
+    const outputCap = entry?.maxOutputTokens?.[model];
+    return outputCap !== undefined && allowance > outputCap ? { ...budget, effective: 0 } : budget;
   }
 
   /**

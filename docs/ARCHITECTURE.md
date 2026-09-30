@@ -133,11 +133,13 @@ Agent deadlines use a throwing helper that removes its timer and abort listener 
 
 ### Context budget configuration
 
-`llm.contextWindows` maps provider names to exact model IDs and their verified context limits (for example, `{"test-provider":{"small-test-model":16000}}` in a synthetic setup). The selected candidate, including an operator pin or fallback, is checked immediately before each chat/stream call. Unknown models use the existing 200,000-token fallback (not a guarantee for an unknown model); configure smaller limits explicitly. `agent.contextWindow` is a global cap and cannot enlarge a model limit. The request's declared `maxTokens` is reserved; a reservation at or above the window leaves zero prompt capacity. A fallback too small for the request is skipped without a network call or circuit-breaker penalty. This is a character-based estimate, not an exact tokenizer.
+`llm.contextWindows` maps provider names to exact model IDs and their verified context limits (for example, `{"test-provider":{"small-test-model":16000}}` in a synthetic setup). The selected candidate, including an operator pin or fallback, is checked immediately before each chat/stream call. Unknown models use the existing 200,000-token fallback (not a guarantee for an unknown model); configure smaller limits explicitly. `agent.contextWindow` is a global cap and cannot enlarge a model limit. The adapter's effective output allowance is reserved; a reservation at or above the window leaves zero prompt capacity. A fallback too small for the request is skipped without a network call or circuit-breaker penalty. This is a character-based estimate, not an exact tokenizer.
 
 `agent.context.softTrimChars` and `protectedTailTurns` control trimming; zero protected turns allows all old tool results to be trimmed. `keepRecentTokens` controls the retained transcript. Legacy `reserveTokens`, `toolResultMaxShare`, `toolResultHardMax`, `compactionThresholds` and `emergencyThreshold` remain readable but are deprecated: config loading warns when explicitly supplied. Reservation now follows `maxTokens`; the unified tool-result cap and single router replace the old caps and staged thresholds. The example config omits these obsolete options.
 
 ## Memory System (`src/memory/`)
+
+`llm.maxOutputTokens` optionally maps provider names and exact model IDs to verified output caps. A candidate that cannot honor the requested allowance is skipped, without reducing thinking or silently changing settings. Preflight chooses the first candidate with nonzero capacity. Anthropic preserves its existing allowance, `max(maxTokens, thinking.budgetTokens + 4096)`, and exposes the same calculation to preflight, chat and streaming. The SDK receives `budget_tokens`; other adapters retain their declared output allowance. Both foreground routing and the background compaction threshold include the current thinking setting.
 
 ### Session compaction snapshots
 
@@ -169,7 +171,7 @@ A processed turn records its user/chat scope. At 20 pending retained messages, a
 ### Remaining limits and validation scope
 
 - Structural summary validation cannot establish that every semantic fact was preserved. The reported production summary cut in Constraints still needs a controlled runtime reproduction; the new validation rejects incomplete/length-limited outputs but cannot restore already lost content.
-- Anthropic extended thinking can raise its adapter output limit to `thinking.budgetTokens + 4096`. Aligning that effective value with the request budget reservation is a deferred follow-up; ordinary-response budget tests do not validate that combination.
+- Output limits for unknown models still require explicit configuration; no model capability is inferred from its name.
 - Note writes and cursor checkpoints are not a single transaction. A crash can duplicate notes; archived prefixes are retained for recovery, without automatic replay. Atomic rename is not an explicit power-loss/fsync durability guarantee.
 - Cancellation prevents later continuations and passes signals to providers/tools; it cannot undo completed effects or force an uncooperative remote operation to stop. A still-running tool keeps its session turn owned until settlement.
 - The continuity suite uses synthetic files/users and mock summaries/providers. It validates the actual request and persistence boundaries, not live model quality, Telegram delivery or production deployment.
