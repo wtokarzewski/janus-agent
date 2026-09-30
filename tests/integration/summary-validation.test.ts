@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { AgentLoop, type AgentDeps } from '../../src/agent/agent-loop.js';
 import { SessionManager } from '../../src/session/session-manager.js';
+import { ProviderRegistry } from '../../src/llm/provider-registry.js';
 import { MessageBus } from '../../src/bus/message-bus.js';
 import { createTestConfig } from '../helpers/test-fixtures.js';
 import { structuredSummary } from '../helpers/summary.js';
@@ -24,7 +25,9 @@ async function fixture(responses: Array<Partial<ChatResponse>>) {
     ...responses.shift(),
   }));
   // Exercise the compaction boundary without running unrelated tool/turn logic.
-  const loop = new AgentLoop({ config, sessions, bus: new MessageBus(), llm: { chat } } as unknown as AgentDeps);
+  const llm = new ProviderRegistry();
+  llm.register({ name: 'mock', providerName: 'mock', model: 'test', provider: { chat }, purpose: [], priority: 0 });
+  const loop = new AgentLoop({ config, sessions, bus: new MessageBus(), llm } as unknown as AgentDeps);
   const run = (signal?: AbortSignal) => (loop as unknown as { triggerCompactionSync(key: string, paths: Set<string>, signal?: AbortSignal): Promise<void> }).triggerCompactionSync('test', new Set(), signal);
   return { config, sessions, chat, run, previous };
 }
