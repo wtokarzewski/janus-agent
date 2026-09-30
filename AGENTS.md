@@ -120,3 +120,8 @@ When requested data is unclear, missing, or contradicts what you remember:
 - Be concise and direct
 - Explain reasoning when making decisions
 - Ask before taking actions with side effects
+
+## Project development preferences
+
+- Never reference competing projects in code, comments, documentation, commit messages, PR descriptions or user-facing summaries.
+- Use external projects only as inspiration for requirements and general approaches. Write independent implementations; do not copy or adapt their code. Do not introduce code that requires an unwanted attribution, and never remove required notices while retaining that code.

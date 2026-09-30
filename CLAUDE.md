@@ -170,5 +170,6 @@ See **[CODING.md](CODING.md)** for full coding standards (naming, imports, types
 Summary:
 - TypeScript, ESM (`"type": "module"`)
 - Code and comments in English
-- No references to other projects in code
+- Do not reference competing projects in code, comments, documentation, commit messages, PR descriptions or user-facing summaries.
+- External projects may inform requirements and general ideas only. Implement solutions independently; do not import or adapt their code. If a proposed reuse requires attribution, choose an independent implementation instead of removing required notices.
 - Follow patterns established in existing code — see CODING.md before writing new code
