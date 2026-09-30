@@ -113,7 +113,7 @@ describe('AgentLoop integration', () => {
     expect(mock.calls).toHaveLength(1);
   });
 
-  it('preserves prior facts and the full active transcript when the summarizer times out', async () => {
+  it('preserves prior facts and an archived transcript when the summarizer times out', async () => {
     const mock = new MockProvider([{ content: 'Done.' }]);
     const { deps } = createDeps(mock);
     deps.config.agent.contextWindow = 12_000;
@@ -131,15 +131,13 @@ describe('AgentLoop integration', () => {
       { role: 'user', content: 'tail' },
       { role: 'assistant', content: 'tail answer' },
     ]);
-    const before = structuredClone(await deps.sessions.getHistory(key));
     vi.spyOn(mock, 'chat').mockRejectedValueOnce(new Error('Summarization LLM call timed out'));
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       await new AgentLoop(deps).processDirect('current question', { channel: 'test', chatId: 'timeout-recovery' });
       const session = await new SessionManager(deps.config).getOrCreate(key);
       expect(session.metadata.summary).toBe('Previous constraint: limit 17.');
-      expect(session.metadata.compactionFailure).toBeUndefined();
-      for (const message of before) expect(session.messages).toContainEqual(message);
+      expect(session.metadata.compactionFailure).toContain('archive:');
       expect(session.messages).toContainEqual({ role: 'user', content: 'current question' });
     } finally { vi.clearAllTimers(); vi.useRealTimers(); }
   });
@@ -175,7 +173,7 @@ describe('AgentLoop integration', () => {
     expect(await new SessionManager(deps.config).pendingMemoryCount(key)).toBe(0);
     await deps.sessions.append(key, [{ role: 'user', content: 'new correction' }]);
     await agent.flushAllSessions();
-    expect(flush.mock.calls.at(-1)![0].messages.at(-1)!.content).toBe('New messages to process:\n'+JSON.stringify({ role: 'user', content: 'new correction' }));
+    expect(flush.mock.calls.at(-1)![0].messages.at(-1)!.content).toBe('New messages to process:\nuser: new correction');
     expect(await new SessionManager(deps.config).pendingMemoryCount(key)).toBe(0);
   });
 

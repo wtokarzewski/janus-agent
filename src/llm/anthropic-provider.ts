@@ -2,7 +2,6 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { LLMProvider, ChatRequest, ChatResponse, LLMMessage, ToolCall, StreamCallback } from './types.js';
 import type { TokenStore } from '../auth/types.js';
 import { getAnthropicToken } from '../auth/anthropic-oauth.js';
-import { resolveThinkingBudget } from './output-budget.js';
 import * as log from '../utils/logger.js';
 
 /**
@@ -123,10 +122,6 @@ export class AnthropicProvider implements LLMProvider {
     });
   }
 
-  getOutputTokenLimit(request: Pick<ChatRequest, 'maxTokens' | 'modelMaxTokens' | 'thinking'>): number {
-    return resolveThinkingBudget(request).maxTokens;
-  }
-
   async chat(request: ChatRequest): Promise<ChatResponse> {
     await this.ensureFreshToken();
     const model = (request.model || this.defaultModel).replace(/^anthropic\//, '');
@@ -136,17 +131,18 @@ export class AnthropicProvider implements LLMProvider {
     const systemMsg = request.messages.find(m => m.role === 'system');
     const nonSystemMsgs = request.messages.filter(m => m.role !== 'system');
 
-    const outputBudget = resolveThinkingBudget(request);
     const params: Anthropic.MessageCreateParams = {
       model,
-      max_tokens: outputBudget.maxTokens,
+      max_tokens: request.maxTokens ?? 4096,
       messages: toAnthropicMessages(nonSystemMsgs),
     };
 
     // Extended thinking requires temperature=1 and uses a dedicated budget
-    if (outputBudget.thinkingBudget !== undefined) {
-      params.thinking = { type: 'enabled', budget_tokens: outputBudget.thinkingBudget };
+    if (request.thinking) {
+      (params as unknown as Record<string, unknown>).thinking = request.thinking;
       if (!modelRejectsSamplingParams(model)) params.temperature = 1;
+      // Ensure max_tokens accommodates thinking budget
+      params.max_tokens = Math.max(params.max_tokens, request.thinking.budgetTokens + 4096);
     } else if (!modelRejectsSamplingParams(model)) {
       params.temperature = request.temperature ?? 0.7;
     }
@@ -294,17 +290,17 @@ export class AnthropicProvider implements LLMProvider {
     const systemMsg = request.messages.find(m => m.role === 'system');
     const nonSystemMsgs = request.messages.filter(m => m.role !== 'system');
 
-    const outputBudget = resolveThinkingBudget(request);
     const params: Anthropic.MessageCreateParams = {
       model,
-      max_tokens: outputBudget.maxTokens,
+      max_tokens: request.maxTokens ?? 4096,
       messages: toAnthropicMessages(nonSystemMsgs),
       stream: true,
     };
 
-    if (outputBudget.thinkingBudget !== undefined) {
-      params.thinking = { type: 'enabled', budget_tokens: outputBudget.thinkingBudget };
+    if (request.thinking) {
+      (params as unknown as Record<string, unknown>).thinking = request.thinking;
       if (!modelRejectsSamplingParams(model)) params.temperature = 1;
+      params.max_tokens = Math.max(params.max_tokens, request.thinking.budgetTokens + 4096);
     } else if (!modelRejectsSamplingParams(model)) {
       params.temperature = request.temperature ?? 0.7;
     }

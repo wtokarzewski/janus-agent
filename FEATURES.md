@@ -12,10 +12,10 @@ Implemented features, checked against source and automated tests. Continuity val
 - **Subagent spawning** — `spawn_agent` creates a UUID session with inherited user/scope/agent, owner status, tool filters and cancellation. Minimal mode retains configured AGENTS.md rules. Depth increments on nested spawns; parent IDs enforce child limits.
 - **Pre-call context routing** — One pre-call router chooses fit, trim, compact or both, then rechecks the full request. If it still cannot fit, the turn stops with a budget message.
 - **Token-based summarization** — After a successful non-ephemeral turn, background compaction starts above 50% of the effective prompt budget or the configured message count. Pre-call compaction blocks only when needed to fit a request.
-- **Coordinated memory flush** — Count, shutdown and pre-compaction callers share one flush. Compaction waits for pending scoped notes and cursor persistence; failed writes keep active history.
+- **Independent memory flush** — Flush runs independently on a count threshold or shutdown; compaction archives the transcript before replacement.
 - **No-op suppression** — Heartbeat/cron responses like "HEARTBEAT_OK" are not routed to the user.
 - **LLM overload resilience** — 5-retry exponential backoff (1s→2s→4s→8s→16s), user notification on first retry, abort-aware sleep, clean error message after exhaustion.
-- **SDK timeout hardening** — Provider requests receive cancellation signals. Agent wait deadlines are 90 seconds for memory extraction and 15 minutes for the complete pre-compaction flush and summary pipeline, with timer/listener cleanup on settlement.
+- **SDK timeout hardening** — Provider requests receive cancellation signals. Agent wait deadlines are 90 seconds for memory extraction and 15 minutes per compaction request, with timer/listener cleanup on settlement.
 - **Graceful shutdown flush** — Tracked sessions flush on shutdown, including those below the 20-message threshold. Shutdown waits at most 30 seconds for these flushes; no idle flush timer.
 - **Diagnostic timing logs** — Full pipeline observability: Telegram incoming → lane semaphore → context build → LLM call → tool execution → flush → summarization, with durations.
 - **Leaked control token stripping** — Sanitizes LLM control tokens (`<|endoftext|>`, `[INST]`, `<<SYS>>`, `<s>`) from user-facing output before delivery.
@@ -24,7 +24,7 @@ Implemented features, checked against source and automated tests. Continuity val
 - **Cross-tool loop detection** — 6-call sliding window detects repeating tool call sequences (e.g., exec->fail->exec->fail). Injects system break message to redirect the agent.
 - **Proactive context overflow detection** — System content, transcript, tool definitions/calls, text and images share one estimator. Each selected provider/model, including fallbacks, must fit its own window and declared output reservation.
 - **Context trimming** — Soft/hard tool-result transforms controlled by `softTrimChars` and `protectedTailTurns`. Estimates remain heuristic, not exact tokenizer bounds.
-- **Compaction hardening** — Detached prefix snapshots and generation checks preserve new arrivals. Archive-before-replacement retains recovery data; timeouts preserve active history. Budgeted chunks keep tool pairs together; section-aware fitting protects bounded source identifiers and the current request. Final structure/finishReason checks allow one corrective retry per chunk.
+- **Compaction hardening** — Detached prefix snapshots and generation checks preserve new arrivals. Archive-before-replacement retains recovery data; timeout fallback preserves prior summary and records a separate diagnostic. Summary structure/finishReason validation permits one retry and rejects incomplete output.
 - **Compaction notifications** — Silent background summarization with ⏳ status indicator.
 - **SSRF guard** — Blocks private/reserved IPs (localhost, 10.x, 172.16-31.x, 192.168.x, link-local, cloud metadata) and IPv6 private ranges (fc00::/7, fe80::/10, ff00::/8) in web_fetch and browser tools.
 - **Secret redaction in tool results** — Automatically masks secrets in tool output before sending to LLM: `KEY=`, `Bearer`, `sk-`/`ghp_`/`AKIA`/JWT patterns replaced with `[REDACTED]`.

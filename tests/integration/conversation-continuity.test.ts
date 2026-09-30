@@ -23,7 +23,6 @@ it('carries corrected facts through three compactions, a restart and provider fa
   let summaryNumber = 0;
   deps.llm.register({ name: 'summary', providerName: 'summary', model: 'summary-model', purpose: ['summarize'], priority: -1,
     provider: { chat: async req => {
-      if (String(req.messages[0].content).includes('You are a memory manager')) return response('<summary>NONE</summary><facts>NONE</facts>');
       summaries.push(structuredClone(req));
       expect(JSON.stringify(req.messages)).toContain(constraints);
       if (summaryNumber > 0) expect(String(req.messages[0].content)).toContain('## Goal');

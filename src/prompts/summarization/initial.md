@@ -17,7 +17,7 @@ Use EXACTLY this template. Write "None" for empty sections. Never skip a section
 [User-stated constraints: times, dates, names, quantities, conditions, exceptions. Quote exact words for critical constraints. Include behavioral instructions like "don't change X without asking", "only topic Y on this channel", "check before modifying".]
 
 ## Established Facts
-[Specific data points established during the conversation that the user would expect the assistant to remember: names, numbers, measurements, definitions, shorthand/aliases, file paths, tools in use, formulas, recurring references. Preserve relevant facts and corrections; remove stale or duplicate detail to stay within the output budget.]
+[Specific data points established during the conversation that the user would expect the assistant to remember: names, numbers, measurements, definitions, shorthand/aliases, file paths, tools in use, formulas, recurring references. These should GROW as the conversation progresses — never discard unless explicitly superseded.]
 
 ## Progress
 ### Done

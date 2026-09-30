@@ -21,7 +21,7 @@ async function fixture(outputs: ChatResponse[]) {
     ...Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? 'assistant' as const : 'user' as const, content: `retained fact ${i}: ` + 'x'.repeat(5000) })),
   ]);
   const summarize = vi.fn(async (_request: ChatRequest) => outputs.shift() ?? answer(''));
-  deps.llm.register({ name: 'summary', providerName: 'summary', model: 'test-summary', purpose: ['summarize'], priority: -1, provider: { chat: req => String(req.messages[0].content).includes('You are a memory manager') ? Promise.resolve(answer('<summary>NONE</summary><facts>NONE</facts>')) : summarize(req) } });
+  deps.llm.register({ name: 'summary', providerName: 'summary', model: 'test-summary', purpose: ['summarize'], priority: -1, provider: { chat: summarize } });
   return { deps, primary, summarize, previous, key, agent: new AgentLoop(deps) };
 }
 
@@ -45,11 +45,9 @@ it('includes actual tool evidence and a short prior summary, then resumes after 
   for (const call of summarize.mock.calls) {
     const request = call[0];
     expect(request.messages[0].content).toContain(previous);
-    expect(request.messages[1].content).toContain(JSON.stringify({ role: 'tool', tool_call_id: 'evidence', content: 'Tool evidence: exact value 37' }));
+    expect(request.messages[1].content).toContain('tool: Tool evidence: exact value 37');
   }
-  const saved = (await deps.sessions.getOrCreate(key)).metadata.summary!;
-  for (const line of valid.split('\n').filter(Boolean)) expect(saved).toContain(line);
-  expect(saved).toContain('Latest user request context: "continue"');
+  expect((await deps.sessions.getOrCreate(key)).metadata.summary).toBe(valid);
   expect(String(primary.calls[0].messages[0].content)).toContain('exact value 37');
   expect(vi.getTimerCount()).toBe(0);
 });

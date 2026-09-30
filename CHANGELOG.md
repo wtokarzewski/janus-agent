@@ -18,8 +18,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Subscription (OAuth) requests identify as `claude-cli/2.1.280` (was 2.1.195), now kept in one constant
 
 ### Fixed
-- Compaction now joins durable memory writes, summarizes budgeted chunks, protects bounded exact identifiers and the current request, and audits the fitted summary before commit. Timeouts and failures keep active history instead of dropping its oldest half (JL-22).
-- Anthropic manual-thinking budgets are shared by preflight and SDK dispatch; optional per-model output caps and correct `budget_tokens` serialization prevent mismatched reservations (JL-21).
 - Summary restoration and snapshot-based compaction preserve new arrivals and previous facts; archives precede replacement, incomplete/length-limited summaries are rejected with one retry, and short prior summaries remain available (JL-01–05).
 - Durable flush cursors survive rotation/restart and acknowledge only successful note writes/checkpoints. Scoped memory indexes and pinned files refresh after changes; steering retains sender/reply/image metadata and fresh reads remain possible (JL-03, JL-06–10).
 - Per-session turn ownership, provider/tool cancellation and deadline cleanup prevent overlapping turns, late continuations and lingering wait timers. Child sessions inherit restrictions, depth, parent IDs and cancellation (JL-13–16).

@@ -4,9 +4,9 @@ import { realpathSync } from 'node:fs';
 import { sleep, withDeadline } from '../utils/abort.js';
 import type { MessageBus } from '../bus/message-bus.js';
 import type { InboundMessage, OutboundMessage, Lane } from '../bus/types.js';
-import type { LLMMessage, ChatRequest, ToolContentBlock, UserContentBlock } from '../llm/types.js';
+import type { LLMMessage, ToolCall, ToolContentBlock, UserContentBlock } from '../llm/types.js';
 import { userContentText } from '../llm/types.js';
-import { summarizeInChunks, conversationGroups, takeConversationChunk } from './compaction-safeguard.js';
+import { validatedSummary } from './summary-validation.js';
 import { toUserMessage, sameSteeringIdentity } from './inbound-message.js';
 import type { ProviderRegistry } from '../llm/provider-registry.js';
 import { isContextLengthError, isNonRetryableClientError } from '../llm/retry.js';
@@ -23,6 +23,7 @@ import { loadPrompt } from '../prompts/loader.js';
 import * as log from '../utils/logger.js';
 import { logTokenUsage } from '../utils/logger.js';
 import { stripControlTokens, redactSecrets, stripOrphanSurrogates, safeSlice } from '../utils/sanitize.js';
+import { localDateWithDay, localTimestamp } from '../utils/date.js';
 import type { AgentResolver, AgentContext } from './agent-resolver.js';
 import type { CronService } from '../services/cron-service.js';
 import { ensureAgentDir } from '../users/user-resolver.js';
@@ -127,15 +128,7 @@ export function filterPinnedReadsFromSummarization(
  * 7. publish outbound
  */
 export class AgentLoop {
-  private requestThinking(): { type: 'enabled'; budgetTokens: number } | undefined {
-    const config = this.deps.config.resolved.thinking;
-    const level = config?.level;
-    if (!(level ? level !== 'off' : config?.enabled)) return undefined;
-    return { type: 'enabled', budgetTokens: level ? (THINKING_LEVEL_BUDGETS[level] ?? 10000) : (config?.budgetTokens ?? 10000) };
-  }
-
   private deps: AgentDeps;
-  private memoryFlushes = new Map<string, Promise<void>>();
   private flushState = new Map<string, { userId?: string; userName?: string; chatId?: string; scope?: InboundMessage['scope']; flushing?: boolean }>();
   private _iterationControllers = new Map<string, AbortController>();
   /** Guard against concurrent summarization (C2) */
@@ -370,16 +363,6 @@ export class AgentLoop {
     }
     const sessionKey = this.deps.bus.sessionKey(msg);
 
-    // Initialize flush state from session metadata (migration-safe)
-    if (!this.flushState.has(sessionKey)) {
-      this.flushState.set(sessionKey, {});
-    }
-    const state = this.flushState.get(sessionKey)!;
-    state.userId = msg.user?.userId;
-    state.userName = msg.user?.name;
-    state.chatId = msg.chatId;
-    state.scope = msg.scope;
-
     // 1. Resolve user profile (if multi-user)
     const userProfile = msg.user?.userId
       ? findUserProfile(msg.user.userId, this.deps.config)
@@ -544,8 +527,19 @@ export class AgentLoop {
     // 6c. Durable memory flush tracking
     const fullSession = await this.deps.sessions.getOrCreate(sessionKey);
 
-    // Count-triggered housekeeping shares its in-flight promise with pre-compaction
-    // and shutdown flushes. Compaction waits for the durable cursor checkpoint.
+    // Initialize flush state from session metadata (migration-safe)
+    if (!this.flushState.has(sessionKey)) {
+      this.flushState.set(sessionKey, {});
+    }
+    const state = this.flushState.get(sessionKey)!;
+    state.userId = msg.user?.userId;
+    state.userName = msg.user?.name;
+    state.chatId = msg.chatId;
+    state.scope = msg.scope;
+
+    // Memory flush trigger — simplified. Was: 5 triggers (count/token/pre-summary/idle/shutdown)
+    // that raced with each other and silently skipped each other. Now: just one count-based
+    // trigger after iterate. Shutdown flush still in flushAllSessions().
     const unflushed = await this.deps.sessions.pendingMemoryCount(sessionKey);
     const freshContext = await buildContext(fullSession.metadata.summary);
     const sessionTokenEstimate = estimateRequestTokens({
@@ -561,7 +555,7 @@ export class AgentLoop {
     // Trigger threshold uses contextWindow (the real LLM budget) rather than the
     // legacy tokenBudget (which was 5x contextWindow and never fired in time).
     const isEphemeralLane = msg.lane === 'heartbeat' || msg.lane === 'cron';
-    const compactBudget = this.deps.llm.getContextBudget({ thinking: this.requestThinking(), contextWindow: this.deps.config.agent.contextWindow, maxTokens: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens }, llmPurpose);
+    const compactBudget = this.deps.llm.getContextBudget({ contextWindow: this.deps.config.agent.contextWindow, maxTokens: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens }, llmPurpose);
     const compactTokenThreshold = compactBudget.effective * 0.5;
     if (iterResult.outcome === 'success' && !isEphemeralLane && (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
         || sessionTokenEstimate > compactTokenThreshold)) {
@@ -827,7 +821,6 @@ export class AgentLoop {
     rebuildContext?: (summary?: string) => Promise<ContextResult>,
     activeInput?: InboundMessage,
   ): Promise<IterateResult> {
-    let latestUserRequest = activeInput ? userContentText(toUserMessage(activeInput).content) : undefined;
     let lastContent = '';
     let totalToolCalls = 0;
     let totalTokens = 0;
@@ -870,7 +863,6 @@ export class AgentLoop {
         });
         for (const s of steering) {
           const steerMsg = toUserMessage(s);
-          latestUserRequest = userContentText(steerMsg.content);
           messages.push(steerMsg);
           // The latest message is what "this message" means from now on (e.g. the react tool's default target)
           if (reqCtx && s.channelMessageId !== undefined) reqCtx.channelMessageId = s.channelMessageId;
@@ -892,7 +884,6 @@ export class AgentLoop {
       // Phase 1 → Phase 2 → Phase 3 → Emergency that was in context-budget.ts.
       // See docs/superpowers/specs/2026-05-16-context-management-redesign.md.
       const budget = this.deps.llm.getContextBudget({
-        thinking: this.requestThinking(),
         contextWindow: this.deps.config.agent.contextWindow,
         maxTokens: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens,
       }, llmPurpose);
@@ -907,7 +898,7 @@ export class AgentLoop {
       } else if (router.route.type === 'compact_only' || router.route.type === 'compact_then_truncate') {
         // Persisted input (including steering and tool results) is already in the tail.
         // Rebuild both provider representations of the prompt with the new summary.
-        await this.triggerCompactionSync(sessionKey, pinnedPaths ?? new Set<string>(), signal, latestUserRequest);
+        await this.triggerCompactionSync(sessionKey, pinnedPaths ?? new Set<string>(), signal);
         signal?.throwIfAborted();
         const reloaded = await this.deps.sessions.getOrCreate(sessionKey);
         if (rebuildContext) {
@@ -936,6 +927,10 @@ export class AgentLoop {
 
       let response;
       const r = this.deps.config.resolved;
+      const thinkingConfig = r.thinking;
+      const thinkingLevel = thinkingConfig?.level;
+      const thinkingEnabled = thinkingLevel ? thinkingLevel !== 'off' : thinkingConfig?.enabled;
+      const thinkingBudget = thinkingLevel ? (THINKING_LEVEL_BUDGETS[thinkingLevel] ?? 10000) : (thinkingConfig?.budgetTokens ?? 10000);
       // Model is empty — ProviderRegistry fills it from the registered entry
       signal?.throwIfAborted();
       const chatRequest = {
@@ -947,7 +942,7 @@ export class AgentLoop {
         temperature: agentCtx?.params?.temperature
           ?? (i > 0 && r.toolTemperature != null ? r.toolTemperature : r.temperature),
         maxTokens: agentCtx?.params?.maxTokens ?? r.maxTokens,
-        thinking: this.requestThinking(),
+        ...(thinkingEnabled ? { thinking: { type: 'enabled' as const, budgetTokens: thinkingBudget } } : {}),
         ...(r.reasoningEffort ? { reasoningEffort: r.reasoningEffort } : {}),
         // Split system prompt for Anthropic prompt caching (static cached, dynamic uncached)
         ...(systemParts ? { systemParts } : {}),
@@ -1247,22 +1242,13 @@ export class AgentLoop {
     return { content: lastContent, iterations: 0, toolCalls: totalToolCalls, totalTokens, outcome: 'success' };
   }
 
-  /** Count, pre-compaction and shutdown callers share one flush owner. */
-  private async flushMemory(sessionKey: string, userId?: string, chatId?: string, signal?: AbortSignal): Promise<void> {
-    const existing = this.memoryFlushes.get(sessionKey);
-    if (existing) return withDeadline(existing, 90_000, 'Memory flush wait timed out', signal);
-    const running = this.doMemoryFlush(sessionKey, userId, chatId, signal);
-    this.memoryFlushes.set(sessionKey, running);
-    try { await running; }
-    finally { if (this.memoryFlushes.get(sessionKey) === running) this.memoryFlushes.delete(sessionKey); }
-  }
-
-  /** Extract key facts into append-only notes; curated MEMORY.md stays read-only. */
-  private async doMemoryFlush(sessionKey: string, userId?: string, chatId?: string, signal?: AbortSignal): Promise<void> {
+  /** Extract key facts from messages and save to daily notes + HISTORY.md + MEMORY.md. */
+  private async flushMemory(sessionKey: string, userId?: string, chatId?: string): Promise<void> {
     if (!this.deps.memory) return;
 
     const state = this.flushState.get(sessionKey);
     if (!state) return;
+    if (state.flushing) return;
     state.flushing = true;
     const memScope = scopeForChat({ scope: state.scope, userId, chatId });
 
@@ -1296,9 +1282,7 @@ export class AgentLoop {
       const flushInputTokens = Math.ceil(flushInputChars / 2.5);
       const flushMaxTokens = Math.min(1024, Math.max(256, Math.floor(flushInputTokens * 0.3)));
 
-      signal?.throwIfAborted();
-      const requestFor = (text: string): ChatRequest => ({
-        signal,
+      const flushResponse = await withDeadline(this.deps.llm.chat({
         model: '',
         messages: [
           { role: 'system', content: `You are a memory manager. Extract and preserve important information from conversation messages.
@@ -1313,64 +1297,43 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
 - Key fact 2
 (Write NONE if nothing worth remembering)
 </facts>` },
-          { role: 'user', content: `New messages to process:\n${text}` },
+          { role: 'user', content: `New messages to process:\n${messagesText}` },
         ],
         temperature: 0.3,
         maxTokens: flushMaxTokens,
-      });
-      const groups = conversationGroups(messagesToFlush, Infinity);
-      let offset = 0;
-      while (offset < groups.length) {
-        signal?.throwIfAborted();
-        const budget = this.deps.llm.getContextBudget({ maxTokens: flushMaxTokens }, 'summarize');
-        const { request, count } = takeConversationChunk(groups, offset, requestFor, budget.effective);
-        const flushResponse = await withDeadline(this.deps.llm.chat(request, 'summarize'), 90_000, 'Memory flush LLM call timed out', signal);
-        signal?.throwIfAborted();
-        if (flushResponse.finishReason !== 'stop' || flushResponse.toolCalls.length || !flushResponse.content.trim()) {
-          throw new Error('Memory flush returned incomplete output');
-        }
+      }, 'summarize'), 90_000, 'Memory flush LLM call timed out');
 
-        log.info(`[${sessionKey}] Memory flush: LLM call done in ${Date.now() - flushStart}ms`);
-        logTokenUsage('flush', flushResponse.usage, flushResponse.provider, flushResponse.model);
+      log.info(`[${sessionKey}] Memory flush: LLM call done in ${Date.now() - flushStart}ms`);
+      logTokenUsage('flush', flushResponse.usage, flushResponse.provider, flushResponse.model);
 
-        const response = flushResponse.content;
-        const summaryMatch = response.match(/<summary>([\s\S]*?)<\/summary>/);
-        const factsMatch = response.match(/<facts>([\s\S]*?)<\/facts>/);
+      const response = flushResponse.content;
+      const summaryMatch = response.match(/<summary>([\s\S]*?)<\/summary>/);
+      const factsMatch = response.match(/<facts>([\s\S]*?)<\/facts>/);
 
-        const summary = summaryMatch?.[1]?.trim() ?? '';
-        const facts = factsMatch?.[1]?.trim() ?? '';
+      const summary = summaryMatch?.[1]?.trim() ?? '';
+      const facts = factsMatch?.[1]?.trim() ?? '';
 
-        // HISTORY.md — append-only safety net (never lost)
-        if (summary && summary !== 'NONE') {
-          signal?.throwIfAborted();
-          await this.deps.memory.appendHistory(`[memory flush] ${summary}`);
-        }
-
-        // Daily notes — for temporal search (FTS5 + vector)
-        if (facts && facts !== 'NONE') {
-          signal?.throwIfAborted();
-          await this.deps.memory.appendDaily(`## Session notes\n${facts}`, memScope);
-        }
-
-        // MEMORY.md is NOT touched here. The agent owns curated long-term memory
-        // and updates it during regular turns/heartbeats via edit_file. Auto-flush
-        // would risk LLM truncation overwriting valid content.
-
-        // Fallback: if XML parsing failed, treat whole response as daily notes
-        if (!summaryMatch && !factsMatch && response.trim() !== 'NONE') {
-          signal?.throwIfAborted();
-          await this.deps.memory.appendDaily(`## Session notes\n${response}`, memScope);
-          signal?.throwIfAborted();
-          await this.deps.memory.appendHistory(`[memory flush] Session notes extracted`);
-        }
-
-        offset += count;
+      // HISTORY.md — append-only safety net (never lost)
+      if (summary && summary !== 'NONE') {
+        await this.deps.memory.appendHistory(`[memory flush] ${summary}`);
       }
 
-      signal?.throwIfAborted();
-      if (!await this.deps.sessions.completeMemoryFlush(sessionKey, snapshot)) {
-        throw new Error('Memory flush snapshot became stale');
+      // Daily notes — for temporal search (FTS5 + vector)
+      if (facts && facts !== 'NONE') {
+        await this.deps.memory.appendDaily(`## Session notes\n${facts}`, memScope);
       }
+
+      // MEMORY.md is NOT touched here. The agent owns curated long-term memory
+      // and updates it during regular turns/heartbeats via edit_file. Auto-flush
+      // would risk LLM truncation overwriting valid content.
+
+      // Fallback: if XML parsing failed, treat whole response as daily notes
+      if (!summaryMatch && !factsMatch && response.trim() !== 'NONE') {
+        await this.deps.memory.appendDaily(`## Session notes\n${response}`, memScope);
+        await this.deps.memory.appendHistory(`[memory flush] Session notes extracted`);
+      }
+
+      await this.deps.sessions.completeMemoryFlush(sessionKey, snapshot);
       log.info(`[${sessionKey}] Memory flush: saved`);
     } finally {
       state.flushing = false;
@@ -1409,7 +1372,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
    * we MUST shrink the session before the LLM call, else it'll fail with
    * context overflow.
    */
-  private async triggerCompactionSync(sessionKey: string, pinnedPaths: Set<string>, signal?: AbortSignal, activeRequest?: string): Promise<void> {
+  private async triggerCompactionSync(sessionKey: string, pinnedPaths: Set<string>, signal?: AbortSignal): Promise<void> {
     // If another summarization is already in progress, wait for it.
     if (this.summarizing.has(sessionKey)) {
       let waited = 0;
@@ -1423,7 +1386,7 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
       return;
     }
     const session = await this.deps.sessions.getOrCreate(sessionKey);
-    await this.triggerSummarization(sessionKey, session.messages, undefined, undefined, undefined, pinnedPaths, signal, activeRequest);
+    await this.triggerSummarization(sessionKey, session.messages, undefined, undefined, undefined, pinnedPaths, signal);
   }
 
   private async triggerSummarization(
@@ -1434,12 +1397,11 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     preTokenEstimate?: number,
     pinnedPaths: Set<string> = new Set(),
     signal?: AbortSignal,
-    activeRequest?: string,
   ): Promise<void> {
     // Double-fire guard (C2)
     this.summarizing.add(sessionKey);
     try {
-      await this.doSummarization(sessionKey, messages, userId, scope, preTokenEstimate, pinnedPaths, signal, activeRequest);
+      await this.doSummarization(sessionKey, messages, userId, scope, preTokenEstimate, pinnedPaths, signal);
     } finally {
       this.summarizing.delete(sessionKey);
     }
@@ -1453,7 +1415,6 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
     _preTokenEstimate?: number,
     pinnedPaths: Set<string> = new Set(),
     signal?: AbortSignal,
-    activeRequest?: string,
   ): Promise<void> {
     log.info(`[${sessionKey}] Summarization: start`);
     const sumStart = Date.now();
@@ -1467,44 +1428,121 @@ Respond in this exact format. Be CONCISE — only write what's worth remembering
       return;
     }
 
-    const fingerprint = createHash('sha256').update(JSON.stringify({ snapshot, activeRequest })).digest('hex');
+    const fingerprint = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
     if (this.rejectedSummaries.get(sessionKey) === fingerprint) return;
 
     // Drop pinned-file reads from summarization input — they live in system prompt
     // and re-load fresh every call.
     const filteredForSummary = filterPinnedReadsFromSummarization(toSummarize, pinnedPaths);
 
-    let summary: string;
-    const controller = new AbortController();
-    const compactionSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-    try {
-      const work = async () => {
-        if (this.deps.memory) {
-          const state = this.flushState.get(sessionKey);
-          if (!state) throw new Error('Compaction has no memory scope; retaining transcript');
-          // Join housekeeping instead of skipping it. A fresh flush then covers
-          // prefix messages appended after the existing flush was captured.
-          await this.flushMemory(sessionKey, state.userId, state.chatId, compactionSignal);
-          if (await this.deps.sessions.pendingMemoryCount(sessionKey) > 0) {
-            await this.flushMemory(sessionKey, state.userId, state.chatId, compactionSignal);
-          }
+    // Pre-compaction flush REMOVED. It used to call flushMemory synchronously
+    // with 3 retries (up to 270s blocking), and it raced with the token-aware
+    // flush trigger via a shared `state.flushing` guard — when both fired
+    // concurrently the second one silently skipped, causing messages to be
+    // compacted without ever being written to MEMORY.md. Flush now runs on its
+    // own schedule (count trigger + shutdown). Compaction does not depend on it.
+
+    // Build conversation text for summarization.
+    // Include tool interactions (truncated) — they carry essential context
+    // that the summarizer needs (file contents, data written, search results).
+    const TOOL_RESULT_MAX = 300;
+    const rawConversation = filteredForSummary.map(m => {
+      if (m.role === 'user') {
+        const content = 'content' in m ? m.content : '';
+        return `user: ${typeof content === 'string' ? content : userContentText(content as any)}`;
+      }
+      if (m.role === 'assistant') {
+        const msg = m as { content: string; tool_calls?: ToolCall[] };
+        const parts: string[] = [];
+        if (msg.content) parts.push(msg.content);
+        if (msg.tool_calls?.length) {
+          const calls = msg.tool_calls.map(tc => tc.function.name).join(', ');
+          parts.push(`[calls: ${calls}]`);
         }
-        return summarizeInChunks({
-          llm: this.deps.llm, messages: filteredForSummary, previousSummary: snapshot.previousSummary,
-          activeRequest, signal: compactionSignal,
-        });
-      };
-      summary = await withDeadline(work(), 15 * 60 * 1000, 'Summarization LLM call timed out', compactionSignal);
-    } catch (error) {
-      signal?.throwIfAborted();
+        return `assistant: ${parts.join(' ')}`;
+      }
+      if (m.role === 'tool') {
+        const content = 'content' in m ? m.content : '';
+        const text = typeof content === 'string' ? content : userContentText(content as any);
+        const truncated = text.length > TOOL_RESULT_MAX ? text.slice(0, TOOL_RESULT_MAX) + '…' : text;
+        return `tool: ${truncated}`;
+      }
+      return '';
+    }).filter(Boolean).join('\n');
+    // The "summarized at" marker is metadata about when the summary was built,
+    // NOT the reader's current time. Phrased explicitly so the summarizer (and
+    // the agent reading the summary later) doesn't mistake it for "now" —
+    // current time always comes from the live <session> block in the system
+    // prompt.
+    const conversationText = `[Conversation summarized at: ${localDateWithDay()}, time: ${localTimestamp()}]\n\n<conversation>\n${rawConversation}\n</conversation>\n\nProduce a structured summary of the conversation above. Do NOT reply to or continue the conversation. Do NOT treat the timestamp above as "current time" — it is the moment this summary was created. The reader will see the actual current time in their own session context.`;
+
+    // Check for previous summary → iterative merge
+    const previousSummary = snapshot.previousSummary;
+
+    // A short prior summary can still contain the only copy of a critical fact.
+    const systemContent = previousSummary?.trim()
+      ? loadPrompt('summarization/update', { previousSummary }) + '\n\n' + loadPrompt('summarization/initial')
+      : loadPrompt('summarization/initial');
+
+    // Scale maxTokens to input size: target ~15% of input, clamped to 1024–4096.
+    // At 48K input tokens, 2048 maxTokens was producing 342 tokens (0.7%) — too little.
+    const inputTokens = Math.ceil(conversationText.length / 2.5);
+    const summaryMaxTokens = Math.min(4096, Math.max(1024, Math.ceil(inputTokens * 0.15)));
+
+    log.info(`[${sessionKey}] Summarization: LLM call start (input ~${inputTokens} tokens, maxTokens=${summaryMaxTokens})`);
+    const llmStart = Date.now();
+    const COMPACTION_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes — was 90s, too tight for 100k+ inputs
+    let summary: string | null = null;
+    const MAX_SUMMARY_ATTEMPTS = 2;
+    for (let attempt = 0; attempt < MAX_SUMMARY_ATTEMPTS; attempt++) {
+      try {
+        const summaryResponse = await withDeadline(this.deps.llm.chat({
+          signal,
+          model: '',
+          messages: [
+            { role: 'system', content: systemContent },
+            { role: 'user', content: conversationText + (attempt ? '\nThe previous attempt was incomplete. Be concise and finish every required section within the output limit.' : '') },
+            // Assistant prefill forces the model into the template format from the first token,
+            // preventing it from echoing the conversation or emitting chain-of-thought.
+            { role: 'assistant', content: '## Goal\n' },
+          ],
+          temperature: 0.3,
+          maxTokens: summaryMaxTokens,
+        }, 'summarize'), COMPACTION_TIMEOUT_MS, 'Summarization LLM call timed out', signal);
+        signal?.throwIfAborted();
+        logTokenUsage('summarize', summaryResponse.usage, summaryResponse.provider, summaryResponse.model);
+        summary = validatedSummary(summaryResponse);
+        if (summary) break;
+        log.warn(`[${sessionKey}] Rejecting incomplete summary (attempt ${attempt + 1}/${MAX_SUMMARY_ATTEMPTS})`);
+      } catch (err) {
+        signal?.throwIfAborted();
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt > 0) {
+          this.rejectedSummaries.set(sessionKey, fingerprint);
+          log.warn(`[${sessionKey}] Summary retry failed; retaining prior state: ${msg}`);
+          return;
+        }
+        if (/timed out/i.test(msg)) {
+          log.error(`[${sessionKey}] Compaction timed out after ${COMPACTION_TIMEOUT_MS}ms. Falling back to force-drop oldest 50%.`);
+          await this.deps.sessions.forceDropOldest(sessionKey, 0.5, snapshot);
+          return;
+        }
+        throw err;
+      }
+    }
+    log.info(`[${sessionKey}] Summarization: LLM call done in ${Date.now() - llmStart}ms`);
+    if (!summary) {
       this.rejectedSummaries.set(sessionKey, fingerprint);
-      log.warn(`[${sessionKey}] Compaction cancelled; retaining prior history: ${error instanceof Error ? error.message : String(error)}`);
       return;
-    } finally {
-      controller.abort();
     }
     this.rejectedSummaries.delete(sessionKey);
+
+    // Debug: log first 200 chars of summary + conversation text size to diagnose short output
     log.info(`[${sessionKey}] Summarization: output preview (${summary.length} chars): ${summary.slice(0, 200).replace(/\n/g, '\\n')}`);
+    log.info(`[${sessionKey}] Summarization: conversation text ${conversationText.length} chars, system prompt ${systemContent.length} chars`);
+
+    const summaryTokens = Math.ceil(summary.length / 2.5);
+    log.info(`[${sessionKey}] Summarization: ${summaryTokens} tokens (${Math.round(summaryTokens / inputTokens * 100)}% of input)`);
 
     signal?.throwIfAborted();
     const committed = await this.deps.sessions.summarize(sessionKey, summary, keepRecentTokens, snapshot);

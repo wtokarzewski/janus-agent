@@ -136,9 +136,7 @@ describe('Token counting and emergency compression', () => {
     try {
       expect(await agent.processDirect('check summarization', { channel: 'cli', chatId: 'token-sum-test' })).toBe('Response');
       await vi.waitFor(async () => {
-        const saved = (await sessions.getOrCreate(sessionKey)).metadata.summary!;
-        for (const line of mockSummary.split('\n').filter(Boolean)) expect(saved).toContain(line);
-        if (mode === 'pre-call') expect(saved).toContain('Latest user request context: "check summarization"');
+        expect((await sessions.getOrCreate(sessionKey)).metadata.summary).toContain(mockSummary);
       });
       expect(mock.calls).toHaveLength(2);
       expect(await sessions.getHistory(sessionKey)).toContainEqual({ role: 'user', content: 'retained tail' });
@@ -148,5 +146,10 @@ describe('Token counting and emergency compression', () => {
     }
   });
 
-  // Pre-compaction flush ordering and failures are covered by compaction-safeguard.test.ts.
+  // Removed: 'should flush memory before summarization when MemoryStore is available'.
+  // Pre-compaction flush (inside doSummarization) was removed. Compaction and
+  // memory flush are now independent paths — flush has its own count-based
+  // trigger (>=20 unflushed messages) plus a shutdown trigger; it does NOT
+  // run synchronously inside summarization. See spec at
+  // docs/superpowers/specs/2026-05-16-context-management-redesign.md.
 });

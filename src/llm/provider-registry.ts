@@ -5,8 +5,6 @@ import type { ProviderCircuitBreaker } from './circuit-breaker.js';
 import { stripOrphanSurrogates } from '../utils/sanitize.js';
 import * as log from '../utils/logger.js';
 
-type BudgetRequest = Partial<Pick<ChatRequest, 'model' | 'maxTokens' | 'contextWindow' | 'thinking'>>;
-
 /**
  * Defense-in-depth: strip orphan UTF-16 surrogates from all message content
  * before any provider sees it. A split surrogate pair (e.g. an emoji cut by
@@ -116,27 +114,19 @@ export class ProviderRegistry implements LLMProvider {
     return [...this.entries];
   }
 
-  getContextBudget(request: BudgetRequest, purpose?: string): ContextBudget {
+  getContextBudget(request: { model?: string; maxTokens?: number; contextWindow?: number }, purpose?: string): ContextBudget {
     return this.candidateBudget(this.getCandidates(purpose)[0], request);
   }
 
-  private candidateBudget(entry: ProviderEntry | undefined, request: BudgetRequest): ContextBudget {
+  private candidateBudget(entry: ProviderEntry | undefined, request: { model?: string; maxTokens?: number; contextWindow?: number }): ContextBudget {
     const model = request.model || entry?.model || '';
     const window = entry?.contextWindows?.[model] ?? resolveBudget({}).contextWindow;
     const cap = request.contextWindow ?? this.budgetDefaults.contextWindow;
     return resolveBudget({
       modelContextWindow: window,
       ...(cap && cap < window ? { configOverride: cap } : {}),
-      reservedForOutput: entry?.provider.getOutputTokenLimit?.(this.outputOptions(entry, request))
-        ?? this.outputOptions(entry, request).maxTokens,
+      reservedForOutput: request.maxTokens ?? this.budgetDefaults.maxTokens ?? 4096,
     });
-  }
-
-  private outputOptions(entry: ProviderEntry | undefined, request: BudgetRequest) {
-    const model = request.model || entry?.model || '';
-    const modelMaxTokens = entry?.outputLimits?.[model];
-    const maxTokens = Math.min(request.maxTokens ?? this.budgetDefaults.maxTokens ?? 4096, modelMaxTokens ?? Infinity);
-    return { model, maxTokens, modelMaxTokens, thinking: request.thinking };
   }
 
   /**
@@ -162,7 +152,7 @@ export class ProviderRegistry implements LLMProvider {
         continue; // Local budget mismatch does not demote a healthy provider.
       }
       try {
-        const req = { ...request, ...this.outputOptions(entry, request), messages };
+        const req = { ...request, messages, model: request.model || entry.model, maxTokens: budget.reservedForOutput };
         log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} request`);
         const result = await entry.provider.chat(req);
         request.signal?.throwIfAborted();
@@ -207,7 +197,7 @@ export class ProviderRegistry implements LLMProvider {
         continue; // Local budget mismatch does not demote a healthy provider.
       }
       try {
-        const req = { ...request, ...this.outputOptions(entry, request), messages };
+        const req = { ...request, messages, model: request.model || entry.model, maxTokens: budget.reservedForOutput };
         log.debug(`Provider "${entry.name}" (${entry.model}): attempting ${purpose ?? 'chat'} stream request`);
 
         if (entry.provider.chatStream) {
