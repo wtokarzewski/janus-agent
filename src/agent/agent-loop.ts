@@ -128,6 +128,13 @@ export function filterPinnedReadsFromSummarization(
  * 7. publish outbound
  */
 export class AgentLoop {
+  private thinkingForRequest() {
+    const config = this.deps.config.resolved.thinking;
+    if (!config || !(config.level ? config.level !== 'off' : config.enabled)) return undefined;
+    const budgetTokens = config.level ? THINKING_LEVEL_BUDGETS[config.level] ?? 10_000 : config.budgetTokens ?? 10_000;
+    return { type: 'enabled' as const, budgetTokens };
+  }
+
   private deps: AgentDeps;
   private flushState = new Map<string, { userId?: string; userName?: string; chatId?: string; scope?: InboundMessage['scope']; flushing?: boolean }>();
   private _iterationControllers = new Map<string, AbortController>();
@@ -555,7 +562,7 @@ export class AgentLoop {
     // Trigger threshold uses contextWindow (the real LLM budget) rather than the
     // legacy tokenBudget (which was 5x contextWindow and never fired in time).
     const isEphemeralLane = msg.lane === 'heartbeat' || msg.lane === 'cron';
-    const compactBudget = this.deps.llm.getContextBudget({ contextWindow: this.deps.config.agent.contextWindow, maxTokens: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens }, llmPurpose);
+    const compactBudget = this.deps.llm.getContextBudget({ contextWindow: this.deps.config.agent.contextWindow, maxTokens: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens, thinking: this.thinkingForRequest() }, llmPurpose);
     const compactTokenThreshold = compactBudget.effective * 0.5;
     if (iterResult.outcome === 'success' && !isEphemeralLane && (fullSession.messages.length > this.deps.config.agent.summarizationThreshold
         || sessionTokenEstimate > compactTokenThreshold)) {
@@ -886,6 +893,7 @@ export class AgentLoop {
       const budget = this.deps.llm.getContextBudget({
         contextWindow: this.deps.config.agent.contextWindow,
         maxTokens: agentCtx?.params?.maxTokens ?? this.deps.config.resolved.maxTokens,
+        thinking: this.thinkingForRequest(),
       }, llmPurpose);
       const transformSettings = resolveTransformSettings(this.deps.config.agent.context);
       const systemPromptText = typeof messages[0].content === 'string' ? messages[0].content : '';
@@ -927,10 +935,6 @@ export class AgentLoop {
 
       let response;
       const r = this.deps.config.resolved;
-      const thinkingConfig = r.thinking;
-      const thinkingLevel = thinkingConfig?.level;
-      const thinkingEnabled = thinkingLevel ? thinkingLevel !== 'off' : thinkingConfig?.enabled;
-      const thinkingBudget = thinkingLevel ? (THINKING_LEVEL_BUDGETS[thinkingLevel] ?? 10000) : (thinkingConfig?.budgetTokens ?? 10000);
       // Model is empty — ProviderRegistry fills it from the registered entry
       signal?.throwIfAborted();
       const chatRequest = {
@@ -942,7 +946,7 @@ export class AgentLoop {
         temperature: agentCtx?.params?.temperature
           ?? (i > 0 && r.toolTemperature != null ? r.toolTemperature : r.temperature),
         maxTokens: agentCtx?.params?.maxTokens ?? r.maxTokens,
-        ...(thinkingEnabled ? { thinking: { type: 'enabled' as const, budgetTokens: thinkingBudget } } : {}),
+        thinking: this.thinkingForRequest(),
         ...(r.reasoningEffort ? { reasoningEffort: r.reasoningEffort } : {}),
         // Split system prompt for Anthropic prompt caching (static cached, dynamic uncached)
         ...(systemParts ? { systemParts } : {}),

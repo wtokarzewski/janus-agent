@@ -15,6 +15,7 @@
       }
     },
     "contextWindows": {},
+    "maxOutputTokens": {},
     "maxTokens": 4096,
     "temperature": 0.7,
     "toolTemperature": 0.3,
