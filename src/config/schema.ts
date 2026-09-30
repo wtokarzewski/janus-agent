@@ -69,6 +69,9 @@ const LLMSchema = z.object({
   /** Explicit provider -> model -> context tokens. Unknown models use 200k. */
   contextWindows: z.record(z.string(), z.record(z.string(), z.number().int().positive())).optional(),
 
+  /** Explicit provider -> model -> maximum output tokens, including thinking. */
+  outputLimits: z.record(z.string(), z.record(z.string(), z.number().int().positive())).optional(),
+
   // Shared LLM settings (format-independent)
   maxTokens: z.number().default(4096),
   temperature: z.number().default(0.3),

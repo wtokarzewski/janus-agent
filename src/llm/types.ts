@@ -52,7 +52,10 @@ export interface ChatRequest {
   tools?: ToolDefinition[];
   toolChoice?: 'auto' | 'none' | 'required';
   temperature?: number;
+  /** Visible-output allowance; a provider may add a separate thinking budget. */
   maxTokens?: number;
+  /** Verified model output cap supplied by the registry, if configured. */
+  modelMaxTokens?: number;
   thinking?: { type: 'enabled'; budgetTokens: number };
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   /** Split system prompt for Anthropic prompt caching: static part (cached) + dynamic part (uncached). */
@@ -82,6 +85,7 @@ export interface TokenUsage {
 export type StreamCallback = (chunk: string) => void;
 
 export interface LLMProvider {
+  getOutputTokenLimit?(request: Pick<ChatRequest, 'model' | 'maxTokens' | 'modelMaxTokens' | 'thinking'>): number;
   chat(request: ChatRequest): Promise<ChatResponse>;
   chatStream?(request: ChatRequest, onChunk: StreamCallback): Promise<ChatResponse>;
 }
@@ -97,6 +101,7 @@ export interface ProviderEntry {
   provider: LLMProvider;
   /** Explicit windows indexed by the actual model ID. */
   contextWindows?: Record<string, number>;
+  outputLimits?: Record<string, number>;
   model: string;
   purpose: string[];
   priority: number;
