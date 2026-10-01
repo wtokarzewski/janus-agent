@@ -50,6 +50,83 @@ function Get-JanusTask([string]$Name) {
     if (-not $matchesRepo) { throw "Task '$Name' does not have this repository as its working directory. No process was stopped." }
     return $candidate
 }
+function Initialize-ProcessStop {
+    if ('JanusVoiceProcessTree' -as [type]) { return }
+    # Tool Help enumerates parent/child relationships without WMI or taskkill.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class JanusVoiceProcessTree {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct Entry {
+        public uint size, usage, id;
+        public UIntPtr heap;
+        public uint module, threads, parent;
+        public int priority;
+        public uint flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string name;
+    }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern SafeFileHandle CreateToolhelp32Snapshot(uint flags, uint id);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool Process32FirstW(SafeFileHandle snapshot, ref Entry entry);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool Process32NextW(SafeFileHandle snapshot, ref Entry entry);
+    public static void Stop(int rootId, long lockTime) {
+        var targets = new List<Process>();
+        try {
+            Process root;
+            try { root = Process.GetProcessById(rootId); }
+            catch (ArgumentException) { return; }
+            targets.Add(root);
+            // Retain handles so PID reuse cannot redirect termination to another process.
+            IntPtr rootHandle = root.Handle;
+            if (!String.Equals(root.ProcessName, "node", StringComparison.OrdinalIgnoreCase)
+                || root.StartTime.ToUniversalTime().Ticks > lockTime)
+                throw new InvalidOperationException("Gateway PID identity changed; no process was stopped.");
+            var entries = new List<Entry>();
+            using (var snapshot = CreateToolhelp32Snapshot(2, 0)) {
+                if (snapshot.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                var entry = new Entry { size = (uint)Marshal.SizeOf(typeof(Entry)) };
+                bool found = Process32FirstW(snapshot, ref entry);
+                while (found) { entries.Add(entry); found = Process32NextW(snapshot, ref entry); }
+                int error = Marshal.GetLastWin32Error();
+                if (error != 18) throw new Win32Exception(error);
+            }
+            var seen = new HashSet<int> { rootId };
+            for (int i = 0; i < targets.Count; i++) {
+                var parent = targets[i];
+                foreach (var entry in entries) {
+                    if (entry.parent != parent.Id || !seen.Add((int)entry.id)) continue;
+                    Process child = null;
+                    try {
+                        child = Process.GetProcessById((int)entry.id);
+                        IntPtr handle = child.Handle;
+                        if (child.StartTime.ToUniversalTime() >= parent.StartTime.ToUniversalTime()) {
+                            targets.Add(child); child = null;
+                        }
+                    } catch (ArgumentException) { /* Already exited. */ }
+                    catch (InvalidOperationException) { /* Already exited. */ }
+                    finally { if (child != null) child.Dispose(); }
+                }
+            }
+            // Stop the gateway first so it cannot launch more workers during cleanup.
+            foreach (var target in targets) {
+                if (target.HasExited) continue;
+                try { target.Kill(); }
+                catch (InvalidOperationException) { if (!target.HasExited) throw; }
+            }
+            foreach (var target in targets)
+                if (!target.WaitForExit(15000)) throw new TimeoutException("Gateway worker did not stop.");
+        } finally { foreach (var target in targets) target.Dispose(); }
+    }
+}
+'@
+}
 function Stop-Janus {
     $infoJson = Invoke-Checked 'node' @($helper, 'inspect', $RepositoryPath)
     $info = $infoJson | ConvertFrom-Json
@@ -63,12 +140,12 @@ function Stop-Janus {
         throw 'Gateway PID file does not identify an existing Janus Node process safely.'
     }
     Write-Host 'Stopping the current Janus gateway for installation...'
-    Invoke-Checked 'taskkill.exe' @('/PID', [string]$gateway.Id, '/T', '/F')
-    $gateway.WaitForExit(15000) | Out-Null
-    if (-not $gateway.HasExited) { throw 'Gateway did not stop.' }
+    Initialize-ProcessStop
+    [JanusVoiceProcessTree]::Stop($gateway.Id, $pidFile.LastWriteTimeUtc.Ticks)
     # Do not delete the lock: the gateway handles stale PID files itself.
 }
 function Restore-Trial {
+    if ($script:task) { $script:task.Enabled = $false }
     Stop-Janus
     Invoke-Checked 'node' @($helper, 'restore', $RepositoryPath, $stateDirectory)
     $current = (Invoke-Checked 'git' @('rev-parse', 'HEAD') | Out-String).Trim()
@@ -116,7 +193,13 @@ try {
         return
     }
     if ($state -and $state.phase -ne 'restored') {
-        if ($state.phase -ne 'ready') { throw "An interrupted installation exists. Run: powershell -ExecutionPolicy Bypass -File `"$recoveryScript`" -RepositoryPath `"$RepositoryPath`" -Restore" }
+        if ($state.phase -ne 'ready') {
+            Write-Host 'Recovering the interrupted installation before retrying...'
+            $task = Get-JanusTask $state.taskName
+            Restore-Trial
+        }
+    }
+    if ($state -and $state.phase -eq 'ready') {
         if ((Invoke-Checked 'git' @('branch', '--show-current') | Out-String).Trim() -ne $branch) { throw 'Existing trial is on a different branch. Restore it first.' }
         $task = Get-JanusTask $state.taskName
         if ($task) { $task.Enabled = $false }

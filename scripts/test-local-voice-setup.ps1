@@ -10,12 +10,20 @@ $bootstrap = Join-Path $root 'setup.ps1'
 $taskName = 'Janus setup test ' + [guid]::NewGuid().ToString('N')
 $utf8 = New-Object Text.UTF8Encoding($false)
 New-Item -ItemType Directory -Path $repo -Force | Out-Null
-Copy-Item (Join-Path $source 'setup-local-voice.ps1') $bootstrap
+$bootstrapText = [IO.File]::ReadAllText((Join-Path $source 'setup-local-voice.ps1'))
+$guards = @'
+function taskkill.exe { throw 'taskkill is unavailable on this test machine' }
+function Get-CimInstance { throw 'WMI is unavailable on this test machine' }
+function Get-WmiObject { throw 'WMI is unavailable on this test machine' }
+'@
+[IO.File]::WriteAllText($bootstrap, $bootstrapText.Replace("`$ErrorActionPreference = 'Stop'", ("`$ErrorActionPreference = 'Stop'`n" + $guards)), $utf8)
 $hash = [Security.Cryptography.SHA256]::Create()
 try { $key = [BitConverter]::ToString($hash.ComputeHash($utf8.GetBytes($repo.ToLowerInvariant()))).Replace('-', '').Substring(0, 16) }
 finally { $hash.Dispose() }
 $stateDirectory = Join-Path $env:LOCALAPPDATA "Janus\voice-setup\$key"
 $gateway = $null
+$worker = $null
+$unrelated = $null
 $folder = $null
 function Run([string]$Command, [string[]]$Arguments) {
     & $Command @Arguments
@@ -73,14 +81,33 @@ try {
     # A real Node process identified only through the application's PID file.
     New-Item -ItemType Directory (Join-Path $repo '.janus') | Out-Null
     $gatewayScript = Join-Path $root 'gateway.cjs'
-    [IO.File]::WriteAllText($gatewayScript, 'require("fs").writeFileSync(process.argv[2],String(process.pid)); setInterval(()=>{},1000);', $utf8)
+    [IO.File]::WriteAllText($gatewayScript, 'const fs=require("fs"); const child=require("child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"}); fs.writeFileSync(process.argv[3],String(child.pid)); fs.writeFileSync(process.argv[2],String(process.pid)); setInterval(()=>{},1000);', $utf8)
     $lockPath = Join-Path $repo '.janus\gateway.pid'
-    $gateway = Start-Process node -ArgumentList "`"$gatewayScript`" `"$lockPath`"" -PassThru -WindowStyle Hidden
+    $workerFile = Join-Path $root 'worker.pid'
+    $gateway = Start-Process node -ArgumentList "`"$gatewayScript`" `"$lockPath`" `"$workerFile`"" -PassThru -WindowStyle Hidden
     for ($i=0; $i -lt 50 -and -not (Test-Path $lockPath); $i++) { Start-Sleep -Milliseconds 100 }
     Assert (Test-Path $lockPath) 'Fixture gateway did not start'
+    $worker = Get-Process -Id ([int](Get-Content $workerFile -Raw))
+    $unrelatedScript = Join-Path $root 'unrelated.cjs'
+    [IO.File]::WriteAllText($unrelatedScript, 'setInterval(()=>{},1000);', $utf8)
+    $unrelated = Start-Process node -ArgumentList "`"$unrelatedScript`"" -PassThru -WindowStyle Hidden
+    # Reproduce the old taskkill failure: task disabled, gateway alive, saved state.
+    New-Item -ItemType Directory -Path $stateDirectory -Force | Out-Null
+    Copy-Item (Join-Path $source 'local-voice-config.mjs') $stateDirectory
+    [IO.File]::WriteAllText((Join-Path $stateDirectory 'setup-local-voice.ps1'), "throw 'Old recovery must not execute'", $utf8)
+    $interrupted = @{
+        originalBranch = 'main'; originalCommit = ((Run 'git' @('rev-parse', 'HEAD')) | Out-String).Trim()
+        taskName = $taskName; taskEnabled = $true; dependenciesTouched = $false; phase = 'installing'
+    }
+    [IO.File]::WriteAllText((Join-Path $stateDirectory 'setup.json'), ($interrupted | ConvertTo-Json), $utf8)
+    $folder.GetTask($taskName).Enabled = $false
     Setup
     $gateway.Refresh()
     Assert $gateway.HasExited 'Original gateway is still running'
+    $worker.Refresh()
+    Assert $worker.HasExited 'Gateway worker survived termination'
+    $unrelated.Refresh()
+    Assert (-not $unrelated.HasExited) 'Unrelated Node process was killed'
     Assert (-not $folder.GetTask($taskName).Enabled) 'Supervisor was not disabled'
     Assert (((Run 'git' @('branch', '--show-current')) | Out-String).Trim() -eq 'feature/local-voice') 'Wrong branch'
     $config = Get-Content janus.json -Raw | ConvertFrom-Json
@@ -106,9 +133,11 @@ try {
     Setup -ExpectFailure
     Assert $folder.GetTask($taskName).Enabled 'Dirty checkout changed supervisor'
     Assert ((Get-Content (Join-Path $repo 'check.cjs') -Raw).Contains('// local change')) 'Local change was overwritten'
-    Write-Host 'Installer, repeat install, rollback, failure recovery and dirty checkout checks passed.'
+    Write-Host 'Interrupted-install recovery without taskkill/WMI, process-tree isolation, installer, repeat install, rollback and dirty checkout checks passed.'
 } finally {
-    if ($gateway -and -not $gateway.HasExited) { Stop-Process -Id $gateway.Id -Force -ErrorAction SilentlyContinue }
+    foreach ($process in @($gateway, $worker, $unrelated)) {
+        if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+    }
     if ($folder) { try { $folder.DeleteTask($taskName, 0) } catch {} }
     Pop-Location
     Remove-Item -LiteralPath $root -Recurse -Force

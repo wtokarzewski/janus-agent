@@ -31,6 +31,10 @@ send a Polish voice message in Telegram. No manual JSON edits are needed.
 
 Recovery files are kept under `%LOCALAPPDATA%\Janus\voice-setup\<checkout-id>`.
 A repeated successful installation reuses the tools and retains the first backup.
+Rerunning after an interrupted installation first restores its saved state, then
+retries setup. Gateway/worker termination uses native process handles and a
+[Windows process snapshot](https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot),
+without `taskkill` or WMI.
 Use `-RepositoryPath 'D:\janus-agent'` for another checkout, `-ToolsDirectory` for
 another tool location, `-TaskName` for another root-level scheduled task, or
 `-NoStart` to configure without starting the gateway. Scheduled tasks must have
