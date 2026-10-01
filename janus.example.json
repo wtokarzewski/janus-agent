@@ -112,7 +112,17 @@
     "provider": "groq",
     "apiKey": "gsk_...",
     "language": "en",
-    "maxDurationSec": 300
+    "maxDurationSec": 300,
+    "maxFileSizeMb": 20,
+    "local": {
+      "executablePath": "",
+      "converterPath": "",
+      "modelPath": "",
+      "threads": 2,
+      "timeoutMs": 120000,
+      "maxQueuedJobs": 4,
+      "maxQueueWaitMs": 120000
+    }
   },
 
   "vision": {

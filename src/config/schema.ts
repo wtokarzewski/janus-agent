@@ -255,12 +255,24 @@ const MemorySchema = z.object({
   recentDays: z.number().default(3),
 });
 
+const LocalVoiceSchema = z.object({
+  executablePath: z.string().default(''),
+  converterPath: z.string().default(''),
+  modelPath: z.string().default(''),
+  threads: z.number().int().min(1).max(16).default(2),
+  timeoutMs: z.number().int().min(1000).max(600_000).default(120_000),
+  maxQueuedJobs: z.number().int().min(1).max(20).default(4),
+  maxQueueWaitMs: z.number().int().min(1000).max(600_000).default(120_000),
+});
+
 const VoiceSchema = z.object({
   enabled: z.boolean().default(false),
-  provider: z.enum(['groq']).default('groq'),
+  provider: z.enum(['groq', 'local']).default('groq'),
   apiKey: z.string().optional(),
   language: z.string().optional(),
-  maxDurationSec: z.number().default(300),
+  maxDurationSec: z.number().int().min(1).max(3600).default(300),
+  maxFileSizeMb: z.number().int().min(1).max(100).default(20),
+  local: LocalVoiceSchema.optional().transform(v => LocalVoiceSchema.parse(v ?? {})),
 });
 
 const VisionSchema = z.object({

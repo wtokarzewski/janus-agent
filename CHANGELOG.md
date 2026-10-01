@@ -8,6 +8,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Optional local CPU transcription for Telegram voice/audio, bounded processing and queueing, cancellation, Windows installer and offline `voice-check` diagnostics (VOICE-01).
 - Conversation continuity regression scenarios spanning repeated compaction, corrections, restart, provider failover, pinned edits/sums, image steering, concurrent users and cancellation (JL-18); behavioral retry/flush tests replace source-string assertions (JL-19).
 - **Telegram reactions** — a reaction now reaches the agent with the message it refers to (`[Reaction 👍 to your message: "…"]`; in groups, a reaction to someone else's message names its author), routed to the right forum topic; new `react` tool lets Janus answer with an emoji alone. Groups deliver reactions only when the bot is an admin.
 - **New models** — Opus 5.5 and Fable 5.1 (`opus`/`fable` aliases now point at them, pins `opus-5-5`/`fable-5-1`); the GPT-6 family replaces GPT-5.6 in the Codex menu and fallback list, with Sol as the default (Astra flagship, Luna cheapest). `@openai/codex-sdk` 0.104 → 0.155, since GPT-6 Astra needs Codex CLI 0.153+

@@ -1,6 +1,7 @@
 # VOICE-01: Local voice transcription
 
-Status: implementation plan only. The feature is not implemented on this branch yet.
+Status: implemented on the feature branch; automated verification in progress.
+Owner acceptance on the target Windows laptop remains pending. See [setup and trial](../../LOCAL-VOICE.md).
 
 Branch: `feature/local-voice`, based on main `f6d55539d845aea0c72def35d5d49302dd0730a9`.
 Keep the implementation on this branch and its draft PR until the owner tests it
@@ -122,19 +123,19 @@ and audio duration without recording speech content.
 
 ## Implementation sequence
 
-- [ ] **V1 — contracts and regression tests:** extend schema/example config;
+- [x] **V1 — contracts and regression tests:** extend schema/example config;
   define a small provider-neutral input/result contract and cancellation;
   retain the existing remote helper behavior. Test local-without-key and legacy
   defaults first. Add tests reproducing silent failures and incorrect MIME.
-- [ ] **V2 — local execution:** add `src/channels/local-voice-transcribe.ts` and
+- [x] **V2 — local execution:** add `src/channels/local-voice-transcribe.ts` and
   a small process helper if needed. Implement bounded conversion/inference,
   fixed temporary paths, readiness validation, cleanup and cancellation.
   Keep engine/model installation separate from npm dependencies.
-- [ ] **V3 — queue and channel wiring:** add a focused voice service/queue,
+- [x] **V3 — queue and channel wiring:** add a focused voice service/queue,
   integrate provider selection into Telegram, preserve sender/topic/steering
   semantics, handle `/stop` and channel shutdown. Reuse the existing bus rather
   than introducing a second agent processing loop.
-- [ ] **V4 — verification and operator tools:** provide an offline diagnostic
+- [x] **V4 — verification and operator tools:** provide an offline diagnostic
   command accepting a synthetic recording, reporting readiness/timings and
   comparing its transcript. Add Windows tests for the voice subset, separate
   from the required Ubuntu job, without weakening existing CI.
@@ -172,7 +173,8 @@ rather than requiring identical punctuation across CPU implementations.
 
 ## Windows branch trial and rollback
 
-These are future handoff steps; the branch initially contains this plan only.
+The executable handoff instructions are in `docs/LOCAL-VOICE.md`. The steps below
+record the intended trial and rollback procedure.
 
 1. Record `git status`, current branch and SHA. Stop the actual gateway supervisor
    and its restart mechanism before switching. The documented Scheduled Task is

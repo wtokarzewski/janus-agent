@@ -167,6 +167,17 @@ program
   });
 
 program
+  .command('voice-check')
+  .description('Check local transcription files and optionally test an audio recording offline')
+  .option('--audio <path>', 'Local audio file to transcribe')
+  .option('--expect <text>', 'Expected phrase (ignoring case and punctuation)')
+  .option('--show-text', 'Print the transcript explicitly')
+  .action(async (opts: { audio?: string; expect?: string; showText?: boolean }) => {
+    const { runVoiceCheck } = await import('./commands/voice-check.js');
+    await runVoiceCheck(opts);
+  });
+
+program
   .command('doctor')
   .description('Verify Janus installation and data integrity')
   .action(async () => {

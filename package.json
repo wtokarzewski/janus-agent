@@ -1,7 +1,7 @@
 {
   "name": "janus-agent",
   "version": "0.15.0",
-  "description": "Universal AI agent — autonomous digital worker for any domain",
+  "description": "Universal AI agent \u2014 autonomous digital worker for any domain",
   "license": "MIT",
   "author": "Wojciech Tokarzewski",
   "homepage": "https://github.com/wtokarzewski/janus-agent",
@@ -26,7 +26,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc",
+    "test:voice": "vitest run --no-file-parallelism tests/unit/local-voice.test.ts tests/unit/local-voice-execution.test.ts tests/unit/voice-process.test.ts tests/unit/voice-queue.test.ts tests/unit/voice-download.test.ts tests/unit/telegram-voice.test.ts tests/unit/voice-transcribe.test.ts"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
