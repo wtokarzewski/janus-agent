@@ -5,6 +5,57 @@ verified recognition quality and latency on the target laptop. Local recognition
 needs no API key. Telegram still delivers the recording, and the transcript goes
 to Janus's configured conversation model. Voice replies are a separate TTS option.
 
+## One-command setup (recommended)
+
+Use PowerShell on the laptop, under the same Windows account that runs Janus.
+The existing checkout defaults to `C:\janus-agent`. Git and Node.js 22 or newer
+must already be installed. Paste this block once:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$setup = Join-Path $env:TEMP 'janus-voice-setup.ps1'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/wtokarzewski/janus-agent/feature/local-voice/scripts/setup-local-voice.ps1' -OutFile $setup
+powershell -NoProfile -ExecutionPolicy Bypass -File $setup
+```
+
+The script fetches `feature/local-voice`, downloads and checks the tools, disables
+the standard `Janus Gateway` scheduled task if present, and stops the gateway
+identified by its PID file (including its child processes). An interrupted turn
+must be sent again. It switches branches without discarding local changes, runs
+`npm ci`, typecheck and voice tests, saves the original config, merges the voice
+settings, and runs `voice-check`. It disables both automatic update registration
+and existing `self_update:check` database jobs for the trial. Other jobs and settings
+are retained. Finally it starts Janus in this PowerShell window: keep it open and
+send a Polish voice message in Telegram. No manual JSON edits are needed.
+
+Recovery files are kept under `%LOCALAPPDATA%\Janus\voice-setup\<checkout-id>`.
+A repeated successful installation reuses the tools and retains the first backup.
+Use `-RepositoryPath 'D:\janus-agent'` for another checkout, `-ToolsDirectory` for
+another tool location, `-TaskName` for another root-level scheduled task, or
+`-NoStart` to configure without starting the gateway. Scheduled tasks must have
+the checkout as their working directory. Task handling uses COM, not WMI.
+Other supervisors (services, external watchdogs) must be stopped separately.
+
+To undo the trial, run the same downloaded script with `-Restore`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\janus-voice-setup.ps1" -Restore
+```
+
+The installer also prints a permanent recovery command using its cached copy.
+Rollback restores the original branch, voice settings, update flag and saved
+update-job states, reinstalls dependencies, then starts the previous gateway
+through its original task when applicable. Unrelated configuration edits and
+conversation data are preserved. Downloaded tools remain available.
+Installation errors trigger configuration/branch recovery; the error output says
+if recovery itself needs another attempt. A dirty checkout or invalid JSON stops
+installation without overwriting those files. Backups contain configuration
+secrets: keep them private like the original `janus.json`.
+
+The following sections describe the individual operations for manual setup and
+diagnostics; they are not additional steps after the one-command setup.
+
 ## Switch to the feature branch
 
 Stop the running gateway and its automatic restart mechanism first. If using the
@@ -142,7 +193,15 @@ Windows CI runs on a different machine; its timing does not predict laptop speed
 `npm run test:voice` tests schema compatibility, remote metadata, real child
 process cancellation/output limits, temp cleanup, bounded downloads, queue
 isolation and Telegram routing with synthetic updates. It does not require a
-model or network access. Full existing tests remain part of the normal CI job.
+model or network access. Configuration tests cover preserving credentials, restoring
+update-job state, rejecting malformed JSON, and retaining unrelated changes.
+Full existing tests remain part of the normal CI job.
+
+The Windows CI job also exercises the complete setup script with a disposable Git
+repository, a synthetic gateway process and an isolated scheduled task: installation,
+repeat installation, rollback, recovery after a failed check, and refusal of local
+edits. The application commands in that orchestration fixture are stubs; the
+separate real-engine smoke test covers the actual speech pipeline.
 
 The separate Windows CI job installs the pinned artifacts, synthesizes harmless
 English speech using Windows, and transcribes WAV, OGG and MP3 through the real

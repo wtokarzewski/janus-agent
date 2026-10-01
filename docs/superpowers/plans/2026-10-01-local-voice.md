@@ -9,6 +9,11 @@ and [Windows CI](https://github.com/wtokarzewski/janus-agent/actions/runs/368315
 passed, including real-engine transcription of synthetic WAV, OGG and MP3.
 The review and laptop acceptance remain in [draft PR #285](https://github.com/wtokarzewski/janus-agent/pull/285).
 
+The Windows setup entry point is `scripts/setup-local-voice.ps1`: automatic branch
+switch, pinned tool installation, configuration merge, update-job suspension,
+checks, startup and `-Restore` recovery. Dedicated Windows orchestration tests
+exercise it against a disposable repository, process and scheduled task.
+
 Branch: `feature/local-voice`, based on main `f6d55539d845aea0c72def35d5d49302dd0730a9`.
 Keep the implementation on this branch and its draft PR until the owner tests it
 on Windows. Do not auto-merge this feature under the earlier loop authorization.

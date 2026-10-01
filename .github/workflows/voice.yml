@@ -35,3 +35,6 @@ jobs:
       - name: Transcribe synthetic WAV, OGG and MP3 using real CPU engine
         shell: powershell
         run: ./scripts/test-local-voice-windows.ps1 -ToolsDirectory "$env:RUNNER_TEMP/voice-tools"
+      - name: Verify installer and rollback in an isolated repository
+        shell: powershell
+        run: ./scripts/test-local-voice-setup.ps1 -ToolsDirectory "$env:RUNNER_TEMP/voice-tools"

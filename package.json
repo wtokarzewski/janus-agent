@@ -27,7 +27,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test:voice": "vitest run --no-file-parallelism tests/unit/local-voice.test.ts tests/unit/local-voice-execution.test.ts tests/unit/voice-process.test.ts tests/unit/voice-queue.test.ts tests/unit/voice-download.test.ts tests/unit/telegram-voice.test.ts tests/unit/voice-transcribe.test.ts"
+    "test:voice": "vitest run --no-file-parallelism tests/unit/local-voice.test.ts tests/unit/local-voice-execution.test.ts tests/unit/voice-process.test.ts tests/unit/voice-queue.test.ts tests/unit/voice-download.test.ts tests/unit/telegram-voice.test.ts tests/unit/voice-transcribe.test.ts tests/unit/local-voice-setup.test.ts"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

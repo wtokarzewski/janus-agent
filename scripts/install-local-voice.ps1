@@ -1,5 +1,6 @@
 param([string]$Directory = (Join-Path $env:LOCALAPPDATA 'Janus\voice'))
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Directory = [IO.Path]::GetFullPath($Directory)
 if (Test-Path $Directory) { throw "Destination already exists: $Directory. Choose a new -Directory; existing files will not be overwritten." }
