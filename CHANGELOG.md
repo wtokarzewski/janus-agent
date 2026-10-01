@@ -18,6 +18,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Subscription (OAuth) requests identify as `claude-cli/2.1.280` (was 2.1.195), now kept in one constant
 
 ### Fixed
+- Compaction processes budgeted history batches, validates complete summaries without slicing, preserves the current request and exact references, and waits for durable memory writes. Failed or timed-out work keeps active history (JL-25).
 - Output preflight reserves the same thinking allowance as SDK dispatch; optional per-model output caps skip incompatible candidates, and Anthropic serializes `budget_tokens` correctly (JL-24).
 - Summary restoration and snapshot-based compaction preserve new arrivals and previous facts; archives precede replacement, incomplete/length-limited summaries are rejected with one retry, and short prior summaries remain available (JL-01–05).
 - Durable flush cursors survive rotation/restart and acknowledge only successful note writes/checkpoints. Scoped memory indexes and pinned files refresh after changes; steering retains sender/reply/image metadata and fresh reads remain possible (JL-03, JL-06–10).

@@ -31,12 +31,12 @@ Flat iteration loop:
 2. LLM call (with streaming if enabled)
 3. If tool_calls → execute each tool → append results → loop back to LLM
 4. If no tool_calls → save response → publish outbound
-5. Independent post-turn work: learner metrics, count-triggered memory flush and background compaction
+5. Post-turn work: learner metrics, count-triggered memory flush and background compaction; compaction joins pending memory writes
 
 Key behaviors:
 - **Pre-call routing** — estimate the complete request, then fit, trim, compact or compact and trim; recheck before contacting the model
 - **Background compaction** — after a successful non-cron/non-heartbeat turn, trigger above 50% of the effective prompt budget or the configured message-count threshold
-- **Memory flush** — extract pending retained messages to append-only notes at 20 unflushed messages, or on shutdown; independent of compaction
+- **Memory flush** — extract pending retained messages to append-only notes at 20 unflushed messages, on shutdown, or before compaction; callers share one flush owner
 - **No-op suppression** — heartbeat/cron "HEARTBEAT_OK" responses not routed to user
 - **Subagent spawning** — `spawn_agent` tool creates child AgentLoop with minimal prompt
 
@@ -137,13 +137,13 @@ Agent deadlines use a throwing helper that removes its timer and abort listener 
 
 `agent.context.softTrimChars` and `protectedTailTurns` control trimming; zero protected turns allows all old tool results to be trimmed. `keepRecentTokens` controls the retained transcript. Legacy `reserveTokens`, `toolResultMaxShare`, `toolResultHardMax`, `compactionThresholds` and `emergencyThreshold` remain readable but are deprecated: config loading warns when explicitly supplied. Reservation now follows `maxTokens`; the unified tool-result cap and single router replace the old caps and staged thresholds. The example config omits these obsolete options.
 
-## Memory System (`src/memory/`)
-
 `llm.maxOutputTokens` optionally maps provider names and exact model IDs to verified output caps. A candidate that cannot honor the requested allowance is skipped, without reducing thinking or silently changing settings. Preflight chooses the first candidate with nonzero capacity. Anthropic preserves its existing allowance, `max(maxTokens, thinking.budgetTokens + 4096)`, and exposes the same calculation to preflight, chat and streaming. The SDK receives `budget_tokens`; other adapters retain their declared output allowance. Both foreground routing and the background compaction threshold include the current thinking setting.
+
+## Memory System (`src/memory/`)
 
 ### Session compaction snapshots
 
-Before a summarizer request, SessionManager captures a detached prefix, its previous summary and a single cut boundary under the session lock. Commit reuses that boundary and preserves all messages appended while the model was running. Clear, rotation and force-drop invalidate older snapshots; stale responses and delayed timeout fallbacks cannot replace a newer session generation. A final assistant/tool group stays intact even if it exceeds the tail budget. Existing JSONL sessions remain readable without migration. Rotation first copies the live transcript to an exclusive archive, then atomically replaces the live file and finally publishes the cache. Archive/write/rename failures leave the old live state readable and propagate an error. Timeout fallback uses the same archive-before-replacement order, preserves the last summary and records a separate compactionFailure diagnostic; archives are never automatically deleted.
+Before a summarizer request, SessionManager captures a detached prefix, its previous summary and a single cut boundary under the session lock. Commit reuses that boundary and preserves all messages appended while the model was running. Clear, rotation and force-drop invalidate older snapshots; stale responses cannot replace a newer session generation. A final assistant/tool group stays intact even if it exceeds the tail budget. Existing JSONL sessions remain readable without migration. Rotation first copies the live transcript to an exclusive archive, then atomically replaces the live file and finally publishes the cache. Archive/write/rename failures leave the old live state readable and propagate an error. Timeouts and failed validation cancel compaction and keep the active transcript. The agent no longer calls forceDropOldest automatically; the storage recovery method remains available. Archives are never automatically deleted.
 
 ### Durable flush cursor
 
@@ -151,7 +151,11 @@ Memory flush uses a persisted absolute message sequence and an epoch changed by 
 
 ### Summary validation
 
-Summary output is accepted only after a normal stop with every required template section populated. Empty, prefill-only, length-limited and structurally incomplete responses are rejected. At most two attempts use the same captured prefix; after both fail, identical input is suppressed for the lifetime of the loop instance. The previous summary and transcript remain intact. Short previous summaries are preserved in the update prompt. Structural validation cannot prove semantic completeness or recover facts already lost by older versions.
+Compaction serializes text records, tool-call arguments and result IDs into whole input units. A call and its results stay together; binary attachments are marked omitted. A binary search finds the largest prefix fitting the complete serialized request, including the previous summary, instructions, corrective retry and output reservation. Each batch updates an in-memory candidate. Only the final candidate can replace the captured session prefix; no intermediate summary is persisted. An indivisible unit or prior context that cannot fit cancels the operation.
+
+Each candidate must end normally, have every required section populated, and fit the complete summary limit after adding the full current user request and missing exact source references. The recognizer covers URLs, code spans, hex IDs and simple paths; it is heuristic and does not certify every semantic fact. No part of a candidate or protected request is sliced to satisfy the limit. Oversized or invalid output gets one corrective attempt per batch; another failure retains history. The limit is the smallest of 12,000 UTF-16 code units, the output-derived allowance, and a quarter of the available input budget converted with the existing estimator. This leaves room for the next batch. The prompt consolidates facts instead of requiring unbounded growth.
+
+Pre-compaction memory persistence and all summary batches share a 15-minute deadline. Cancellation propagates to owned calls; late responses cannot commit a summary. Failed identical snapshot/request pairs are suppressed until input changes or the loop restarts. Structural validation cannot establish semantic completeness, guarantee that the model wrote complete sentences, or recover facts already lost by older versions.
 
 ### Storage
 - `MEMORY.md` — persistent knowledge (agent-editable via `write_file`)
@@ -166,7 +170,9 @@ Summary output is accepted only after a normal stop with every required template
 - **Background vectors** — changed files queue embeddings without delaying writes; row/content/scope checks prevent stale inference from attaching to replacement rows. Startup discovers isolated-agent memory too. HISTORY.md and MEMORY backups are excluded from current search to avoid importing mixed-scope logs or superseded facts.
 
 ### Memory Flush
-A processed turn records its user/chat scope. At 20 pending retained messages, a background flush captures a detached snapshot; shutdown also flushes tracked sessions below the count threshold. There is no idle or pre-compaction flush. The prompt includes the current summary and MEMORY.md, but only HISTORY.md and scoped daily notes are appended: curated MEMORY.md remains agent-managed. An explicit NONE extraction can acknowledge the input; failed writes cannot advance the durable cursor. A flush request has a 90-second deadline and shutdown waits at most 30 seconds for all flushes.
+The turn registers its user/chat scope before inference. Count-triggered work, shutdown and pre-compaction callers join one in-flight flush per session. Compaction waits for the owner and, if needed, a fresh flush covering messages that arrived after the owner's snapshot. Missing scope, failed extraction or failed persistence prevents compaction. There is no idle trigger.
+
+Memory extraction uses the same whole-unit request budgeting as compaction. All batch writes must succeed before the durable cursor is acknowledged. Each model request has a 90-second deadline; a flush owner has a 15-minute deadline, and shutdown waits at most 30 seconds. Empty, length-limited, tool-calling and unfinished XML-section responses are rejected. Explicit NONE can acknowledge the batch. Plain text remains a compatibility fallback written in full to scoped daily notes. The summary and MEMORY.md provide read-only context; writes append only to HISTORY.md and scoped daily notes. A failure after earlier writes can duplicate those notes on retry.
 
 ### Remaining limits and validation scope
 
