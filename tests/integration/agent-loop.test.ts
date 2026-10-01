@@ -113,7 +113,7 @@ describe('AgentLoop integration', () => {
     expect(mock.calls).toHaveLength(1);
   });
 
-  it('preserves prior facts and an archived transcript when the summarizer times out', async () => {
+  it('preserves prior facts and the complete active transcript when the summarizer times out', async () => {
     const mock = new MockProvider([{ content: 'Done.' }]);
     const { deps } = createDeps(mock);
     deps.config.agent.contextWindow = 12_000;
@@ -131,13 +131,15 @@ describe('AgentLoop integration', () => {
       { role: 'user', content: 'tail' },
       { role: 'assistant', content: 'tail answer' },
     ]);
+    const before = structuredClone(await deps.sessions.getHistory(key));
     vi.spyOn(mock, 'chat').mockRejectedValueOnce(new Error('Summarization LLM call timed out'));
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       await new AgentLoop(deps).processDirect('current question', { channel: 'test', chatId: 'timeout-recovery' });
       const session = await new SessionManager(deps.config).getOrCreate(key);
       expect(session.metadata.summary).toBe('Previous constraint: limit 17.');
-      expect(session.metadata.compactionFailure).toContain('archive:');
+      expect(session.metadata.compactionFailure).toBeUndefined();
+      for (const message of before) expect(session.messages).toContainEqual(message);
       expect(session.messages).toContainEqual({ role: 'user', content: 'current question' });
     } finally { vi.clearAllTimers(); vi.useRealTimers(); }
   });
@@ -1099,13 +1101,7 @@ describe('AgentLoop integration', () => {
     expect(toolMsg?.content).toContain('Stopped by user');
   });
 
-  // Removed: 'should retry flush before summarization and proceed on failure'.
-  // Pre-compaction flush retries (3× with 2s/4s backoff inside doSummarization)
-  // were removed because they raced with the token-aware flush trigger via a
-  // shared state.flushing guard — when both fired concurrently the second one
-  // silently skipped, causing data loss. Flush and compaction are now
-  // independent paths with no shared state.
-
+  // Compaction/flush coordination is covered in compaction-transaction.test.ts.
   it('should deny tool execution when gate denies', async () => {
     const mock = new MockProvider([
       {

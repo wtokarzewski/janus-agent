@@ -12,10 +12,10 @@ Implemented features, checked against source and automated tests. Continuity val
 - **Subagent spawning** — `spawn_agent` creates a UUID session with inherited user/scope/agent, owner status, tool filters and cancellation. Minimal mode retains configured AGENTS.md rules. Depth increments on nested spawns; parent IDs enforce child limits.
 - **Pre-call context routing** — One pre-call router chooses fit, trim, compact or both, then rechecks the full request. If it still cannot fit, the turn stops with a budget message.
 - **Token-based summarization** — After a successful non-ephemeral turn, background compaction starts above 50% of the effective prompt budget or the configured message count. Pre-call compaction blocks only when needed to fit a request.
-- **Independent memory flush** — Flush runs independently on a count threshold or shutdown; compaction archives the transcript before replacement.
+- **Coordinated memory flush** — Count, shutdown and compaction callers share one flush owner. Compaction waits for completed writes and the durable cursor checkpoint.
 - **No-op suppression** — Heartbeat/cron responses like "HEARTBEAT_OK" are not routed to the user.
 - **LLM overload resilience** — 5-retry exponential backoff (1s→2s→4s→8s→16s), user notification on first retry, abort-aware sleep, clean error message after exhaustion.
-- **SDK timeout hardening** — Provider requests receive cancellation signals. Agent wait deadlines are 90 seconds for memory extraction and 15 minutes per compaction request, with timer/listener cleanup on settlement.
+- **SDK timeout hardening** — Provider requests receive cancellation signals. Agent wait deadlines are 90 seconds for memory extraction and 15 minutes for the complete compaction pipeline, with timer/listener cleanup on settlement.
 - **Graceful shutdown flush** — Tracked sessions flush on shutdown, including those below the 20-message threshold. Shutdown waits at most 30 seconds for these flushes; no idle flush timer.
 - **Diagnostic timing logs** — Full pipeline observability: Telegram incoming → lane semaphore → context build → LLM call → tool execution → flush → summarization, with durations.
 - **Leaked control token stripping** — Sanitizes LLM control tokens (`<|endoftext|>`, `[INST]`, `<<SYS>>`, `<s>`) from user-facing output before delivery.
@@ -24,7 +24,7 @@ Implemented features, checked against source and automated tests. Continuity val
 - **Cross-tool loop detection** — 6-call sliding window detects repeating tool call sequences (e.g., exec->fail->exec->fail). Injects system break message to redirect the agent.
 - **Proactive context overflow detection** — System content, transcript, tool definitions/calls, text and images share one estimator. Each selected provider/model, including fallbacks, must fit its own window and declared output reservation.
 - **Context trimming** — Soft/hard tool-result transforms controlled by `softTrimChars` and `protectedTailTurns`. Estimates remain heuristic, not exact tokenizer bounds.
-- **Compaction hardening** — Detached prefix snapshots and generation checks preserve new arrivals. Archive-before-replacement retains recovery data; timeout fallback preserves prior summary and records a separate diagnostic. Summary structure/finishReason validation permits one retry and rejects incomplete output.
+- **Compaction hardening** — Detached prefix snapshots and generation checks preserve new arrivals. Archive-before-replacement retains recovery data; failures preserve the full active transcript. Whole-unit batches fit the model budget; the final candidate retains the current request and exact references. Oversized or incomplete candidates get one retry per batch and are never sliced.
 - **Compaction notifications** — Silent background summarization with ⏳ status indicator.
 - **SSRF guard** — Blocks private/reserved IPs (localhost, 10.x, 172.16-31.x, 192.168.x, link-local, cloud metadata) and IPv6 private ranges (fc00::/7, fe80::/10, ff00::/8) in web_fetch and browser tools.
 - **Secret redaction in tool results** — Automatically masks secrets in tool output before sending to LLM: `KEY=`, `Bearer`, `sk-`/`ghp_`/`AKIA`/JWT patterns replaced with `[REDACTED]`.
@@ -151,7 +151,7 @@ Real-browser automation via Playwright. Controls a dedicated Chrome profile thro
 - **Daily notes** — Scoped `memory/YYYY-MM-DD.md`, appended by flush for extracted facts. HISTORY.md receives append-only session summaries.
 - **Durable flush tracking** — Epoch/absolute sequence cursors persist across rotation. Acknowledgment follows successful note writes and checkpointing; legacy positional cursors replay the retained tail conservatively. Crash duplicates remain possible.
 - **Context-aware extraction** — Flush receives the current summary and MEMORY.md for context, then appends history/daily notes. It does not claim exactly-once storage or semantic completeness.
-- **Flush triggers** — Two: 20 pending retained messages and shutdown. No pre-compaction or idle trigger.
+- **Flush triggers** — 20 pending retained messages, shutdown and pre-compaction. No idle trigger; simultaneous callers join the same pending work.
 - **Index freshness** — Validated writes refresh scoped FTS immediately; search detects external changes and removes stale/empty/deleted chunks. Embeddings refresh asynchronously with version checks. HISTORY.md and MEMORY backups are excluded from current search.
 - **FTS5 search** — SQLite full-text search with BM25 ranking.
 - **Vector search** — Local embeddings via `@xenova/transformers` (all-MiniLM-L6-v2, 384-dim, ONNX). Zero API cost. Opt-in via `memory.vectorSearch` config.
