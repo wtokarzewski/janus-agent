@@ -26,7 +26,12 @@ function Setup([switch]$RestoreTrial, [switch]$ExpectFailure) {
     $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $bootstrap, '-RepositoryPath', $repo, '-ToolsDirectory', $ToolsDirectory, '-TaskName', $taskName, '-NoStart')
     if ($RestoreTrial) { $arguments += '-Restore' }
     & powershell.exe @arguments
-    if ($ExpectFailure) { Assert ($LASTEXITCODE -ne 0) 'Expected installation failure' }
+    if ($ExpectFailure) {
+        Assert ($LASTEXITCODE -ne 0) 'Expected installation failure'
+        # The Actions PowerShell wrapper propagates LASTEXITCODE after this script.
+        # An asserted failure is a successful test, not a failing workflow step.
+        $global:LASTEXITCODE = 0
+    }
     else { Assert ($LASTEXITCODE -eq 0) 'Installer failed' }
 }
 Push-Location $repo
