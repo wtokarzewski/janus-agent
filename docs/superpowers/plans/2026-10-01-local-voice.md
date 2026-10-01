@@ -1,7 +1,13 @@
 # VOICE-01: Local voice transcription
 
-Status: implemented on the feature branch; automated verification in progress.
+Status: implemented on the feature branch; automated verification passed.
 Owner acceptance on the target Windows laptop remains pending. See [setup and trial](../../LOCAL-VOICE.md).
+
+Implementation `3f543a8`: typecheck/build and 1097 tests passed locally;
+[Ubuntu CI](https://github.com/wtokarzewski/janus-agent/actions/runs/36831573409)
+and [Windows CI](https://github.com/wtokarzewski/janus-agent/actions/runs/36831573455)
+passed, including real-engine transcription of synthetic WAV, OGG and MP3.
+The review and laptop acceptance remain in [draft PR #285](https://github.com/wtokarzewski/janus-agent/pull/285).
 
 Branch: `feature/local-voice`, based on main `f6d55539d845aea0c72def35d5d49302dd0730a9`.
 Keep the implementation on this branch and its draft PR until the owner tests it
@@ -139,7 +145,7 @@ and audio duration without recording speech content.
   command accepting a synthetic recording, reporting readiness/timings and
   comparing its transcript. Add Windows tests for the voice subset, separate
   from the required Ubuntu job, without weakening existing CI.
-- [ ] **V5 — handoff:** document exact tested executable/model versions,
+- [x] **V5 — handoff:** document exact tested executable/model versions,
   installation, configuration, branch switch, manual matrix and rollback.
   Publish a draft PR, pass current-commit CI and leave it open for owner testing.
 - [ ] **V6 — laptop acceptance:** record the tested SHA, artifact checksums,
