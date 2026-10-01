@@ -1,0 +1,40 @@
+name: Voice
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/channels/**'
+      - 'src/config/**'
+      - 'src/commands/voice-check.ts'
+      - 'src/index.ts'
+      - 'tests/unit/*voice*'
+      - 'scripts/*local-voice*'
+      - '.github/workflows/voice.yml'
+      - 'package*.json'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-voice:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:voice
+      - name: Install pinned local tools
+        shell: powershell
+        run: ./scripts/install-local-voice.ps1 -Directory "$env:RUNNER_TEMP/voice-tools"
+      - name: Transcribe synthetic WAV, OGG and MP3 using real CPU engine
+        shell: powershell
+        run: ./scripts/test-local-voice-windows.ps1 -ToolsDirectory "$env:RUNNER_TEMP/voice-tools"
+      - name: Verify installer and rollback in an isolated repository
+        shell: powershell
+        run: ./scripts/test-local-voice-setup.ps1 -ToolsDirectory "$env:RUNNER_TEMP/voice-tools"

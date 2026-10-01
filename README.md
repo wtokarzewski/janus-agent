@@ -152,6 +152,7 @@ volumes:
 | [ROADMAP.md](docs/ROADMAP.md) | Phase history and future plans |
 | [SKILLS-FORMAT.md](docs/SKILLS-FORMAT.md) | SKILL.md format specification |
 | [PATTERNS.md](docs/PATTERNS.md) | Design patterns (Q&A, gates, error handling) |
+| [LOCAL-VOICE.md](docs/LOCAL-VOICE.md) | Local voice setup, offline diagnostics and Windows branch trial |
 | [WINDOWS-AUTOSTART.md](docs/WINDOWS-AUTOSTART.md) | Running the gateway across reboots and crashes on Windows |
 
 ## Testing

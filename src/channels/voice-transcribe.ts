@@ -14,10 +14,10 @@ const TIMEOUT_MS = 30_000;
  * @param language — Optional ISO 639-1 language code (e.g. 'pl', 'en')
  * @returns Transcribed text
  */
-export async function transcribeVoice(audio: Uint8Array, apiKey: string, language?: string): Promise<string> {
+export async function transcribeVoice(audio: Uint8Array, apiKey: string, language?: string, options: { mimeType?: string; filename?: string; signal?: AbortSignal } = {}): Promise<string> {
   const form = new FormData();
   const buf = Buffer.from(audio);
-  form.append('file', new Blob([buf], { type: 'audio/ogg' }), 'voice.ogg');
+  form.append('file', new Blob([buf], { type: options.mimeType ?? 'audio/ogg' }), options.filename ?? 'voice.ogg');
   form.append('model', GROQ_MODEL);
   form.append('response_format', 'json');
   if (language) form.append('language', language);
@@ -30,16 +30,16 @@ export async function transcribeVoice(audio: Uint8Array, apiKey: string, languag
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}` },
       body: form,
-      signal: controller.signal,
+      signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(`Groq Whisper API error: HTTP ${response.status} ${body.substring(0, 200)}`);
+      await response.body?.cancel();
+      throw new Error(`Groq Whisper API error: HTTP ${response.status}`);
     }
 
     const data = await response.json() as { text?: string };
-    return data.text ?? '';
+    return typeof data.text === 'string' ? data.text : '';
   } finally {
     clearTimeout(timer);
   }

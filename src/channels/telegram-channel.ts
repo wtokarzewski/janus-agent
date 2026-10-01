@@ -18,6 +18,9 @@ import { ensureUserDir, ensureChatDir } from '../users/user-resolver.js';
 import type { Database } from '../db/database.js';
 import { upsertKnownChat } from '../db/known-chats.js';
 import { transcribeVoice } from './voice-transcribe.js';
+import { checkLocalVoice, transcribeLocalVoice } from './local-voice-transcribe.js';
+import { voiceQueue } from './voice-queue.js';
+import { downloadVoice } from './voice-download.js';
 import { synthesizeVoice } from './voice-synthesize.js';
 import { TelegramMessageStore } from './telegram-message-store.js';
 import { resolveReactionRoute, applyReaction } from './telegram-reactions.js';
@@ -253,9 +256,10 @@ export class TelegramChannel {
 
       // /stop — cancel running agent + subagents
       if (ctx.message?.text?.trim() === '/stop') {
+        const voicesCancelled = voiceQueue.cancel(chatId);
         const result = opts?.agent?.stop();
         const subsCancelled = opts?.subagentRegistry?.cancelAll() ?? 0;
-        if (result?.cancelled || subsCancelled > 0) {
+        if (result?.cancelled || subsCancelled > 0 || voicesCancelled > 0) {
           await ctx.reply(`Stopped.${subsCancelled > 0 ? ` Cancelled ${subsCancelled} subagent(s).` : ''}`);
         } else {
           await ctx.reply('Nothing running.');
@@ -555,132 +559,89 @@ export class TelegramChannel {
       }
     });
 
-    // Voice messages — auto-transcribe via Groq Whisper and process as text
+    // Return promptly: the bounded worker must not block polling text or /stop.
     bot.on(['message:voice', 'message:audio'], async (ctx) => {
-      if (!config.voice.enabled || !config.voice.apiKey) {
-        log.debug('Telegram: voice message received but voice transcription not configured');
-        return;
-      }
-
       const voice = ctx.message.voice ?? ctx.message.audio;
-      if (!voice) return;
-
-      if (config.voice.maxDurationSec && voice.duration > config.voice.maxDurationSec) {
-        log.warn(`Telegram: voice message too long (${voice.duration}s > ${config.voice.maxDurationSec}s limit)`);
-        return;
-      }
-
+      if (!voice || signal.aborted) return;
       const baseChatId = String(ctx.chat.id);
       const isForum = ctx.chat.type === 'supergroup' && (ctx.chat as unknown as { is_forum?: boolean }).is_forum === true;
       const topicId = isForum && ctx.message.message_thread_id ? ctx.message.message_thread_id : undefined;
       const chatId = topicId ? `${baseChatId}/${topicId}` : baseChatId;
       const author = ctx.from?.username || String(ctx.from?.id || 'unknown');
-
-      // Allowlist check
       const effectiveAllowlist = tg.allowlist.length > 0 ? tg.allowlist : deriveChannelAllowlist('telegram', config);
-      const isAllowed = effectiveAllowlist.includes(baseChatId) || effectiveAllowlist.includes(author) || runtimeAllowlist.has(baseChatId);
-      if (effectiveAllowlist.length > 0 && !isAllowed) {
-        log.debug(`Telegram: ignoring voice from ${author} (chat ${baseChatId}, not in allowlist)`);
-        return;
+      const allowed = effectiveAllowlist.includes(baseChatId) || effectiveAllowlist.includes(author) || runtimeAllowlist.has(baseChatId);
+      if ((effectiveAllowlist.length && !allowed) || (!effectiveAllowlist.length && tg.denyByDefault)) return;
+      if ((ctx.chat.type === 'group' || ctx.chat.type === 'supergroup') && tg.groupPolicy === 'mention') return;
+
+      // Capture settings and routing now, so config reload cannot change a queued job.
+      const settings = structuredClone(config.voice);
+      const report = async (message: string) => {
+        if (signal.aborted) return;
+        try { await bot.api.sendMessage(baseChatId, message, topicId ? { message_thread_id: topicId } : {}); }
+        catch { log.warn('Telegram: could not deliver voice status'); }
+      };
+      if (!settings.enabled) { await report('Voice transcription is disabled.'); return; }
+      if (settings.provider === 'groq' && !settings.apiKey) { await report('Voice transcription needs an API key or the local provider.'); return; }
+      if (voice.duration > settings.maxDurationSec || (voice.file_size ?? 0) > settings.maxFileSizeMb * 1_048_576) {
+        await report(`Recording exceeds the limit (${settings.maxDurationSec} seconds / ${settings.maxFileSizeMb} MB).`); return;
       }
-      if (effectiveAllowlist.length === 0 && tg.denyByDefault) {
-        log.debug(`Telegram: denying voice from ${author} (chat ${baseChatId}, deny-by-default, no allowlist configured)`);
-        return;
-      }
-
-      // Group mention policy — voice messages can't @mention, so skip in mention-only groups
-      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      if (isGroup && tg.groupPolicy === 'mention') {
-        log.debug('Telegram: ignoring voice in group (mention policy)');
-        return;
-      }
-
-      log.info(`Telegram: voice message from ${author} (chat ${chatId}, ${voice.duration}s)`);
-
-      // Download file from Telegram
-      let fileBuffer: Uint8Array;
-      try {
-        const file = await bot.api.getFile(voice.file_id);
-        fileBuffer = await downloadTelegramFile(bot, file);
-      } catch (err) {
-        log.error(`Telegram: failed to download voice file: ${err instanceof Error ? err.message : err}`);
-        return;
-      }
-
-      // Transcribe via Groq Whisper
-      await this.startTyping(bot, chatId);
-      let transcript: string;
-      try {
-        transcript = await transcribeVoice(fileBuffer, config.voice.apiKey, config.voice.language);
-      } catch (err) {
-        this.stopTyping(chatId);
-        log.error(`Telegram: voice transcription failed: ${err instanceof Error ? err.message : err}`);
-        return;
-      }
-
-      if (!transcript.trim()) {
-        this.stopTyping(chatId);
-        log.info('Telegram: voice transcription returned empty result');
-        return;
-      }
-
-      log.info(`Telegram: transcribed voice (${voice.duration}s → ${transcript.length} chars): ${transcript.substring(0, 80)}`);
-
-      // Resolve user (same logic as text messages)
       const channelUserId = ctx.from ? String(ctx.from.id) : undefined;
-      const channelUsername = ctx.from?.username ?? undefined;
+      const channelUsername = ctx.from?.username;
       const resolved = resolveUser('telegram', channelUserId, channelUsername, config)
         ?? autoIdentifyUser('telegram', channelUserId, channelUsername, ctx.from?.first_name, config.workspace.dir);
-
-      // Track known chat for skill channel routing
-      const voiceChatName = ctx.chat.type === 'private'
-        ? ctx.chat.first_name
-        : (ctx.chat as { title?: string }).title;
-      trackChat(resolved?.userId, baseChatId, voiceChatName, ctx.chat.type);
-
-      let scope: InboundMessage['scope'];
-      if (ctx.chat.type === 'private' && resolved) {
-        scope = { kind: 'user', id: resolved.userId };
-      } else if (config.family && config.family.groupChatIds.includes(baseChatId)) {
-        scope = { kind: 'family', id: config.family.id };
-      }
-
-      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
-      const replyContext = extractReplyContext(ctx.message.reply_to_message);
-      const inbound: InboundMessage = {
-        id: randomUUID(),
-        channel: 'telegram',
-        chatId,
-        content: `[Voice message transcription]: ${transcript}${caption}`,
-        author,
-        timestamp: new Date(),
-        isVoice: true,
-        user: resolved ? {
-          userId: resolved.userId,
-          name: resolved.name,
-          channelUserId: resolved.identity.channelUserId,
-          channelUsername: resolved.identity.channelUsername,
-        } : undefined,
-        scope,
-        topicId,
-        replyContext,
-        routingMeta: topicId ? { topicId } : undefined,
-        channelMessageId: ctx.message.message_id,
+      trackChat(resolved?.userId, baseChatId, ctx.chat.type === 'private' ? ctx.chat.first_name : ctx.chat.title, ctx.chat.type);
+      const scope: InboundMessage['scope'] = ctx.chat.type === 'private' && resolved
+        ? { kind: 'user', id: resolved.userId }
+        : config.family?.groupChatIds.includes(baseChatId) ? { kind: 'family', id: config.family.id } : undefined;
+      const envelope: Omit<InboundMessage, 'content'> = {
+        id: randomUUID(), channel: 'telegram', chatId, author, timestamp: new Date(), isVoice: true,
+        user: resolved ? { userId: resolved.userId, name: resolved.name,
+          channelUserId: resolved.identity.channelUserId, channelUsername: resolved.identity.channelUsername } : undefined,
+        scope, topicId, replyContext: extractReplyContext(ctx.message.reply_to_message),
+        routingMeta: topicId ? { topicId } : undefined, channelMessageId: ctx.message.message_id,
       };
-      this.remember(chatId, ctx.message.message_id, `[Voice] ${transcript}`, false, ctx.from);
-
-      if (bus.isProcessing(inbound)) {
-        bus.pushSteering(inbound);
-        log.info(`Telegram: voice steering message buffered for ${chatId}`);
-        return;
-      }
-
-      try {
-        await bus.publishInbound(inbound, signal);
-        log.info(`Telegram: voice published to inbound queue (chat=${chatId})`);
-      } catch {
-        this.stopTyping(chatId);
-      }
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const queuedAt = Date.now();
+      void voiceQueue.enqueue(`${chatId}:${ctx.message.message_id}`, chatId, settings.local, async jobSignal => {
+        const workSignal = AbortSignal.any([signal, jobSignal]);
+        try {
+          workSignal.throwIfAborted();
+          if (settings.provider === 'local') await checkLocalVoice(settings);
+          workSignal.throwIfAborted();
+          // Grammy's legacy signal type is structurally narrower than Node's native signal.
+          const fileSignal = AbortSignal.any([workSignal, AbortSignal.timeout(15_000)]);
+          const file = await bot.api.getFile(voice.file_id, fileSignal as unknown as Parameters<typeof bot.api.getFile>[1]);
+          workSignal.throwIfAborted();
+          if (!file.file_path) throw new Error('Audio download failed');
+          const audio = await downloadVoice(`https://api.telegram.org/file/bot${bot.token}/${file.file_path}`,
+            settings.maxFileSizeMb * 1_048_576, workSignal);
+          let transcript: string;
+          if (settings.provider === 'local') {
+            const result = await transcribeLocalVoice(audio, settings, workSignal);
+            transcript = result.text;
+            log.info(`Voice completed: queue ${Date.now() - queuedAt - result.conversionMs - result.inferenceMs}ms, conversion ${result.conversionMs}ms, inference ${result.inferenceMs}ms, audio ${result.durationSec}s`);
+          } else {
+            transcript = await transcribeVoice(audio, settings.apiKey!, settings.language, {
+              signal: workSignal, mimeType: voice.mime_type ?? 'audio/ogg',
+              filename: ctx.message.audio?.file_name ?? file.file_path.split('/').pop() ?? 'voice.ogg',
+            });
+          }
+          workSignal.throwIfAborted();
+          if (!transcript.trim()) throw new Error('No speech was recognized');
+          if (transcript.length + caption.length > MAX_INBOUND_CHARS) throw new Error('Transcript exceeds its size limit');
+          const inbound: InboundMessage = { ...envelope, content: `[Voice message transcription]: ${transcript}${caption}` };
+          this.remember(chatId, ctx.message.message_id, `[Voice] ${transcript}`, false, ctx.from);
+          if (bus.isProcessing(inbound)) bus.pushSteering(inbound);
+          else await bus.publishInbound(inbound, workSignal);
+        } catch (error) {
+          if (workSignal.aborted) return;
+          // Never expose Telegram URLs, subprocess output or recorded speech.
+          const message = error instanceof Error ? error.message : '';
+          const safe = /^(?:Set voice\.local\.|Cannot access voice\.local\.|Unsupported audio;|Audio exceeds|No speech was recognized|Transcript exceeds|Voice (?:processing cancelled|executable failed|process output|diagnostic output)|Cannot start voice executable)/.test(message);
+          log.warn('Voice transcription failed');
+          await report(safe ? message : 'Could not transcribe the recording. Check the audio and voice configuration, then try again.');
+        }
+      }).catch(async () => { await report('Voice queue is full or the wait expired. Please send the recording again shortly.'); });
     });
 
     // Photo messages — download, encode base64, and pass to agent with vision
@@ -811,9 +772,12 @@ export class TelegramChannel {
 
     // Wait for abort signal
     await new Promise<void>((resolve) => {
-      signal.addEventListener('abort', () => resolve(), { once: true });
+      if (signal.aborted) resolve();
+      else signal.addEventListener('abort', () => resolve(), { once: true });
     });
 
+    voiceQueue.cancel();
+    await voiceQueue.idle();
     try {
       await bot.stop();
     } catch (err) {
@@ -824,6 +788,7 @@ export class TelegramChannel {
   }
 
   stop(): void {
+    voiceQueue.cancel();
     try {
       this.bot?.stop();
     } catch (err) {
