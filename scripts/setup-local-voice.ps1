@@ -4,6 +4,7 @@ param(
     [string]$ToolsDirectory = (Join-Path $env:LOCALAPPDATA 'Janus\voice'),
     [string]$TaskName = 'Janus Gateway',
     [switch]$Restore,
+    [switch]$SkipTests,
     [switch]$NoStart
 )
 $ErrorActionPreference = 'Stop'
@@ -241,8 +242,10 @@ try {
         $state.dependenciesTouched = $true
         Save-State
         Invoke-Checked 'npm.cmd' @('ci')
-        Invoke-Checked 'npm.cmd' @('run', 'typecheck')
-        Invoke-Checked 'npm.cmd' @('run', 'test:voice')
+        if (-not $SkipTests) {
+            Invoke-Checked 'npm.cmd' @('run', 'typecheck')
+            Invoke-Checked 'npm.cmd' @('run', 'test:voice')
+        }
         Invoke-Checked 'node' @($helper, 'apply', $RepositoryPath, $stateDirectory, $ToolsDirectory)
         Invoke-Checked 'npm.cmd' @('start', '--', 'voice-check')
         $state.phase = 'ready'
